@@ -186,14 +186,17 @@ pub async fn get(host: &str, port: u16, path: &str, https: bool) -> String {
 }
 
 /// Entra a Adminer como root sin contraseña, como lo haría el usuario, y
-/// devuelve la página con la lista de bases de datos.
+/// devuelve la página con la lista de bases de datos. Desde Adminer 6 el
+/// formulario de entrada lleva un token contra CSRF: primero se abre la
+/// página (sesión y token) y después se envía el formulario.
 pub async fn adminer_databases(w: &World) -> String {
     let jar = w.root.join("tmp").join("adminer-cookies.txt");
     let jar = jar.to_string_lossy().into_owned();
     let http = w.ports.http;
-    curl(&[
-        "-sk",
-        "-L",
+    let resolve = format!("adminer.test:{http}:127.0.0.1");
+    let url = format!("http://adminer.test:{http}/");
+    let session = [
+        "-s",
         "--max-time",
         "60",
         "-c",
@@ -201,20 +204,30 @@ pub async fn adminer_databases(w: &World) -> String {
         "-b",
         &jar,
         "--resolve",
-        &format!("adminer.test:{http}:127.0.0.1"),
-        "--data-urlencode",
-        "auth[driver]=server",
-        "--data-urlencode",
-        &format!("auth[server]=127.0.0.1:{}", w.ports.mariadb),
-        "--data-urlencode",
-        "auth[username]=root",
-        "--data-urlencode",
-        "auth[password]=",
-        "--data-urlencode",
-        "auth[db]=",
-        &format!("http://adminer.test:{http}/"),
-    ])
-    .await
+        &resolve,
+    ];
+    let form = curl(&[&session[..], &[url.as_str()]].concat()).await;
+    let token = form
+        .split("name='token' value='")
+        .nth(1)
+        .and_then(|rest| rest.split('\'').next())
+        .unwrap_or_default();
+    let fields = [
+        format!("token={token}"),
+        "auth[driver]=server".to_string(),
+        format!("auth[server]=127.0.0.1:{}", w.ports.mariadb),
+        "auth[username]=root".to_string(),
+        "auth[password]=".to_string(),
+        "auth[db]=".to_string(),
+    ];
+    let mut args: Vec<&str> = session.to_vec();
+    args.push("-L");
+    for field in &fields {
+        args.push("--data-urlencode");
+        args.push(field);
+    }
+    args.push(&url);
+    curl(&args).await
 }
 
 fn dump_logs(root: &Path) {
