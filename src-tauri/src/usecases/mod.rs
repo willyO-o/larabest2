@@ -1,6 +1,7 @@
 //! Casos de uso. Los comandos de Tauri solo llaman a estos métodos.
 
 mod create_site;
+mod install;
 pub mod sites;
 mod ssl;
 
@@ -90,6 +91,8 @@ pub struct Core {
     sites_lock: tokio::sync::Mutex<()>,
     /// Se crea un sitio a la vez.
     create_lock: tokio::sync::Mutex<()>,
+    /// Se agrega un paquete a la vez.
+    install_lock: tokio::sync::Mutex<()>,
 }
 
 impl Core {
@@ -105,6 +108,7 @@ impl Core {
             system_path,
             sites_lock: tokio::sync::Mutex::new(()),
             create_lock: tokio::sync::Mutex::new(()),
+            install_lock: tokio::sync::Mutex::new(()),
         }
     }
 

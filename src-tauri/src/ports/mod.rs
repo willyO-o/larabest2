@@ -180,6 +180,7 @@ pub trait EventSink: Send + Sync {
     fn service_changed(&self, status: &ServiceStatus);
     fn sites_changed(&self, sites: &[Site]);
     fn site_progress(&self, progress: &SiteProgress);
+    fn install_progress(&self, progress: &crate::domain::catalog::InstallProgress);
 }
 
 #[async_trait]

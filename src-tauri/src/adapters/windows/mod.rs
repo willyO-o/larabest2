@@ -1,6 +1,8 @@
 //! Adaptadores de Windows 10 y 11.
 
 mod download;
+#[cfg(test)]
+mod e2e;
 mod hosts;
 mod ports;
 mod process;

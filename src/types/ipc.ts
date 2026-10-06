@@ -50,6 +50,15 @@ export interface SiteProgress {
   detail?: string
 }
 
+/** Carga de `install:progress` mientras se agrega un paquete (menú Agregar). */
+export interface InstallProgress {
+  id: string
+  label: string
+  step: string
+  state: ProgressState
+  detail?: string
+}
+
 export interface InstalledVersion {
   service: ServiceId
   version: string
@@ -94,4 +103,5 @@ export const EVENTS = {
   sitesProgress: 'sites:progress',
   /** El menú contextual pide abrir el formulario de sitio nuevo. */
   uiCreateSite: 'ui:create-site',
+  installProgress: 'install:progress',
 } as const

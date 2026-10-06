@@ -837,3 +837,114 @@ async fn phpmyadmin_is_served_registered_and_can_be_the_database_button() {
         .unwrap_err();
     assert!(err.to_string().contains("reservado"));
 }
+
+// ---------------------------------------------------------------- agregar paquetes
+
+const PHP_RELEASES: &str = r#"{"8.4": {"version": "8.4.13",
+    "nts-vs17-x64": {"zip": {"path": "php-8.4.13-nts-Win32-vs17-x64.zip"}}}}"#;
+
+#[tokio::test]
+async fn adding_php_downloads_the_official_zip_into_bin() {
+    use crate::domain::catalog::urls;
+    let h = Harness::new();
+    h.downloader.respond(urls::PHP_RELEASES, PHP_RELEASES);
+    h.archive
+        .contains(&[&crate::drivers::exe("php-cgi"), "php.ini-development"]);
+    let core = h.core();
+    let message = core.install_package("php-8.4").await.unwrap();
+    assert_eq!(message, "PHP 8.4.13 instalado.");
+    assert_eq!(
+        *h.downloader.urls.lock().unwrap(),
+        vec![
+            urls::PHP_RELEASES.to_string(),
+            "https://windows.php.net/downloads/releases/php-8.4.13-nts-Win32-vs17-x64.zip"
+                .to_string()
+        ]
+    );
+    assert!(h.fs.exists(Path::new(&format!(
+        "{ROOT}/bin/php/8.4.13/{}",
+        crate::drivers::exe("php-cgi")
+    ))));
+    assert!(!h
+        .fs
+        .exists(Path::new(&format!("{ROOT}/tmp/downloads/php-8.4.13.zip"))));
+    let installs = h.events.installs.lock().unwrap().clone();
+    assert_eq!(installs.last().unwrap().state, ProgressState::Done);
+    assert!(installs.iter().any(|p| p.step == "Descargando PHP 8.4.13"));
+
+    // La misma versión no se vuelve a descargar.
+    let again = core.install_package("php-8.4").await.unwrap();
+    assert_eq!(again, "PHP 8.4.13 ya estaba instalado.");
+    assert_eq!(h.downloader.urls.lock().unwrap().len(), 3);
+}
+
+#[tokio::test]
+async fn a_zip_without_the_program_is_rejected_and_removed() {
+    use crate::domain::catalog::urls;
+    let h = Harness::new();
+    h.downloader
+        .respond(urls::MAILPIT_LATEST, r#"{"tag_name": "v1.31.4"}"#);
+    h.archive.contains(&["README.md"]);
+    let err = h.core().install_package("mailpit").await.unwrap_err();
+    assert!(err.to_string().contains("no tiene"), "{err}");
+    assert!(!h
+        .fs
+        .exists(Path::new(&format!("{ROOT}/bin/mailpit/1.31.4"))));
+    let last = h.events.installs.lock().unwrap().last().cloned().unwrap();
+    assert_eq!(last.state, ProgressState::Failed);
+}
+
+#[tokio::test]
+async fn adding_adminer_serves_it_right_away() {
+    use crate::domain::catalog::urls;
+    let h = Harness::new();
+    let core = h.core();
+    assert_eq!(
+        core.install_package("adminer").await.unwrap(),
+        "Adminer instalado."
+    );
+    assert_eq!(
+        h.downloader.urls.lock().unwrap()[0],
+        urls::ADMINER.to_string()
+    );
+    assert!(h
+        .hosts
+        .entries
+        .lock()
+        .unwrap()
+        .contains(&HostEntry::local("adminer.test")));
+    let adminer = crate::domain::catalog::find("adminer").unwrap();
+    assert_eq!(core.package_status(&adminer).as_deref(), Some("instalado"));
+}
+
+#[tokio::test]
+async fn homebrew_installs_formulas_and_trusts_the_mongodb_tap() {
+    let h = Harness::homebrew();
+    let core = h.core();
+    let err = core.install_package("mongodb").await.unwrap_err();
+    assert!(err.to_string().contains("https://brew.sh"));
+
+    h.fs.write(Path::new("/opt/homebrew/bin/brew"), "").unwrap();
+    core.install_package("mongodb").await.unwrap();
+    let ran: Vec<String> = h.runner.ran().iter().map(|s| s.args.join(" ")).collect();
+    assert_eq!(
+        ran,
+        vec![
+            "tap mongodb/brew",
+            "trust mongodb/brew",
+            "install mongodb/brew/mongodb-community"
+        ]
+    );
+    let spec = &h.runner.ran()[2];
+    assert!(spec
+        .env
+        .contains(&("HOMEBREW_NO_AUTO_UPDATE".to_string(), "1".to_string())));
+    assert_eq!(
+        crate::domain::slash(&spec.program),
+        "/opt/homebrew/bin/brew"
+    );
+
+    let message = core.install_package("php-8.4").await.unwrap();
+    assert_eq!(message, "PHP 8.4.13 instalado con Homebrew.");
+    assert_eq!(h.runner.ran()[3].args, vec!["install", "php@8.4"]);
+}

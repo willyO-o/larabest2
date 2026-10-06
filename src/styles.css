@@ -583,6 +583,45 @@ button:disabled {
   margin-left: 6px;
 }
 
+/* Paquete que se está agregando (menú Agregar). */
+.statusline-task {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  color: var(--ink-2);
+}
+
+.statusline-task .task-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.statusline-task .icon {
+  flex: none;
+  width: 12px;
+  height: 12px;
+}
+
+.statusline-task[data-state='done'] {
+  color: var(--ok);
+  font-weight: 600;
+}
+
+.statusline-task[data-state='failed'] {
+  color: var(--bad);
+  font-weight: 600;
+}
+
+.task-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--busy);
+  animation: pulse-dot 1.1s ease-in-out infinite;
+}
+
 /* ---------------------------------------------------------------- nuevo sitio */
 
 /* Hoja bajo la banda: el estado de la pila sigue a la vista. */
@@ -928,7 +967,8 @@ button:disabled {
   .sheet:not([open]) {
     transform: none;
   }
-  .step[data-state='running'] .step-mark::after {
+  .step[data-state='running'] .step-mark::after,
+  .task-dot {
     animation: none;
   }
   [data-state='starting'] .dot,

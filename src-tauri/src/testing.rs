@@ -436,6 +436,7 @@ pub struct FakeEvents {
     pub services: Mutex<Vec<ServiceStatus>>,
     pub sites: Mutex<Vec<Vec<Site>>>,
     pub progress: Mutex<Vec<crate::domain::SiteProgress>>,
+    pub installs: Mutex<Vec<crate::domain::catalog::InstallProgress>>,
 }
 
 impl FakeEvents {
@@ -471,6 +472,10 @@ impl EventSink for FakeEvents {
 
     fn site_progress(&self, progress: &crate::domain::SiteProgress) {
         self.progress.lock().unwrap().push(progress.clone());
+    }
+
+    fn install_progress(&self, progress: &crate::domain::catalog::InstallProgress) {
+        self.installs.lock().unwrap().push(progress.clone());
     }
 }
 
@@ -658,6 +663,8 @@ pub struct FakeDownloader {
     fs: std::sync::Arc<FakeFs>,
     pub urls: Mutex<Vec<String>>,
     pub fail: Mutex<bool>,
+    /// Contenido que devuelve cada URL (por ejemplo, un JSON de versiones).
+    pub responses: Mutex<HashMap<String, String>>,
 }
 
 impl FakeDownloader {
@@ -666,7 +673,15 @@ impl FakeDownloader {
             fs,
             urls: Mutex::new(Vec::new()),
             fail: Mutex::new(false),
+            responses: Mutex::new(HashMap::new()),
         }
+    }
+
+    pub fn respond(&self, url: &str, body: &str) {
+        self.responses
+            .lock()
+            .unwrap()
+            .insert(url.to_string(), body.to_string());
     }
 }
 
@@ -679,7 +694,11 @@ impl crate::ports::Downloader for FakeDownloader {
                 "No se pudo descargar {url}: sin conexión"
             )));
         }
-        self.fs.write(dest, &format!("descargado de {url}"))
+        let body = self.responses.lock().unwrap().get(url).cloned();
+        self.fs.write(
+            dest,
+            &body.unwrap_or_else(|| format!("descargado de {url}")),
+        )
     }
 }
 
@@ -687,6 +706,8 @@ impl crate::ports::Downloader for FakeDownloader {
 pub struct FakeArchive {
     fs: std::sync::Arc<FakeFs>,
     pub broken: Mutex<bool>,
+    /// Si se indica, los archivos (rutas relativas) que trae el zip.
+    pub files: Mutex<Option<Vec<String>>>,
 }
 
 impl FakeArchive {
@@ -694,12 +715,23 @@ impl FakeArchive {
         FakeArchive {
             fs,
             broken: Mutex::new(false),
+            files: Mutex::new(None),
         }
+    }
+
+    pub fn contains(&self, files: &[&str]) {
+        *self.files.lock().unwrap() = Some(files.iter().map(|f| f.to_string()).collect());
     }
 }
 
 impl crate::ports::ArchiveExtractor for FakeArchive {
     fn extract_zip(&self, _archive: &Path, dest: &Path, _strip_top: bool) -> Result<(), AppError> {
+        if let Some(files) = self.files.lock().unwrap().clone() {
+            for file in files {
+                self.fs.write(&dest.join(file), "")?;
+            }
+            return Ok(());
+        }
         if *self.broken.lock().unwrap() {
             return self.fs.write(&dest.join("LEEME.txt"), "no es WordPress");
         }

@@ -1,5 +1,6 @@
 //! Tipos del dominio. Sin llamadas al sistema operativo.
 
+pub mod catalog;
 mod config;
 mod dotenv;
 mod hosts;

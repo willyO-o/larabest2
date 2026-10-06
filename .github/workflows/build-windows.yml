@@ -24,3 +24,23 @@ jobs:
         with:
           name: instalador-windows
           path: src-tauri/target/release/bundle/nsis/*.exe
+
+  # Agrega todo desde el menú Agregar (descargas oficiales reales) y arranca
+  # la pila: sitios, correo a Mailpit, Adminer, phpMyAdmin, WordPress,
+  # Laravel, MongoDB cerrado con Ctrl+C, HTTPS, cambio de PHP y huérfanos.
+  servicios:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: cargo test --manifest-path src-tauri/Cargo.toml --lib -- --ignored --nocapture e2e_windows
+        env:
+          LARABEST_E2E_ROOT: ${{ runner.temp }}\larabest-e2e
+      - if: failure()
+        shell: pwsh
+        run: |
+          Get-ChildItem "$env:RUNNER_TEMP\larabest-e2e\logs" -File -ErrorAction SilentlyContinue |
+            ForEach-Object { "==== $($_.Name)"; Get-Content $_.FullName -Tail 40 }

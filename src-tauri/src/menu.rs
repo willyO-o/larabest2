@@ -8,6 +8,7 @@ use tauri::menu::{
 use tauri::{AppHandle, Emitter, Manager, Wry};
 
 use crate::commands::{open_path, open_url};
+use crate::domain::catalog;
 use crate::domain::{BinaryLayout, DatabaseClient, ServiceId, ServiceState, ThemePreference};
 use crate::error::AppError;
 use crate::usecases::ConfigTarget;
@@ -295,6 +296,20 @@ pub fn build(app: &AppHandle, from_tray: bool) -> tauri::Result<Menu<Wry>> {
         )?);
     }
 
+    // Agregar: descargar versiones y herramientas (el "Quick add").
+    let mut add = Vec::new();
+    for (i, package) in catalog::PACKAGES.iter().enumerate() {
+        // Separadores entre la pila base, los opcionales y las herramientas.
+        if i == 4 || i == 8 {
+            add.push(sep(app)?);
+        }
+        let label = match core.package_status(package) {
+            Some(status) => format!("{}  ({status})", package.label),
+            None => package.label.to_string(),
+        };
+        add.push(text(app, &format!("add:{}", package.id), &label)?);
+    }
+
     let theme = core.theme();
     let themes = vec![
         check(
@@ -368,6 +383,7 @@ pub fn build(app: &AppHandle, from_tray: bool) -> tauri::Result<Menu<Wry>> {
     builder = builder
         .item(&submenu(app, "Logs", logs)?)
         .item(&submenu(app, "Herramientas", tools)?)
+        .item(&submenu(app, "Agregar", add)?)
         .separator()
         .item(&submenu(app, "Preferencias", prefs)?)
         .separator();
@@ -455,6 +471,18 @@ async fn run(app: &AppHandle, id: &str) -> Result<(), AppError> {
         } else {
             core.open_in_editor(&path)
         };
+    }
+    if let Some(package) = id.strip_prefix("add:") {
+        let message = core.install_package(package).await?;
+        // Con la ventana oculta (desde la bandeja), el aviso va en un diálogo.
+        let visible = app
+            .get_webview_window("main")
+            .and_then(|w| w.is_visible().ok())
+            .unwrap_or(false);
+        if !visible {
+            tray::show_info(app, &message);
+        }
+        return Ok(());
     }
     if let Some(client) = id.strip_prefix("dbclient:") {
         let client: DatabaseClient =

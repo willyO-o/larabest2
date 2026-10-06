@@ -35,6 +35,23 @@ Lo generado (`etc\nginx\nginx.conf`, `etc\php\php.ini`, `etc\mariadb\my.cnf`) se
 
 Las extensiones marcadas en el menú se guardan en `app.json` y PHP se reinicia solo si estaba en marcha. Al cambiar de versión, se reinicia solo ese servicio.
 
+## Agregar programas desde el menú
+
+**Menú → Agregar** instala con un clic (como el *Quick add* de Laragon):
+
+| Paquete | Windows | macOS |
+| --- | --- | --- |
+| PHP 8.4 y 8.3 | última versión de la rama desde `windows.php.net` (NTS x64) | `brew install php@8.4` / `php@8.3` |
+| Nginx | versión estable de `nginx.org` | `brew install nginx` |
+| MariaDB 11.4 | última 11.4 de `archive.mariadb.org` | `brew install mariadb@11.4` |
+| PostgreSQL 17 | binarios de EDB (`get.enterprisedb.com`) | `brew install postgresql@17` |
+| Redis | `redis-windows/redis-windows` (GitHub) | `brew install redis` |
+| MongoDB | `fastdl.mongodb.org` | tap `mongodb/brew` y `brew install mongodb-community` |
+| Mailpit | `axllent/mailpit` (GitHub) | `brew install mailpit` |
+| Adminer, phpMyAdmin, Composer | sus descargas oficiales, en `bin\` | igual |
+
+En Windows cada versión queda en su carpeta (`bin\php\8.4.13\`), así que conviven varias y se elige en **Menú → PHP → Versión**. El menú muestra al lado lo que ya está instalado; volver a agregar algo baja la versión más nueva de esa rama si la hay. El progreso aparece en la línea de estado y, al terminar, la fila del servicio ya muestra la versión nueva. En macOS hace falta tener Homebrew (<https://brew.sh>); la app solo ejecuta `brew install`.
+
 ## Base de datos: Adminer o phpMyAdmin
 
 El botón **Base de datos** abre Adminer en `http://adminer.test` (con MariaDB como root sin contraseña). Con phpMyAdmin copiado en `bin\phpmyadmin\`, se sirve en `http://phpmyadmin.test` y entra solo como root; en **Menú → Preferencias → Botón Base de datos** se elige cuál abre el botón (**Menú → MariaDB** tiene los dos). La app genera `bin\phpmyadmin\config.inc.php` (phpMyAdmin solo lo lee de su carpeta); tus ajustes van en `etc\phpmyadmin\custom.inc.php`.
@@ -101,7 +118,7 @@ La app crea todas estas carpetas la primera vez que se abre.
 
 ## Preparar la carpeta `bin\`
 
-En la fase 1 los binarios se descargan y copian a mano. Cada versión va en su propia carpeta, con el número de versión como nombre. La app la detecta si encuentra el ejecutable indicado.
+Lo más simple es **Menú → Agregar** (ver arriba). También se pueden copiar a mano. Cada versión va en su propia carpeta, con el número de versión como nombre. La app la detecta si encuentra el ejecutable indicado.
 
 | Servicio | De dónde | Qué descargar | Carpeta destino | La app busca |
 | --- | --- | --- | --- | --- |

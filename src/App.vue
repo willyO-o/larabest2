@@ -9,15 +9,17 @@ import ServiceRow from './components/ServiceRow.vue'
 import ThemeSwitch from './components/ThemeSwitch.vue'
 import { attempt, lastError } from './lib/errors'
 import { SERVICE_LABEL, useServicesStore } from './stores/services'
+import { useInstallsStore } from './stores/installs'
 import { useSettingsStore } from './stores/settings'
 import { useSitesStore } from './stores/sites'
 
 const services = useServicesStore()
 const sites = useSitesStore()
 const settings = useSettingsStore()
+const installs = useInstallsStore()
 
 onMounted(async () => {
-  await Promise.all([services.init(), sites.init(), settings.init()])
+  await Promise.all([services.init(), sites.init(), settings.init(), installs.init()])
   // La ventana se crea oculta: se muestra cuando ya está pintada con su tema.
   requestAnimationFrame(() => attempt(() => invoke('app_ready')))
 })
@@ -118,23 +120,49 @@ function openMenu(e?: MouseEvent) {
     <ActionBar />
 
     <footer class="statusline">
-      <span class="statusline-root" :title="settings.settings?.root">{{ settings.settings?.root }}</span>
-      <span class="statusline-sep" aria-hidden="true">·</span>
-      <span>{{ sitesLabel }} en www</span>
-      <template v-if="settings.ssl">
+      <!-- Mientras se agrega un paquete, su progreso ocupa este lugar. -->
+      <template v-if="!installs.current">
+        <span class="statusline-root" :title="settings.settings?.root">{{
+          settings.settings?.root
+        }}</span>
+        <span class="statusline-sep" aria-hidden="true">·</span>
+        <span>{{ sitesLabel }} en www</span>
+      </template>
+      <template v-if="settings.ssl && !installs.current">
         <span class="statusline-sep" aria-hidden="true">·</span>
         <span class="statusline-https"><AppIcon name="lock" />HTTPS</span>
       </template>
       <template v-if="sites.missingHosts.length">
-        <span class="statusline-sep" aria-hidden="true">·</span>
+        <span v-if="!installs.current" class="statusline-sep" aria-hidden="true">·</span>
         <button class="statusline-warn" :disabled="sites.syncing" @click="sites.sync()">
           {{ sites.missingHosts.length }} sin archivo hosts, reintentar
         </button>
       </template>
+      <template v-if="installs.current">
+        <span v-if="sites.missingHosts.length" class="statusline-sep" aria-hidden="true">·</span>
+        <span
+          class="statusline-task"
+          :data-state="installs.current.state"
+          role="status"
+          :title="installs.current.detail ?? installs.current.step"
+        >
+          <span v-if="installs.current.state === 'running'" class="task-dot" aria-hidden="true" />
+          <AppIcon v-else :name="installs.current.state === 'done' ? 'check' : 'alert'" />
+          <span class="task-text">{{
+            installs.current.state === 'done'
+              ? installs.current.detail
+              : installs.current.state === 'failed'
+                ? `No se pudo agregar ${installs.current.label}`
+                : `${installs.current.step}…`
+          }}</span>
+        </span>
+      </template>
       <button class="statusline-new" @click="sites.openCreate()">
         <AppIcon name="plus" />Nuevo sitio
       </button>
-      <span v-if="!sites.missingHosts.length" class="statusline-hint">Clic derecho: menú</span>
+      <span v-if="!sites.missingHosts.length && !installs.current" class="statusline-hint"
+        >Clic derecho: menú</span
+      >
     </footer>
 
     <CreateSitePanel />

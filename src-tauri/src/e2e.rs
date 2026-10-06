@@ -1,0 +1,350 @@
+//! Lo común a las pruebas de punta a punta de Windows y macOS: la app
+//! armada con los adaptadores reales de la plataforma y el recorrido que un
+//! usuario haría con ella. Solo se simulan el archivo hosts (pediría
+//! permiso de administrador), la terminal (abriría una ventana) y la
+//! confianza en la CA (pediría confirmación); los dominios se resuelven con
+//! `curl --resolve`.
+
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::Duration;
+
+use async_trait::async_trait;
+
+use crate::adapters::shared::archive::ZipExtractor;
+use crate::adapters::shared::ca::{LocalCa, TrustStore};
+use crate::adapters::shared::config::JsonConfigStore;
+use crate::adapters::shared::fs::StdFileStore;
+use crate::adapters::shared::secrets::OsSecrets;
+use crate::domain::{AppConfig, BinaryLayout, Paths, ServiceId, ServiceState, SitePreset};
+use crate::error::AppError;
+use crate::ports::{BinaryProvider, ConfigStore, Downloader, PortChecker, ProcessRunner};
+use crate::supervisor::{Deps, Supervisor, Timings};
+use crate::testing::{FakeEvents, FakeHosts, FakeShell};
+use crate::usecases::{Core, CoreAdapters};
+
+const CURL: &str = if cfg!(windows) {
+    r"C:\Windows\System32\curl.exe"
+} else {
+    "/usr/bin/curl"
+};
+
+/// Puertos de la prueba. Los opcionales evitan los de un PostgreSQL o un
+/// Redis que el runner pudiera tener en marcha.
+#[derive(Debug, Clone, Copy)]
+pub struct E2ePorts {
+    pub http: u16,
+    pub https: u16,
+    pub php: u16,
+    pub mariadb: u16,
+    pub postgresql: u16,
+    pub redis: u16,
+    pub mongodb: u16,
+    pub smtp: u16,
+    pub mail_web: u16,
+}
+
+impl E2ePorts {
+    pub fn all(&self) -> Vec<u16> {
+        vec![
+            self.http,
+            self.https,
+            self.php,
+            self.mariadb,
+            self.postgresql,
+            self.redis,
+            self.mongodb,
+            self.smtp,
+            self.mail_web,
+        ]
+    }
+}
+
+/// Confía en todo: en el CI no hay quien acepte el aviso del sistema.
+struct TrustAll;
+
+#[async_trait]
+impl TrustStore for TrustAll {
+    async fn contains(&self, _cert: &Path, _thumbprint: &str) -> bool {
+        true
+    }
+
+    async fn add(&self, _cert: &Path) -> Result<(), AppError> {
+        Ok(())
+    }
+}
+
+/// Adaptadores de la plataforma que se prueba.
+pub struct Platform {
+    pub layout: BinaryLayout,
+    pub runner: Arc<dyn ProcessRunner>,
+    pub ports: Arc<dyn PortChecker>,
+    pub binaries: Arc<dyn BinaryProvider>,
+    pub downloader: Arc<dyn Downloader>,
+    pub system_path: String,
+}
+
+pub struct World {
+    pub root: PathBuf,
+    pub core: Arc<Core>,
+    pub deps: Deps,
+    pub ports: E2ePorts,
+}
+
+/// Carpeta raíz vacía: `LARABEST_E2E_ROOT` (el CI la deja para leer los
+/// logs si algo falla) o una temporal.
+pub fn root() -> PathBuf {
+    let root = std::env::var_os("LARABEST_E2E_ROOT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| std::env::temp_dir().join("larabest-e2e"));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    root
+}
+
+pub fn world(root: PathBuf, platform: Platform, ports: E2ePorts) -> World {
+    let paths = Paths::new(&root);
+    let config = Arc::new(JsonConfigStore::new(paths.app_json()));
+    config
+        .save(&AppConfig {
+            http_port: ports.http,
+            https_port: ports.https,
+            php_base_port: ports.php,
+            mariadb_port: ports.mariadb,
+            postgresql_port: ports.postgresql,
+            redis_port: ports.redis,
+            mongodb_port: ports.mongodb,
+            mailpit_smtp_port: ports.smtp,
+            mailpit_http_port: ports.mail_web,
+            ..AppConfig::default()
+        })
+        .unwrap();
+    let deps = Deps {
+        app_name: "LARABEST".into(),
+        paths: paths.clone(),
+        layout: platform.layout,
+        fs: Arc::new(StdFileStore),
+        runner: platform.runner,
+        ports: platform.ports,
+        binaries: platform.binaries,
+        config,
+        events: Arc::new(FakeEvents::default()),
+    };
+    let timings = Timings {
+        health_timeout: Duration::from_secs(60),
+        ..Timings::default()
+    };
+    let supervisor = Supervisor::new(deps.clone(), timings);
+    let ca = LocalCa::new(
+        root.join("ca"),
+        paths,
+        "LARABEST".into(),
+        Arc::new(TrustAll),
+    );
+    let core = Arc::new(Core::new(
+        supervisor,
+        CoreAdapters {
+            hosts: Arc::new(FakeHosts::default()),
+            shell: Arc::new(FakeShell::default()),
+            downloader: platform.downloader,
+            archive: Arc::new(ZipExtractor),
+            ca: Arc::new(ca),
+            secrets: Arc::new(OsSecrets),
+        },
+        platform.system_path,
+    ));
+    World {
+        root,
+        core,
+        deps,
+        ports,
+    }
+}
+
+async fn curl(args: &[&str]) -> String {
+    let out = tokio::process::Command::new(CURL)
+        .args(args)
+        .output()
+        .await
+        .unwrap();
+    String::from_utf8_lossy(&out.stdout).into_owned()
+}
+
+/// Respuesta completa (cabeceras y cuerpo) contra 127.0.0.1.
+pub async fn get(host: &str, port: u16, path: &str, https: bool) -> String {
+    let scheme = if https { "https" } else { "http" };
+    curl(&[
+        "-sk",
+        "-i",
+        "--max-time",
+        "60",
+        "--resolve",
+        &format!("{host}:{port}:127.0.0.1"),
+        &format!("{scheme}://{host}:{port}{path}"),
+    ])
+    .await
+}
+
+/// Entra a Adminer como root sin contraseña, como lo haría el usuario, y
+/// devuelve la página con la lista de bases de datos.
+pub async fn adminer_databases(w: &World) -> String {
+    let jar = w.root.join("tmp").join("adminer-cookies.txt");
+    let jar = jar.to_string_lossy().into_owned();
+    let http = w.ports.http;
+    curl(&[
+        "-sk",
+        "-L",
+        "--max-time",
+        "60",
+        "-c",
+        &jar,
+        "-b",
+        &jar,
+        "--resolve",
+        &format!("adminer.test:{http}:127.0.0.1"),
+        "--data-urlencode",
+        "auth[driver]=server",
+        "--data-urlencode",
+        &format!("auth[server]=127.0.0.1:{}", w.ports.mariadb),
+        "--data-urlencode",
+        "auth[username]=root",
+        "--data-urlencode",
+        "auth[password]=",
+        "--data-urlencode",
+        "auth[db]=",
+        &format!("http://adminer.test:{http}/"),
+    ])
+    .await
+}
+
+fn dump_logs(root: &Path) {
+    let Ok(entries) = std::fs::read_dir(root.join("logs")) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let text = std::fs::read_to_string(entry.path()).unwrap_or_default();
+        let lines: Vec<&str> = text.lines().collect();
+        eprintln!("==== {}", entry.path().display());
+        for line in &lines[lines.len().saturating_sub(40)..] {
+            eprintln!("{line}");
+        }
+    }
+}
+
+pub fn check(w: &World, ok: bool, what: &str) {
+    if !ok {
+        dump_logs(&w.root);
+        for status in w.core.supervisor.snapshot() {
+            eprintln!("{:?}: {:?} {:?}", status.id, status.state, status.detail);
+        }
+        panic!("{what}");
+    }
+}
+
+pub fn running(w: &World, ids: &[ServiceId]) -> bool {
+    ids.iter()
+        .all(|&id| w.core.supervisor.state(id) == ServiceState::Running)
+}
+
+/// El recorrido común, con la pila ya instalada: sitio por carpeta, correo
+/// a Mailpit, base de datos, Adminer, WordPress, Laravel, MongoDB cerrado
+/// en orden, HTTPS y limpieza de huérfanos.
+pub async fn common_flow(w: &World, stack: &[ServiceId]) {
+    let ports = w.ports;
+    std::fs::create_dir_all(w.root.join("www").join("hola")).unwrap();
+    std::fs::write(
+        w.root.join("www").join("hola").join("index.php"),
+        "<?php echo 'hola ' . PHP_VERSION . ' ' . (extension_loaded('pdo_mysql') ? 'pdo' : 'sin-pdo');",
+    )
+    .unwrap();
+    w.core.sync_sites().await.unwrap();
+    w.core.start_all().await.unwrap();
+    check(w, running(w, stack), "la pila debe quedar en marcha");
+    let page = get("hola.test", ports.http, "/", false).await;
+    check(
+        w,
+        page.contains("200 OK") && page.contains("hola 8.") && page.contains(" pdo"),
+        &page,
+    );
+
+    // El correo de mail() llega a la bandeja de Mailpit.
+    std::fs::write(
+        w.root.join("www").join("hola").join("correo.php"),
+        "<?php var_dump(mail('ana@example.com', 'Prueba e2e', 'Hola', 'From: php@localhost'));",
+    )
+    .unwrap();
+    let sent = get("hola.test", ports.http, "/correo.php", false).await;
+    check(w, sent.contains("bool(true)"), &sent);
+    let inbox = curl(&[
+        "-s",
+        &format!("http://127.0.0.1:{}/api/v1/messages", ports.mail_web),
+    ])
+    .await;
+    check(w, inbox.contains("Prueba e2e"), &inbox);
+
+    // MariaDB con root sin contraseña por TCP, y Adminer ya dentro.
+    let ctx = w.core.supervisor.context().unwrap();
+    crate::drivers::mariadb::create_database(&ctx, "e2e")
+        .await
+        .unwrap();
+    let adminer = adminer_databases(w).await;
+    check(w, adminer.contains("e2e"), &adminer);
+
+    // WordPress en español: descarga, base de datos y wp-config.php.
+    let wp = w.core.create_site("blog", SitePreset::Wordpress).await;
+    check(w, wp.is_ok(), &format!("{wp:?}"));
+    let install = get("blog.test", ports.http, "/", false).await;
+    check(w, install.contains("wp-admin/install.php"), &install);
+
+    // Laravel con Composer, migraciones en MariaDB y correo a Mailpit.
+    let laravel = w.core.create_site("tienda", SitePreset::Laravel).await;
+    check(w, laravel.is_ok(), &format!("{laravel:?}"));
+    let home = get("tienda.test", ports.http, "/", false).await;
+    check(
+        w,
+        home.contains("200 OK") && home.contains("Laravel"),
+        &home,
+    );
+    let env = std::fs::read_to_string(w.root.join("www").join("tienda").join(".env")).unwrap();
+    check(
+        w,
+        env.contains(&format!("MAIL_PORT={}", ports.smtp))
+            && env.contains(&format!("REDIS_PORT={}", ports.redis)),
+        &env,
+    );
+
+    // MongoDB se detiene en orden (SIGTERM o Ctrl+C): al volver a
+    // arrancar no tiene que recuperarse de un cierre sucio.
+    w.core.stop(ServiceId::Mongodb).await.unwrap();
+    w.core.start(ServiceId::Mongodb).await.unwrap();
+    check(
+        w,
+        running(w, &[ServiceId::Mongodb]),
+        "MongoDB debe volver a arrancar",
+    );
+    let mongo_log = std::fs::read_to_string(w.root.join("logs").join("mongodb.log")).unwrap();
+    check(
+        w,
+        !mongo_log.contains("unclean shutdown"),
+        "MongoDB se cerró a la fuerza",
+    );
+
+    // HTTPS con la CA local.
+    w.core.set_ssl(true).await.unwrap();
+    check(w, running(w, stack), "Nginx debe volver con HTTPS");
+    let secure = get("hola.test", ports.https, "/", true).await;
+    check(w, secure.contains("hola 8."), &secure);
+}
+
+/// Si la app muere sin detener nada, al volver a abrirla limpia los
+/// procesos huérfanos por sus PID guardados.
+pub async fn orphans_are_cleaned(w: &World) {
+    let reopened = Supervisor::new(w.deps.clone(), Timings::default());
+    reopened.cleanup_orphans().await;
+    let ports = w.ports.all();
+    let closed = (0..150).any(|_| {
+        std::thread::sleep(Duration::from_millis(100));
+        ports.iter().all(|&p| !w.deps.ports.is_listening(p))
+    });
+    check(w, closed, "los huérfanos deben quedar detenidos");
+}

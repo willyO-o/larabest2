@@ -13,6 +13,9 @@ pub mod usecases;
 #[cfg(test)]
 mod testing;
 
+#[cfg(all(test, any(windows, target_os = "macos")))]
+mod e2e;
+
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -51,6 +54,10 @@ impl EventSink for TauriEvents {
 
     fn site_progress(&self, progress: &SiteProgress) {
         let _ = self.app.emit("sites:progress", progress);
+    }
+
+    fn install_progress(&self, progress: &domain::catalog::InstallProgress) {
+        let _ = self.app.emit("install:progress", progress);
     }
 }
 
