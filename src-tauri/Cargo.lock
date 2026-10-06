@@ -2087,6 +2087,7 @@ name = "larabest"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "libc",
  "minijinja",
  "notify",
  "p256",

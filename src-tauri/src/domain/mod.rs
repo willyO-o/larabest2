@@ -3,6 +3,7 @@
 mod config;
 mod dotenv;
 mod hosts;
+mod layout;
 mod paths;
 mod service;
 mod site;
@@ -11,6 +12,7 @@ mod version;
 pub use config::{ActiveVersions, AppConfig, ThemePreference, DEFAULT_PHP_EXTENSIONS};
 pub use dotenv::set_env;
 pub use hosts::{decode_request, encode_request, merge_block, parse_block, HostEntry};
+pub use layout::BinaryLayout;
 pub use paths::{slash, Paths};
 pub use service::{
     explain_exit_code, Health, ServiceId, ServiceState, ServiceStatus, STATUS_DLL_NOT_FOUND,

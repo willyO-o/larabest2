@@ -71,6 +71,11 @@ impl Paths {
         self.etc_php().join("php.ini")
     }
 
+    /// Configuración de `php-fpm` (macOS).
+    pub fn php_fpm_conf(&self) -> PathBuf {
+        self.etc_php().join("php-fpm.conf")
+    }
+
     /// Archivos `.ini` propios del usuario; PHP los carga con
     /// `PHP_INI_SCAN_DIR` y nunca se regeneran.
     pub fn php_custom(&self) -> PathBuf {
@@ -96,6 +101,12 @@ impl Paths {
 
     pub fn mariadb_user_cnf(&self) -> PathBuf {
         self.mariadb_custom().join("user.cnf")
+    }
+
+    /// Socket de MariaDB en macOS: propio, para no chocar con otro MySQL
+    /// que use `/tmp/mysql.sock`.
+    pub fn mariadb_socket(&self) -> PathBuf {
+        self.tmp().join("mariadb.sock")
     }
 
     /// Envoltorio generado que carga Adminer sin pedir contraseña.

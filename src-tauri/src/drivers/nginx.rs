@@ -5,8 +5,8 @@ use std::time::Duration;
 use async_trait::async_trait;
 use minijinja::context;
 
-use super::{exe, force_stop, templates, wait_for_exit, RenderContext, ServiceDriver};
-use crate::domain::{slash, Health, ServiceId, Site};
+use super::{force_stop, templates, wait_for_exit, RenderContext, ServiceDriver};
+use crate::domain::{slash, BinaryLayout, Health, ServiceId, Site};
 use crate::error::AppError;
 use crate::ports::{write_if_changed, ProcessRunner, ProcessSpec};
 
@@ -20,11 +20,19 @@ pub struct NginxDriver;
 /// `nginx -p <raíz>/ -c etc/nginx/nginx.conf`, base de todos los comandos.
 fn base_spec(ctx: &RenderContext) -> Result<ProcessSpec, AppError> {
     let dir = ctx.install_dir(ServiceId::Nginx)?;
-    Ok(ProcessSpec::new(dir.join(exe("nginx")), &dir)
+    let spec = ProcessSpec::new(ctx.program(ServiceId::Nginx, "nginx")?, &dir)
         .arg("-p")
         .arg(format!("{}/", slash(ctx.paths.root())))
         .arg("-c")
-        .arg(slash(&ctx.paths.nginx_conf())))
+        .arg(slash(&ctx.paths.nginx_conf()));
+    Ok(match ctx.layout {
+        // El Nginx de Homebrew abre su log de Homebrew antes de leer la
+        // configuración; `-e` lo manda a `logs/` desde el arranque.
+        BinaryLayout::Homebrew => spec
+            .arg("-e")
+            .arg(slash(&ctx.paths.logs().join("nginx-error.log"))),
+        BinaryLayout::Portable => spec,
+    })
 }
 
 fn signal_spec(ctx: &RenderContext, signal: &str) -> Result<ProcessSpec, AppError> {
@@ -142,18 +150,13 @@ impl ServiceDriver for NginxDriver {
 
     async fn render_config(&self, ctx: &RenderContext) -> Result<(), AppError> {
         let fs = ctx.fs.as_ref();
-        let install = ctx.install_dir(ServiceId::Nginx)?;
+        ctx.install(ServiceId::Nginx)?;
 
-        // mime.types y fastcgi_params se copian junto a nginx.conf para que
-        // `include fastcgi_params;` funcione igual con cualquier versión.
-        for file in ["mime.types", "fastcgi_params"] {
-            let source = install.join("conf").join(file);
-            let content = fs
-                .read_to_string(&source)
-                .map_err(|_| AppError::BinaryMissing {
-                    service: ServiceId::Nginx,
-                    detail: format!("falta {}", slash(&source)),
-                })?;
+        // mime.types y fastcgi_params van embebidos y se escriben junto a
+        // nginx.conf: `include fastcgi_params;` funciona igual con el zip de
+        // Windows y con Homebrew, que los deja fuera de su carpeta.
+        for file in [templates::MIME_TYPES, templates::FASTCGI_PARAMS] {
+            let content = templates::render(file, context! { app_name => ctx.app_name })?;
             write_if_changed(fs, &ctx.paths.etc_nginx().join(file), &content)?;
         }
 
@@ -168,7 +171,7 @@ impl ServiceDriver for NginxDriver {
             context! {
                 app_name => ctx.app_name,
                 http_port => ctx.config.http_port,
-                php_ports => ctx.config.php_ports(),
+                php_ports => ctx.php_ports(),
                 tmp => slash(&ctx.paths.tmp()),
                 logs => slash(&ctx.paths.logs()),
                 www => slash(&ctx.paths.www()),
@@ -233,7 +236,8 @@ impl ServiceDriver for NginxDriver {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::drivers::test_support::fixture;
+    use crate::drivers::exe;
+    use crate::drivers::test_support::{fixture, homebrew_fixture};
     use crate::ports::{CommandOutput, FileStore};
     use std::path::Path;
 
@@ -248,17 +252,9 @@ mod tests {
         }
     }
 
-    fn seed_nginx_conf(fs: &dyn FileStore) {
-        let conf = Path::new("C:/APP/bin/nginx/1.28.0/conf");
-        fs.write(&conf.join("mime.types"), "types {}\n").unwrap();
-        fs.write(&conf.join("fastcgi_params"), "fastcgi_param A B;\n")
-            .unwrap();
-    }
-
     #[tokio::test]
     async fn renders_nginx_conf_with_forward_slashes_and_upstream() {
         let f = fixture();
-        seed_nginx_conf(f.fs.as_ref());
         NginxDriver.render_config(&f.ctx).await.unwrap();
 
         let conf = f.fs.read("C:/APP/etc/nginx/nginx.conf");
@@ -267,19 +263,53 @@ mod tests {
         assert!(conf.contains("server 127.0.0.1:9003;\n    }"));
         assert!(conf.contains(r#"include "C:/APP/etc/nginx/sites/*.conf";"#));
         assert!(!conf.contains(r"C:\"));
-        assert_eq!(
-            f.fs.read("C:/APP/etc/nginx/fastcgi_params"),
-            "fastcgi_param A B;\n"
-        );
         assert!(f.fs.exists(Path::new("C:/APP/tmp/nginx/fastcgi")));
     }
 
     #[tokio::test]
-    async fn render_fails_clearly_without_nginx_conf_folder() {
+    async fn writes_embedded_mime_types_and_fastcgi_params() {
         let f = fixture();
+        NginxDriver.render_config(&f.ctx).await.unwrap();
+        let params = f.fs.read("C:/APP/etc/nginx/fastcgi_params");
+        assert!(params.starts_with("# Copia de conf/fastcgi_params de nginx"));
+        assert!(params.contains("La escribe APP_NAME"));
+        assert!(params.contains("fastcgi_param  REDIRECT_STATUS    200;\n"));
+        let mime = f.fs.read("C:/APP/etc/nginx/mime.types");
+        assert!(mime.contains("types {\n"));
+        assert!(mime.contains("application/javascript"));
+    }
+
+    #[tokio::test]
+    async fn render_fails_clearly_without_nginx() {
+        let mut f = fixture();
+        f.ctx.versions.remove(&ServiceId::Nginx);
         let err = NginxDriver.render_config(&f.ctx).await.unwrap_err();
         assert!(matches!(err, AppError::BinaryMissing { .. }));
-        assert!(err.to_string().contains("mime.types"));
+        assert!(err.to_string().contains("C:/APP/bin/nginx"));
+    }
+
+    #[tokio::test]
+    async fn homebrew_has_one_upstream_server_and_logs_from_the_start() {
+        let f = homebrew_fixture();
+        NginxDriver.render_config(&f.ctx).await.unwrap();
+        let conf = f.fs.read("/Users/ana/LARABEST/etc/nginx/nginx.conf");
+        assert!(conf.contains("upstream php_upstream {\n        server 127.0.0.1:9000;\n    }"));
+        let spec = &NginxDriver.start_specs(&f.ctx)[0];
+        assert_eq!(
+            slash(&spec.program),
+            "/opt/homebrew/Cellar/nginx/1.29.1/bin/nginx"
+        );
+        assert_eq!(
+            spec.args,
+            vec![
+                "-p",
+                "/Users/ana/LARABEST/",
+                "-c",
+                "/Users/ana/LARABEST/etc/nginx/nginx.conf",
+                "-e",
+                "/Users/ana/LARABEST/logs/nginx-error.log"
+            ]
+        );
     }
 
     #[test]

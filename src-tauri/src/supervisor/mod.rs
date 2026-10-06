@@ -6,8 +6,8 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::domain::{
-    explain_exit_code, Health, InstalledVersion, Paths, ServiceId, ServiceState, ServiceStatus,
-    STATUS_DLL_NOT_FOUND,
+    explain_exit_code, BinaryLayout, Health, InstalledVersion, Paths, ServiceId, ServiceState,
+    ServiceStatus, STATUS_DLL_NOT_FOUND,
 };
 use crate::drivers::{self, RenderContext, ServiceDriver};
 use crate::error::AppError;
@@ -21,6 +21,7 @@ use crate::usecases::sites::scan_sites;
 pub struct Deps {
     pub app_name: String,
     pub paths: Paths,
+    pub layout: BinaryLayout,
     pub fs: Arc<dyn FileStore>,
     pub runner: Arc<dyn ProcessRunner>,
     pub ports: Arc<dyn PortChecker>,
@@ -129,6 +130,7 @@ impl Supervisor {
         let ctx = RenderContext {
             app_name: self.deps.app_name.clone(),
             paths: self.deps.paths.clone(),
+            layout: self.deps.layout,
             config,
             versions,
             sites,
@@ -489,11 +491,28 @@ impl Supervisor {
     }
 }
 
+/// La versión guardada; si ya no está (por ejemplo, `brew upgrade` cambió
+/// 8.4.13 por 8.4.14), la más reciente de la misma rama; si no, la más
+/// reciente instalada. `installed` viene de la más nueva a la más vieja.
 fn pick_version(installed: &[InstalledVersion], wanted: Option<&str>) -> Option<InstalledVersion> {
     wanted
-        .and_then(|w| installed.iter().find(|v| v.version == w))
+        .and_then(|w| {
+            installed
+                .iter()
+                .find(|v| v.version == w)
+                .or_else(|| installed.iter().find(|v| same_branch(&v.version, w)))
+        })
         .or_else(|| installed.first())
         .cloned()
+}
+
+/// `true` si coinciden mayor y menor ("8.4.13" y "8.4.14").
+fn same_branch(a: &str, b: &str) -> bool {
+    let branch = |v: &str| -> Option<(String, String)> {
+        let mut parts = v.split('.');
+        Some((parts.next()?.to_string(), parts.next()?.to_string()))
+    };
+    matches!((branch(a), branch(b)), (Some(x), Some(y)) if x == y)
 }
 
 fn exit_message(id: ServiceId, code: Option<i32>, at_start: bool) -> String {

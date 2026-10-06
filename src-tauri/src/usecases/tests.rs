@@ -2,7 +2,7 @@ use std::path::Path;
 
 use crate::domain::{HostEntry, ServiceId, ServiceState};
 use crate::ports::FileStore;
-use crate::testing::{Harness, ROOT};
+use crate::testing::{Harness, MAC_ROOT, ROOT};
 
 #[tokio::test]
 async fn switch_php_saves_version_and_restarts_only_php() {
@@ -605,4 +605,85 @@ async fn terminal_php_uses_the_generated_ini() {
     let env = h.core().terminal_env().unwrap();
     assert_eq!(env["PHPRC"], format!("{ROOT}/etc/php"));
     assert_eq!(env["PHP_INI_SCAN_DIR"], format!("{ROOT}/etc/php/custom"));
+}
+
+// ---------------------------------------------------------------- Homebrew
+
+#[tokio::test]
+async fn homebrew_terminal_puts_formula_bins_and_composer_first() {
+    let h = Harness::homebrew();
+    h.fs.write(
+        Path::new(&format!("{MAC_ROOT}/bin/composer/composer.phar")),
+        "",
+    )
+    .unwrap();
+    let env = h.core().terminal_env().unwrap();
+    // Sin PATH del sistema: la terminal de macOS lo antepone al de la shell.
+    assert_eq!(
+        env["PATH"],
+        [
+            "/opt/homebrew/Cellar/php@8.4/8.4.13/bin",
+            "/opt/homebrew/Cellar/mariadb@11.4/11.4.8/bin",
+            "/opt/homebrew/Cellar/nginx/1.29.1/bin",
+            "/Users/ana/LARABEST/etc/shell",
+        ]
+        .join(":")
+    );
+    assert_eq!(
+        env["MYSQL_UNIX_PORT"],
+        format!("{MAC_ROOT}/tmp/mariadb.sock")
+    );
+    let composer = format!("{MAC_ROOT}/etc/shell/composer");
+    assert!(h
+        .fs
+        .read(&composer)
+        .starts_with("#!/bin/sh\n# Generado por APP_NAME. No editar.\nexec php \"/Users/ana/LARABEST/bin/composer/composer.phar\" \"$@\""));
+    assert!(h.fs.is_executable(&composer));
+    assert!(!h
+        .fs
+        .exists(Path::new(&format!("{MAC_ROOT}/etc/shell/composer.bat"))));
+}
+
+#[tokio::test]
+async fn homebrew_bootstrap_skips_service_bins() {
+    let h = Harness::homebrew();
+    h.core().bootstrap().await.unwrap();
+    assert!(!h.fs.exists(Path::new(&format!("{MAC_ROOT}/bin/php"))));
+    for dir in ["bin/adminer", "bin/composer", "www", "logs", "tmp"] {
+        assert!(
+            h.fs.exists(Path::new(&format!("{MAC_ROOT}/{dir}"))),
+            "{dir}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn homebrew_has_no_extension_toggles_and_explains_missing_versions() {
+    let h = Harness::homebrew();
+    let core = h.core();
+    assert!(core.php_extensions().unwrap().is_empty());
+    let err = core.switch_php("8.2.1").await.unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "La versión 8.2.1 de PHP no está instalada con Homebrew"
+    );
+}
+
+#[tokio::test]
+async fn homebrew_start_all_runs_fpm_once() {
+    let h = Harness::homebrew();
+    h.core().start_all().await.unwrap();
+    for id in ServiceId::ALL {
+        assert_eq!(h.supervisor.state(id), ServiceState::Running, "{id:?}");
+    }
+    let spawned = h.runner.spawned();
+    let fpm: Vec<_> = spawned
+        .iter()
+        .filter(|s| s.exe_name() == "php-fpm")
+        .collect();
+    assert_eq!(fpm.len(), 1);
+    assert!(h
+        .fs
+        .read(&format!("{MAC_ROOT}/etc/nginx/nginx.conf"))
+        .contains("server 127.0.0.1:9000;\n    }"));
 }

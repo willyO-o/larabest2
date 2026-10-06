@@ -1,1 +1,21 @@
-//! Adaptadores de macOS: fase 3. Hasta entonces se usan los de `unsupported`.
+//! Adaptadores de macOS. Solo usan herramientas que trae el sistema
+//! (`lsof`, `osascript`, `security`, `curl`, `open`) y los programas de
+//! Homebrew. Se compilan también en Linux para correr sus pruebas.
+
+mod download;
+#[cfg(all(test, target_os = "macos"))]
+mod e2e;
+mod homebrew;
+mod hosts;
+mod ports;
+mod process;
+mod shell;
+mod trust;
+
+pub use download::CurlDownloader;
+pub use homebrew::HomebrewBinaryProvider;
+pub use hosts::{apply_hosts_request, MacHostsManager};
+pub use ports::MacPortChecker;
+pub use process::UnixProcessRunner;
+pub use shell::MacShellLauncher;
+pub use trust::KeychainTrustStore;

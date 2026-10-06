@@ -30,6 +30,7 @@ fn parent(path: &str) -> Option<&str> {
 pub struct FakeFs {
     files: Mutex<BTreeMap<String, String>>,
     dirs: Mutex<BTreeSet<String>>,
+    executables: Mutex<BTreeSet<String>>,
 }
 
 impl FakeFs {
@@ -40,6 +41,10 @@ impl FakeFs {
             .get(path)
             .cloned()
             .unwrap_or_else(|| panic!("no existe {path}"))
+    }
+
+    pub fn is_executable(&self, path: &str) -> bool {
+        self.executables.lock().unwrap().contains(path)
     }
 
     fn add_dirs(&self, mut path: &str) {
@@ -123,6 +128,11 @@ impl FileStore for FakeFs {
             .lock()
             .unwrap()
             .retain(|d| d != &k && !d.starts_with(&prefix));
+        Ok(())
+    }
+
+    fn set_executable(&self, path: &Path) -> Result<(), AppError> {
+        self.executables.lock().unwrap().insert(key(path));
         Ok(())
     }
 }
@@ -343,10 +353,18 @@ pub struct FakeBinaries {
 
 impl FakeBinaries {
     pub fn add(&self, root: &str, service: ServiceId, version: &str) {
+        self.add_at(
+            service,
+            version,
+            &format!("{root}/bin/{}/{version}", service.key()),
+        );
+    }
+
+    pub fn add_at(&self, service: ServiceId, version: &str, path: &str) {
         self.installed.lock().unwrap().push(InstalledVersion {
             service,
             version: version.into(),
-            path: format!("{root}/bin/{}/{version}", service.key()),
+            path: path.into(),
         });
     }
 }
@@ -467,11 +485,17 @@ impl HostsManager for FakeHosts {
 #[derive(Default)]
 pub struct FakeShell {
     pub opened: Mutex<Vec<(String, HashMap<String, String>)>>,
+    pub edited: Mutex<Vec<String>>,
 }
 
 impl ShellLauncher for FakeShell {
     fn open_terminal(&self, cwd: &Path, env: &HashMap<String, String>) -> Result<(), AppError> {
         self.opened.lock().unwrap().push((slash(cwd), env.clone()));
+        Ok(())
+    }
+
+    fn open_in_editor(&self, path: &Path) -> Result<(), AppError> {
+        self.edited.lock().unwrap().push(slash(path));
         Ok(())
     }
 }
@@ -494,36 +518,67 @@ pub struct Harness {
 }
 
 pub const ROOT: &str = "C:/APP";
+/// Raíz de las pruebas con Homebrew (macOS).
+pub const MAC_ROOT: &str = "/Users/ana/LARABEST";
 
 impl Harness {
     /// Con Nginx 1.28.0, PHP 8.3.20 y 8.4.6, MariaDB 11.4.5 instalados y
     /// todos los puertos respondiendo.
     pub fn new() -> Self {
-        use std::sync::Arc;
-        let fs = Arc::new(FakeFs::default());
-        let runner = Arc::new(FakeRunner::default());
-        let ports = Arc::new(FakePorts::default());
-        let binaries = Arc::new(FakeBinaries::default());
-        let config = Arc::new(FakeConfig::default());
-        let events = Arc::new(FakeEvents::default());
-
+        let binaries = FakeBinaries::default();
         binaries.add(ROOT, ServiceId::Nginx, "1.28.0");
         binaries.add(ROOT, ServiceId::Php, "8.3.20");
         binaries.add(ROOT, ServiceId::Php, "8.4.6");
         binaries.add(ROOT, ServiceId::Mariadb, "11.4.5");
-        let conf = format!("{ROOT}/bin/nginx/1.28.0/conf");
-        fs.write(Path::new(&format!("{conf}/mime.types")), "types {}\n")
-            .unwrap();
-        fs.write(Path::new(&format!("{conf}/fastcgi_params")), "\n")
-            .unwrap();
+        Self::build(ROOT, crate::domain::BinaryLayout::Portable, binaries)
+    }
+
+    /// Como en macOS: fórmulas de Homebrew (Nginx 1.29.1, PHP 8.3.27 y
+    /// 8.4.13, MariaDB 11.4.8) y raíz en la carpeta del usuario.
+    pub fn homebrew() -> Self {
+        let binaries = FakeBinaries::default();
+        let cellar = "/opt/homebrew/Cellar";
+        binaries.add_at(
+            ServiceId::Nginx,
+            "1.29.1",
+            &format!("{cellar}/nginx/1.29.1"),
+        );
+        binaries.add_at(
+            ServiceId::Php,
+            "8.3.27",
+            &format!("{cellar}/php@8.3/8.3.27"),
+        );
+        binaries.add_at(
+            ServiceId::Php,
+            "8.4.13",
+            &format!("{cellar}/php@8.4/8.4.13"),
+        );
+        binaries.add_at(
+            ServiceId::Mariadb,
+            "11.4.8",
+            &format!("{cellar}/mariadb@11.4/11.4.8"),
+        );
+        Self::build(MAC_ROOT, crate::domain::BinaryLayout::Homebrew, binaries)
+    }
+
+    fn build(root: &str, layout: crate::domain::BinaryLayout, binaries: FakeBinaries) -> Self {
+        use std::sync::Arc;
+        let fs = Arc::new(FakeFs::default());
+        let runner = Arc::new(FakeRunner::default());
+        let ports = Arc::new(FakePorts::default());
+        let binaries = Arc::new(binaries);
+        let config = Arc::new(FakeConfig::default());
+        let events = Arc::new(FakeEvents::default());
+
         // MariaDB ya inicializada salvo que la prueba diga lo contrario.
-        fs.create_dir_all(Path::new(&format!("{ROOT}/data/mariadb/mysql")))
+        fs.create_dir_all(Path::new(&format!("{root}/data/mariadb/mysql")))
             .unwrap();
         ports.set_listening(&[80, 9000, 9001, 9002, 9003]);
 
         let deps = crate::supervisor::Deps {
             app_name: "APP_NAME".into(),
-            paths: crate::domain::Paths::new(ROOT),
+            paths: crate::domain::Paths::new(root),
+            layout,
             fs: fs.clone(),
             runner: runner.clone(),
             ports: ports.clone(),
@@ -564,7 +619,11 @@ impl Harness {
                 ca: self.ca.clone(),
                 secrets: std::sync::Arc::new(FakeSecrets),
             },
-            "C:\\Windows".into(),
+            // En macOS el PATH base lo pone la propia terminal.
+            match self.supervisor.deps().layout {
+                crate::domain::BinaryLayout::Portable => "C:\\Windows".into(),
+                crate::domain::BinaryLayout::Homebrew => String::new(),
+            },
         )
     }
 }

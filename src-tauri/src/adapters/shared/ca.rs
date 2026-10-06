@@ -135,7 +135,9 @@ pub fn thumbprint(cert_pem: &str) -> Result<String, AppError> {
 /// Almacén de certificados de confianza del sistema.
 #[async_trait]
 pub trait TrustStore: Send + Sync {
-    async fn contains(&self, thumbprint: &str) -> bool;
+    /// `true` si el sistema confía en el certificado `cert` (en Windows se
+    /// busca por su huella SHA-1, `thumbprint`).
+    async fn contains(&self, cert: &Path, thumbprint: &str) -> bool;
     /// Agrega la CA; el sistema puede pedir confirmación al usuario.
     async fn add(&self, cert: &Path) -> Result<(), AppError>;
 }
@@ -186,6 +188,19 @@ impl LocalCa {
             .map_err(|e| AppError::io(format!("No se pudo escribir {}", slash(path)), e))
     }
 
+    /// La clave de la CA solo la lee su dueño (en Windows ya la protege la
+    /// carpeta del usuario).
+    fn write_secret(path: &Path, content: &str) -> Result<(), AppError> {
+        Self::write(path, content)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+                .map_err(|e| AppError::io(format!("No se pudo proteger {}", slash(path)), e))?;
+        }
+        Ok(())
+    }
+
     fn load_ca(&self) -> Result<Pem, AppError> {
         self.ensure_ca()?;
         Ok(Pem {
@@ -202,7 +217,7 @@ impl CertificateAuthority for LocalCa {
             return Ok(());
         }
         let ca = generate_ca(&self.app_name)?;
-        Self::write(&self.ca_key_path(), &ca.key)?;
+        Self::write_secret(&self.ca_key_path(), &ca.key)?;
         Self::write(&self.ca_cert_path(), &ca.cert)
     }
 
@@ -230,7 +245,7 @@ impl CertificateAuthority for LocalCa {
             return false;
         };
         match thumbprint(&cert) {
-            Ok(print) => self.store.contains(&print).await,
+            Ok(print) => self.store.contains(&self.ca_cert_path(), &print).await,
             Err(_) => false,
         }
     }
@@ -257,7 +272,7 @@ mod tests {
 
     #[async_trait]
     impl TrustStore for MemoryStore {
-        async fn contains(&self, thumbprint: &str) -> bool {
+        async fn contains(&self, _cert: &Path, thumbprint: &str) -> bool {
             self.prints.lock().unwrap().iter().any(|p| p == thumbprint)
         }
 

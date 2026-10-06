@@ -13,7 +13,8 @@ use std::sync::Arc;
 use minijinja::context;
 
 use crate::domain::{
-    slash, HostEntry, InstalledVersion, ServiceId, ServiceState, Site, ThemePreference,
+    slash, BinaryLayout, HostEntry, InstalledVersion, ServiceId, ServiceState, Site,
+    ThemePreference,
 };
 use crate::drivers::{nginx, templates};
 use crate::error::AppError;
@@ -71,7 +72,8 @@ pub struct Core {
     archive: Arc<dyn ArchiveExtractor>,
     ca: Arc<dyn CertificateAuthority>,
     secrets: Arc<dyn SecretSource>,
-    /// PATH del sistema, base del PATH propio de la terminal.
+    /// PATH del sistema, base del PATH propio de la terminal. Vacío en
+    /// macOS: allí la terminal antepone el PATH propio al de la shell.
     system_path: String,
     /// Evita dos sincronizaciones de sitios a la vez.
     sites_lock: tokio::sync::Mutex<()>,
@@ -98,7 +100,15 @@ impl Core {
     /// Crea la estructura de carpetas y limpia procesos huérfanos.
     pub async fn bootstrap(&self) -> Result<(), AppError> {
         let deps = self.supervisor.deps();
+        // Con Homebrew los programas no van en bin/<servicio>.
+        let service_bins: Vec<PathBuf> = ServiceId::ALL
+            .iter()
+            .map(|&id| deps.paths.bin_service(id))
+            .collect();
         for dir in deps.paths.layout_dirs() {
+            if deps.layout == BinaryLayout::Homebrew && service_bins.contains(&dir) {
+                continue;
+            }
             deps.fs.create_dir_all(&dir)?;
         }
         self.supervisor.cleanup_orphans().await;
@@ -152,9 +162,9 @@ impl Core {
         let deps = self.supervisor.deps();
         if !self.versions(id)?.iter().any(|v| v.version == version) {
             return Err(AppError::NotFound(format!(
-                "La versión {version} de {} no está en {}",
+                "La versión {version} de {} no está {}",
                 id.label(),
-                slash(&deps.paths.bin_service(id))
+                deps.layout.versions_place(&deps.paths, id)
             )));
         }
         let mut cfg = deps.config.load()?;
@@ -182,9 +192,13 @@ impl Core {
     }
 
     /// Extensiones disponibles en `ext/` de la versión activa de PHP, con
-    /// las activas marcadas. Incluye las activas que no se encuentren.
+    /// las activas marcadas. Incluye las activas que no se encuentren. Con
+    /// Homebrew no hay nada que elegir: vienen compiladas dentro de PHP.
     pub fn php_extensions(&self) -> Result<Vec<PhpExtension>, AppError> {
         let deps = self.supervisor.deps();
+        if deps.layout == BinaryLayout::Homebrew {
+            return Ok(Vec::new());
+        }
         let ctx = self.supervisor.context()?;
         let enabled: BTreeSet<String> = ctx.config.php_extensions().into_iter().collect();
         let mut names: BTreeSet<String> = enabled.clone();
@@ -433,32 +447,39 @@ impl Core {
         ))
     }
 
-    /// Entorno de la terminal: PHP activo, `mariadb/bin`, Nginx y Composer
+    /// Entorno de la terminal: PHP activo, MariaDB, Nginx y Composer
     /// delante del PATH del sistema, solo para esa consola.
     pub fn terminal_env(&self) -> Result<HashMap<String, String>, AppError> {
         let deps = self.supervisor.deps();
         let ctx = self.supervisor.context()?;
         let mut path: Vec<String> = Vec::new();
-        if let Some(php) = ctx.versions.get(&ServiceId::Php) {
-            path.push(php.path.clone());
+        for (id, program) in [
+            (ServiceId::Php, "php"),
+            (ServiceId::Mariadb, "mariadb"),
+            (ServiceId::Nginx, "nginx"),
+        ] {
+            if let Some(dir) = ctx
+                .program(id, program)
+                .ok()
+                .as_deref()
+                .and_then(|p| p.parent())
+            {
+                path.push(slash(dir));
+            }
         }
-        if let Some(mdb) = ctx.versions.get(&ServiceId::Mariadb) {
-            path.push(slash(&PathBuf::from(&mdb.path).join("bin")));
-        }
-        if let Some(nginx) = ctx.versions.get(&ServiceId::Nginx) {
-            path.push(nginx.path.clone());
-        }
-        let phar = deps.paths.bin_composer().join("composer.phar");
+        let phar = deps.paths.composer_phar();
         if deps.fs.exists(&phar) {
-            let bat = templates::render(
-                templates::COMPOSER_BAT,
+            let (template, file) = match deps.layout {
+                BinaryLayout::Portable => (templates::COMPOSER_BAT, "composer.bat"),
+                BinaryLayout::Homebrew => (templates::COMPOSER_SH, "composer"),
+            };
+            let script = templates::render(
+                template,
                 context! { app_name => deps.app_name, composer_phar => slash(&phar) },
             )?;
-            write_if_changed(
-                deps.fs.as_ref(),
-                &deps.paths.etc_shell().join("composer.bat"),
-                &bat,
-            )?;
+            let target = deps.paths.etc_shell().join(file);
+            write_if_changed(deps.fs.as_ref(), &target, &script)?;
+            deps.fs.set_executable(&target)?;
             path.push(slash(&deps.paths.etc_shell()));
         }
         // Las rutas internas usan "/", pero en el PATH van con "\" en Windows.
@@ -484,7 +505,19 @@ impl Core {
             "PHP_INI_SCAN_DIR".to_string(),
             slash(&deps.paths.php_custom()),
         );
+        if deps.layout == BinaryLayout::Homebrew {
+            // Así `mariadb -u root` entra sin indicar el socket.
+            env.insert(
+                "MYSQL_UNIX_PORT".to_string(),
+                slash(&deps.paths.mariadb_socket()),
+            );
+        }
         Ok(env)
+    }
+
+    /// Abre un archivo de configuración o log en el editor del sistema.
+    pub fn open_in_editor(&self, path: &std::path::Path) -> Result<(), AppError> {
+        self.shell.open_in_editor(path)
     }
 
     pub fn open_terminal(&self, cwd: Option<String>) -> Result<(), AppError> {

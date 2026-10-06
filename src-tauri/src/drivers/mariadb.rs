@@ -4,8 +4,8 @@ use std::time::Duration;
 use async_trait::async_trait;
 use minijinja::context;
 
-use super::{exe, force_stop, templates, wait_for_exit, RenderContext, ServiceDriver};
-use crate::domain::{slash, Health, ServiceId};
+use super::{force_stop, templates, wait_for_exit, RenderContext, ServiceDriver};
+use crate::domain::{slash, BinaryLayout, Health, ServiceId};
 use crate::error::AppError;
 use crate::ports::{write_if_changed, ProcessRunner, ProcessSpec};
 
@@ -16,12 +16,21 @@ pub struct MariadbDriver;
 
 fn tool(ctx: &RenderContext, name: &str) -> Result<ProcessSpec, AppError> {
     let dir = ctx.install_dir(ServiceId::Mariadb)?;
-    Ok(ProcessSpec::new(dir.join("bin").join(exe(name)), &dir))
+    Ok(ProcessSpec::new(
+        ctx.program(ServiceId::Mariadb, name)?,
+        &dir,
+    ))
+}
+
+/// Cliente de MariaDB sin leer otros `my.cnf` (por ejemplo el de Homebrew
+/// o un `~/.my.cnf` con contraseña): todo va en la línea de comandos.
+fn client(ctx: &RenderContext, name: &str) -> Result<ProcessSpec, AppError> {
+    Ok(tool(ctx, name)?.arg("--no-defaults"))
 }
 
 /// `mariadb-admin` contra 127.0.0.1 como root sin contraseña.
 fn admin(ctx: &RenderContext, command: &str) -> Result<ProcessSpec, AppError> {
-    Ok(tool(ctx, "mariadb-admin")?
+    Ok(client(ctx, "mariadb-admin")?
         .arg("--host=127.0.0.1")
         .arg(format!("--port={}", ctx.config.mariadb_port))
         .arg("--user=root")
@@ -40,7 +49,7 @@ pub fn create_database_spec(ctx: &RenderContext, db: &str) -> Result<ProcessSpec
             "Nombre de base de datos no válido: {db}"
         )));
     }
-    Ok(tool(ctx, "mariadb")?
+    Ok(client(ctx, "mariadb")?
         .arg("--host=127.0.0.1")
         .arg(format!("--port={}", ctx.config.mariadb_port))
         .arg("--user=root")
@@ -112,6 +121,9 @@ impl ServiceDriver for MariadbDriver {
                 logs => slash(&ctx.paths.logs()),
                 tmp => slash(&ctx.paths.tmp()),
                 custom_dir => slash(&ctx.paths.mariadb_custom()),
+                // En macOS el socket propio evita chocar con otro MySQL.
+                socket => (ctx.layout == BinaryLayout::Homebrew)
+                    .then(|| slash(&ctx.paths.mariadb_socket())),
             },
         )?;
         write_if_changed(fs, &ctx.paths.mariadb_cnf(), &cnf)?;
@@ -132,7 +144,24 @@ impl ServiceDriver for MariadbDriver {
                 slash(&datadir)
             )));
         }
-        let spec = tool(ctx, "mariadb-install-db")?
+        let mut spec = tool(ctx, "mariadb-install-db")?;
+        if ctx.layout == BinaryLayout::Homebrew {
+            // El script de Unix necesita la carpeta de la fórmula y, sin
+            // `normal`, root solo entraría por socket como usuario del
+            // sistema: Adminer, WordPress y Laravel entran por TCP.
+            spec = spec
+                .arg(format!(
+                    "--defaults-file={}",
+                    slash(&ctx.paths.mariadb_cnf())
+                ))
+                .arg(format!(
+                    "--basedir={}",
+                    ctx.install(ServiceId::Mariadb)?.path
+                ))
+                .arg("--auth-root-authentication-method=normal")
+                .arg("--skip-test-db");
+        }
+        let spec = spec
             .arg(format!("--datadir={}", slash(&datadir)))
             .log_to(ctx.paths.logs().join("mariadb-install.log"));
         let out = ctx.runner.run(&spec, INSTALL_TIMEOUT).await?;
@@ -192,7 +221,8 @@ impl ServiceDriver for MariadbDriver {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::drivers::test_support::fixture;
+    use crate::drivers::exe;
+    use crate::drivers::test_support::{fixture, homebrew_fixture};
     use crate::ports::{CommandOutput, FileStore};
     use std::path::Path;
 
@@ -207,7 +237,48 @@ mod tests {
         assert!(cnf.contains(r#"basedir = "C:/APP/bin/mariadb/11.4.5""#));
         assert!(cnf.contains("port = 3306\n"));
         assert!(cnf.contains("!includedir C:/APP/etc/mariadb/custom\n"));
+        assert!(!cnf.contains("socket"));
         assert!(f.fs.exists(Path::new("C:/APP/etc/mariadb/custom/user.cnf")));
+    }
+
+    #[tokio::test]
+    async fn homebrew_uses_its_own_socket() {
+        let f = homebrew_fixture();
+        MariadbDriver.render_config(&f.ctx).await.unwrap();
+        let cnf = f.fs.read("/Users/ana/LARABEST/etc/mariadb/my.cnf");
+        assert!(cnf.contains(r#"basedir = "/opt/homebrew/Cellar/mariadb@11.4/11.4.8""#));
+        let socket = r#"socket = "/Users/ana/LARABEST/tmp/mariadb.sock""#;
+        assert_eq!(cnf.matches(socket).count(), 2, "{cnf}");
+    }
+
+    #[tokio::test]
+    async fn homebrew_install_db_gets_basedir_and_passwordless_root() {
+        let f = homebrew_fixture();
+        MariadbDriver.first_run_setup(&f.ctx).await.unwrap();
+        let ran = f.runner.ran();
+        assert_eq!(
+            slash(&ran[0].program),
+            "/opt/homebrew/Cellar/mariadb@11.4/11.4.8/bin/mariadb-install-db"
+        );
+        assert_eq!(
+            ran[0].args,
+            vec![
+                "--defaults-file=/Users/ana/LARABEST/etc/mariadb/my.cnf",
+                "--basedir=/opt/homebrew/Cellar/mariadb@11.4/11.4.8",
+                "--auth-root-authentication-method=normal",
+                "--skip-test-db",
+                "--datadir=/Users/ana/LARABEST/data/mariadb",
+            ]
+        );
+    }
+
+    #[test]
+    fn clients_ignore_other_option_files() {
+        let f = fixture();
+        let spec = admin(&f.ctx, "ping").unwrap();
+        assert_eq!(spec.args[0], "--no-defaults");
+        let spec = create_database_spec(&f.ctx, "blog").unwrap();
+        assert_eq!(spec.args[0], "--no-defaults");
     }
 
     #[tokio::test]

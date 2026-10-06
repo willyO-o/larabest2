@@ -32,7 +32,7 @@ impl CertutilTrustStore {
 
 #[async_trait]
 impl TrustStore for CertutilTrustStore {
-    async fn contains(&self, thumbprint: &str) -> bool {
+    async fn contains(&self, _cert: &Path, thumbprint: &str) -> bool {
         let spec = Self::certutil().arg("-store").arg("Root").arg(thumbprint);
         matches!(self.runner.run(&spec, QUERY_TIMEOUT).await, Ok(out) if out.success())
     }

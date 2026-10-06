@@ -1,7 +1,7 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
-use crate::domain::{compare_versions, slash, InstalledVersion, Paths, ServiceId};
-use crate::drivers::exe;
+use crate::domain::{compare_versions, slash, BinaryLayout, InstalledVersion, Paths, ServiceId};
+use crate::drivers::{program_subpath, server_program};
 use crate::error::AppError;
 use crate::ports::BinaryProvider;
 
@@ -17,13 +17,11 @@ impl DirBinaryProvider {
     }
 }
 
-/// Ejecutable que debe existir dentro de la carpeta de una versión.
+/// Ejecutable que debe existir dentro de la carpeta de una versión
+/// (`nginx.exe`, `php-cgi.exe`, `bin/mariadbd.exe`).
 pub fn marker_exe(service: ServiceId) -> PathBuf {
-    match service {
-        ServiceId::Nginx => PathBuf::from(exe("nginx")),
-        ServiceId::Php => PathBuf::from(exe("php-cgi")),
-        ServiceId::Mariadb => Path::new("bin").join(exe("mariadbd")),
-    }
+    let layout = BinaryLayout::Portable;
+    program_subpath(layout, service, server_program(layout, service))
 }
 
 impl BinaryProvider for DirBinaryProvider {

@@ -22,4 +22,14 @@ impl ShellLauncher for WindowsShellLauncher {
             .map(|_| ())
             .map_err(|e| AppError::io(format!("No se pudo abrir la terminal en {}", slash(cwd)), e))
     }
+
+    /// El Bloc de notas entiende los saltos de línea de Unix desde Windows 10
+    /// 1809.
+    fn open_in_editor(&self, path: &Path) -> Result<(), AppError> {
+        std::process::Command::new(system32().join("notepad.exe"))
+            .arg(path)
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| AppError::io(format!("No se pudo abrir {}", slash(path)), e))
+    }
 }

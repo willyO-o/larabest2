@@ -15,14 +15,15 @@ impl Core {
             .unwrap_or(false)
     }
 
-    /// `true` si Windows ya confía en la CA local.
+    /// `true` si el sistema ya confía en la CA local.
     pub async fn ssl_trusted(&self) -> bool {
         self.ca.is_trusted().await
     }
 
-    /// Activa o desactiva HTTPS. Al activarlo instala la CA en Windows (pide
-    /// confirmación una vez) y emite un certificado por sitio. Nginx se
-    /// reinicia para comprobar que el puerto 443 esté libre.
+    /// Activa o desactiva HTTPS. Al activarlo instala la CA en el sistema
+    /// (Windows pide confirmar y macOS la contraseña, una vez) y emite un
+    /// certificado por sitio. Nginx se reinicia para comprobar que el
+    /// puerto 443 esté libre.
     pub async fn set_ssl(&self, enabled: bool) -> Result<(), AppError> {
         let deps = self.supervisor.deps();
         if enabled {

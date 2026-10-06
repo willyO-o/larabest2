@@ -5,7 +5,8 @@ use std::time::Duration;
 use async_trait::async_trait;
 
 use super::{system32, CREATE_NO_WINDOW};
-use crate::domain::{decode_request, encode_request, merge_block, parse_block, slash, HostEntry};
+use crate::adapters::shared::hosts_file;
+use crate::domain::{encode_request, merge_block, parse_block, HostEntry};
 use crate::error::AppError;
 use crate::ports::{HostsManager, ProcessRunner, ProcessSpec};
 
@@ -17,26 +18,13 @@ fn hosts_path() -> PathBuf {
 }
 
 fn read_hosts() -> Result<String, AppError> {
-    let path = hosts_path();
-    std::fs::read(&path)
-        .map(|b| String::from_utf8_lossy(&b).into_owned())
-        .map_err(|e| AppError::io(format!("No se pudo leer {}", slash(&path)), e))
+    hosts_file::read(&hosts_path())
 }
 
 /// Escribe el bloque de la app en el archivo hosts. Lo ejecuta el proceso
 /// auxiliar elevado (`--apply-hosts <archivo>`), sin abrir ventana.
 pub fn apply_hosts_request(request: &Path) -> Result<(), AppError> {
-    let text = std::fs::read_to_string(request)
-        .map_err(|e| AppError::io(format!("No se pudo leer {}", slash(request)), e))?;
-    let (app_name, entries) = decode_request(&text)
-        .ok_or_else(|| AppError::InvalidInput("Solicitud de hosts inválida".into()))?;
-    let current = read_hosts()?;
-    let merged = merge_block(&current, &app_name, &entries);
-    if merged != current {
-        // Se escribe sobre el mismo archivo (sin renombrar) para conservar
-        // sus permisos.
-        std::fs::write(hosts_path(), merged)
-            .map_err(|e| AppError::Hosts(format!("no se pudo escribir: {e}")))?;
+    if hosts_file::apply_request(request, &hosts_path())? {
         let _ = std::process::Command::new(system32().join("ipconfig.exe"))
             .arg("/flushdns")
             .creation_flags(CREATE_NO_WINDOW)

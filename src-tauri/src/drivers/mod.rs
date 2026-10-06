@@ -8,13 +8,13 @@ pub mod php;
 pub mod templates;
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 
-use crate::domain::{AppConfig, Health, InstalledVersion, Paths, ServiceId, Site};
+use crate::domain::{AppConfig, BinaryLayout, Health, InstalledVersion, Paths, ServiceId, Site};
 use crate::error::AppError;
 use crate::ports::{FileStore, PortChecker, ProcessRunner, ProcessSpec};
 
@@ -23,6 +23,8 @@ use crate::ports::{FileStore, PortChecker, ProcessRunner, ProcessSpec};
 pub struct RenderContext {
     pub app_name: String,
     pub paths: Paths,
+    /// Cómo vienen instalados los programas (zip en `bin/` o Homebrew).
+    pub layout: BinaryLayout,
     pub config: AppConfig,
     /// Versión activa resuelta por servicio. Falta si no hay ninguna instalada.
     pub versions: HashMap<ServiceId, InstalledVersion>,
@@ -40,15 +42,55 @@ impl RenderContext {
             .get(&id)
             .ok_or_else(|| AppError::BinaryMissing {
                 service: id,
-                detail: format!(
-                    "no hay ninguna versión en {}. Copia ahí la carpeta descomprimida.",
-                    crate::domain::slash(&self.paths.bin_service(id))
-                ),
+                detail: self.layout.install_hint(&self.paths, id),
             })
     }
 
     pub fn install_dir(&self, id: ServiceId) -> Result<PathBuf, AppError> {
         Ok(PathBuf::from(&self.install(id)?.path))
+    }
+
+    /// Ruta de un ejecutable (`nginx`, `php`, `mariadb-admin`...) de la
+    /// versión activa del servicio.
+    pub fn program(&self, id: ServiceId, name: &str) -> Result<PathBuf, AppError> {
+        Ok(self
+            .install_dir(id)?
+            .join(program_subpath(self.layout, id, name)))
+    }
+
+    /// Puertos FastCGI de PHP: uno por cada `php-cgi` en Windows; `php-fpm`
+    /// reparte entre sus propios procesos y escucha en uno solo.
+    pub fn php_ports(&self) -> Vec<u16> {
+        match self.layout {
+            BinaryLayout::Portable => self.config.php_ports(),
+            BinaryLayout::Homebrew => vec![self.config.php_base_port],
+        }
+    }
+}
+
+/// Dónde está cada ejecutable dentro de la carpeta de una versión: en los
+/// zip de Windows Nginx y PHP van en la raíz y MariaDB en `bin/`; en
+/// Homebrew todo va en `bin/`, salvo `php-fpm`, que va en `sbin/`.
+pub fn program_subpath(layout: BinaryLayout, id: ServiceId, name: &str) -> PathBuf {
+    let dir = match (layout, id) {
+        (_, ServiceId::Mariadb) => Some("bin"),
+        (BinaryLayout::Portable, _) => None,
+        (BinaryLayout::Homebrew, ServiceId::Php) if name == "php-fpm" => Some("sbin"),
+        (BinaryLayout::Homebrew, _) => Some("bin"),
+    };
+    match dir {
+        Some(dir) => Path::new(dir).join(exe(name)),
+        None => PathBuf::from(exe(name)),
+    }
+}
+
+/// Programa principal de cada servicio; su presencia valida una versión.
+pub fn server_program(layout: BinaryLayout, id: ServiceId) -> &'static str {
+    match (id, layout) {
+        (ServiceId::Nginx, _) => "nginx",
+        (ServiceId::Php, BinaryLayout::Portable) => "php-cgi",
+        (ServiceId::Php, BinaryLayout::Homebrew) => "php-fpm",
+        (ServiceId::Mariadb, _) => "mariadbd",
     }
 }
 
@@ -157,6 +199,7 @@ pub(crate) mod test_support {
         let ctx = RenderContext {
             app_name: "APP_NAME".into(),
             paths,
+            layout: BinaryLayout::Portable,
             config: AppConfig::default(),
             versions,
             sites: Vec::new(),
@@ -171,5 +214,69 @@ pub(crate) mod test_support {
             ports,
             runner,
         }
+    }
+
+    /// Como en macOS: raíz en `/Users/ana/LARABEST` y fórmulas de Homebrew.
+    pub fn homebrew_fixture() -> Fixture {
+        let mut f = fixture();
+        f.ctx.paths = Paths::new("/Users/ana/LARABEST");
+        f.ctx.layout = BinaryLayout::Homebrew;
+        for (id, formula, v) in [
+            (ServiceId::Nginx, "nginx", "1.29.1"),
+            (ServiceId::Php, "php@8.4", "8.4.13"),
+            (ServiceId::Mariadb, "mariadb@11.4", "11.4.8"),
+        ] {
+            f.ctx.versions.insert(
+                id,
+                InstalledVersion {
+                    service: id,
+                    version: v.into(),
+                    path: format!("/opt/homebrew/Cellar/{formula}/{v}"),
+                },
+            );
+        }
+        f
+    }
+
+    #[test]
+    fn programs_follow_the_layout() {
+        let f = fixture();
+        let program = |id, name| slash(&f.ctx.program(id, name).unwrap());
+        assert_eq!(
+            program(ServiceId::Nginx, "nginx"),
+            format!("C:/APP/bin/nginx/1.28.0/{}", exe("nginx"))
+        );
+        assert_eq!(
+            program(ServiceId::Mariadb, "mariadb-admin"),
+            format!("C:/APP/bin/mariadb/11.4.5/bin/{}", exe("mariadb-admin"))
+        );
+        assert_eq!(f.ctx.php_ports(), vec![9000, 9001, 9002, 9003]);
+
+        let f = homebrew_fixture();
+        let program = |id, name| slash(&f.ctx.program(id, name).unwrap());
+        assert_eq!(
+            program(ServiceId::Php, "php-fpm"),
+            "/opt/homebrew/Cellar/php@8.4/8.4.13/sbin/php-fpm"
+        );
+        assert_eq!(
+            program(ServiceId::Php, "php"),
+            "/opt/homebrew/Cellar/php@8.4/8.4.13/bin/php"
+        );
+        assert_eq!(
+            program(ServiceId::Nginx, "nginx"),
+            "/opt/homebrew/Cellar/nginx/1.29.1/bin/nginx"
+        );
+        assert_eq!(f.ctx.php_ports(), vec![9000]);
+    }
+
+    #[test]
+    fn missing_version_explains_how_to_install_it() {
+        let mut f = homebrew_fixture();
+        f.ctx.versions.remove(&ServiceId::Mariadb);
+        let err = f.ctx.install(ServiceId::Mariadb).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "MariaDB: no está instalado. Instálalo desde la Terminal con: brew install mariadb@11.4"
+        );
     }
 }

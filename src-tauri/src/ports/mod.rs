@@ -121,6 +121,9 @@ pub trait BinaryProvider: Send + Sync {
 
 pub trait ShellLauncher: Send + Sync {
     fn open_terminal(&self, cwd: &Path, env: &HashMap<String, String>) -> Result<(), AppError>;
+    /// Abre un archivo de texto (configuración o log) en el editor del
+    /// sistema: `.conf` y `.cnf` no tienen programa asociado.
+    fn open_in_editor(&self, path: &Path) -> Result<(), AppError>;
 }
 
 pub trait ConfigStore: Send + Sync {
@@ -143,6 +146,10 @@ pub trait FileStore: Send + Sync {
     fn remove_file(&self, path: &Path) -> Result<(), AppError>;
     /// Borra una carpeta con todo su contenido (no falla si no existe).
     fn remove_dir_all(&self, path: &Path) -> Result<(), AppError>;
+    /// Marca un script como ejecutable (en Windows no hace falta).
+    fn set_executable(&self, _path: &Path) -> Result<(), AppError> {
+        Ok(())
+    }
 }
 
 /// Escribe solo si el contenido cambió. Devuelve `true` si escribió.

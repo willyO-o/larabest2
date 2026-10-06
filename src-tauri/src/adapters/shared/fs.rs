@@ -77,6 +77,13 @@ impl FileStore for StdFileStore {
             )),
         }
     }
+
+    #[cfg(unix)]
+    fn set_executable(&self, path: &Path) -> Result<(), AppError> {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755))
+            .map_err(|e| AppError::io(format!("No se pudo preparar {}", slash(path)), e))
+    }
 }
 
 #[cfg(test)]
@@ -100,6 +107,19 @@ mod tests {
         fs.remove_dir_all(&dir.join("a")).unwrap();
         fs.remove_dir_all(&dir.join("a")).unwrap();
         assert!(!fs.exists(&dir.join("a")));
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn marks_scripts_executable() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = temp_dir("exec");
+        let script = dir.join("composer");
+        StdFileStore.write(&script, "#!/bin/sh\n").unwrap();
+        StdFileStore.set_executable(&script).unwrap();
+        let mode = std::fs::metadata(&script).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o755);
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

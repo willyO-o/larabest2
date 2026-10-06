@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use minijinja::context;
 
 use super::{templates, RenderContext, ServiceDriver};
-use crate::domain::{slash, Health, ServiceId};
+use crate::domain::{slash, BinaryLayout, Health, ServiceId};
 use crate::error::AppError;
 use crate::ports::{write_if_changed, ProcessRunner, ProcessSpec};
 
@@ -18,14 +18,11 @@ fn log_for_port(ctx: &RenderContext, port: u16) -> PathBuf {
 /// `upstream php_upstream`. Cada `php-cgi` atiende una petición a la vez.
 /// `PHP_FCGI_MAX_REQUESTS=0` evita que cada proceso se cierre tras 500
 /// peticiones; `PHP_FCGI_CHILDREN` no funciona en Windows.
-///
-/// macOS usará `php-fpm` (fase 3) detrás de `#[cfg(target_os = "macos")]`.
 fn cgi_specs(ctx: &RenderContext) -> Result<Vec<ProcessSpec>, AppError> {
     let dir = ctx.install_dir(ServiceId::Php)?;
-    let program = dir.join(super::exe("php-cgi"));
+    let program = ctx.program(ServiceId::Php, "php-cgi")?;
     let ini = slash(&ctx.paths.php_ini());
     Ok(ctx
-        .config
         .php_ports()
         .into_iter()
         .map(|port| {
@@ -42,6 +39,22 @@ fn cgi_specs(ctx: &RenderContext) -> Result<Vec<ProcessSpec>, AppError> {
         .collect())
 }
 
+/// macOS: un solo `php-fpm` en primer plano (`--nodaemonize`) que reparte
+/// las peticiones entre sus propios procesos (`pm = dynamic`).
+fn fpm_spec(ctx: &RenderContext) -> Result<ProcessSpec, AppError> {
+    let dir = ctx.install_dir(ServiceId::Php)?;
+    Ok(
+        ProcessSpec::new(ctx.program(ServiceId::Php, "php-fpm")?, &dir)
+            .arg("--nodaemonize")
+            .arg("--fpm-config")
+            .arg(slash(&ctx.paths.php_fpm_conf()))
+            .arg("-c")
+            .arg(slash(&ctx.paths.php_ini()))
+            .env("PHP_INI_SCAN_DIR", slash(&ctx.paths.php_custom()))
+            .log_to(ctx.paths.logs().join("php-fpm-console.log")),
+    )
+}
+
 /// `php` de línea de comandos de la versión activa, con el mismo `php.ini`
 /// y los ajustes propios que usa el servidor (por ejemplo para Composer).
 pub fn cli_spec(
@@ -49,8 +62,7 @@ pub fn cli_spec(
     args: &[String],
     cwd: &std::path::Path,
 ) -> Result<ProcessSpec, AppError> {
-    let dir = ctx.install_dir(ServiceId::Php)?;
-    let program = dir.join(super::exe("php"));
+    let program = ctx.program(ServiceId::Php, "php")?;
     if !ctx.fs.exists(&program) {
         return Err(AppError::BinaryMissing {
             service: ServiceId::Php,
@@ -83,18 +95,23 @@ impl ServiceDriver for PhpDriver {
     }
 
     fn ports(&self, ctx: &RenderContext) -> Vec<u16> {
-        ctx.config.php_ports()
+        ctx.php_ports()
     }
 
     fn log_files(&self, ctx: &RenderContext) -> Vec<PathBuf> {
-        let mut logs: Vec<PathBuf> = ctx
-            .config
-            .php_ports()
-            .into_iter()
-            .map(|p| log_for_port(ctx, p))
-            .collect();
-        logs.push(ctx.paths.logs().join("php-error.log"));
-        logs
+        let logs = ctx.paths.logs();
+        let mut files: Vec<PathBuf> = match ctx.layout {
+            BinaryLayout::Portable => ctx
+                .php_ports()
+                .into_iter()
+                .map(|p| log_for_port(ctx, p))
+                .collect(),
+            BinaryLayout::Homebrew => {
+                vec![logs.join("php-fpm.log"), logs.join("php-fpm-console.log")]
+            }
+        };
+        files.push(logs.join("php-error.log"));
+        files
     }
 
     async fn render_config(&self, ctx: &RenderContext) -> Result<(), AppError> {
@@ -108,6 +125,8 @@ impl ServiceDriver for PhpDriver {
             templates::USER_INI,
             &ctx.app_name,
         )?;
+        // Homebrew compila las extensiones dentro de PHP: no hay `ext/`.
+        let portable = ctx.layout == BinaryLayout::Portable;
         let ini = templates::render(
             templates::PHP_INI,
             context! {
@@ -115,18 +134,35 @@ impl ServiceDriver for PhpDriver {
                 version => install.version,
                 // Ruta absoluta: así sirve igual para php-cgi, la terminal y
                 // Composer, sin depender del directorio de trabajo.
-                ext_dir => format!("{}/ext", install.path),
+                ext_dir => portable.then(|| format!("{}/ext", install.path)),
                 logs => slash(&ctx.paths.logs()),
                 tmp => slash(&ctx.paths.tmp()),
                 extensions => ctx.config.php_extensions(),
             },
         )?;
         write_if_changed(fs, &ctx.paths.php_ini(), &ini)?;
+        if ctx.layout == BinaryLayout::Homebrew {
+            let fpm = templates::render(
+                templates::PHP_FPM_CONF,
+                context! {
+                    app_name => ctx.app_name,
+                    version => install.version,
+                    port => ctx.config.php_base_port,
+                    tmp => slash(&ctx.paths.tmp()),
+                    logs => slash(&ctx.paths.logs()),
+                    custom_dir => slash(&ctx.paths.php_custom()),
+                },
+            )?;
+            write_if_changed(fs, &ctx.paths.php_fpm_conf(), &fpm)?;
+        }
         Ok(())
     }
 
     fn start_specs(&self, ctx: &RenderContext) -> Vec<ProcessSpec> {
-        cgi_specs(ctx).unwrap_or_default()
+        match ctx.layout {
+            BinaryLayout::Portable => cgi_specs(ctx).unwrap_or_default(),
+            BinaryLayout::Homebrew => fpm_spec(ctx).map(|s| vec![s]).unwrap_or_default(),
+        }
     }
 
     async fn stop(
@@ -143,7 +179,6 @@ impl ServiceDriver for PhpDriver {
 
     async fn health(&self, ctx: &RenderContext) -> Health {
         let down: Vec<String> = ctx
-            .config
             .php_ports()
             .into_iter()
             .filter(|&p| !ctx.ports.is_listening(p))
@@ -160,7 +195,8 @@ impl ServiceDriver for PhpDriver {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::drivers::{exe, test_support::fixture};
+    use crate::drivers::exe;
+    use crate::drivers::test_support::{fixture, homebrew_fixture};
     use crate::ports::FileStore;
     use std::path::Path;
     use std::time::Duration;
@@ -258,6 +294,66 @@ mod tests {
                     "C:/APP/etc/php/custom".to_string()
                 ),
             ]
+        );
+    }
+
+    #[tokio::test]
+    async fn homebrew_renders_fpm_pool_and_ini_without_extension_lines() {
+        let f = homebrew_fixture();
+        PhpDriver.render_config(&f.ctx).await.unwrap();
+        let ini = f.fs.read("/Users/ana/LARABEST/etc/php/php.ini");
+        assert!(
+            !ini.contains("extension=") && !ini.contains("extension_dir"),
+            "{ini}"
+        );
+        assert!(
+            ini.contains("; Las extensiones vienen compiladas en el PHP de Homebrew.\n\n[Session]")
+        );
+        let fpm = f.fs.read("/Users/ana/LARABEST/etc/php/php-fpm.conf");
+        assert!(fpm.contains("PHP 8.4.13"));
+        assert!(fpm.contains("listen = 127.0.0.1:9000\n"));
+        assert!(fpm.contains("daemonize = no\n"));
+        assert!(fpm.contains(r#"pid = "/Users/ana/LARABEST/tmp/php-fpm.pid""#));
+        assert!(fpm.contains(r#"error_log = "/Users/ana/LARABEST/logs/php-fpm.log""#));
+        assert!(!fpm.contains("user ="), "sin root no se cambia de usuario");
+    }
+
+    #[test]
+    fn homebrew_launches_a_single_fpm_in_foreground() {
+        let f = homebrew_fixture();
+        let specs = PhpDriver.start_specs(&f.ctx);
+        assert_eq!(specs.len(), 1);
+        let spec = &specs[0];
+        assert_eq!(
+            slash(&spec.program),
+            "/opt/homebrew/Cellar/php@8.4/8.4.13/sbin/php-fpm"
+        );
+        assert_eq!(
+            spec.args,
+            vec![
+                "--nodaemonize",
+                "--fpm-config",
+                "/Users/ana/LARABEST/etc/php/php-fpm.conf",
+                "-c",
+                "/Users/ana/LARABEST/etc/php/php.ini"
+            ]
+        );
+        assert_eq!(PhpDriver.ports(&f.ctx), vec![9000]);
+        assert_eq!(
+            slash(&PhpDriver.log_files(&f.ctx)[0]),
+            "/Users/ana/LARABEST/logs/php-fpm.log"
+        );
+    }
+
+    #[test]
+    fn homebrew_cli_uses_bin_php() {
+        let f = homebrew_fixture();
+        f.fs.write(Path::new("/opt/homebrew/Cellar/php@8.4/8.4.13/bin/php"), "")
+            .unwrap();
+        let spec = cli_spec(&f.ctx, &[], Path::new("/Users/ana/LARABEST/www")).unwrap();
+        assert_eq!(
+            slash(&spec.program),
+            "/opt/homebrew/Cellar/php@8.4/8.4.13/bin/php"
         );
     }
 

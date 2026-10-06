@@ -183,10 +183,6 @@ async fn first_start_initializes_mariadb() {
     let h = Harness::new();
     // Datos vacíos: debe correr mariadb-install-db antes de mariadbd.
     let fs = crate::testing::FakeFs::default();
-    for f in ["mime.types", "fastcgi_params"] {
-        fs.write(Path::new(&format!("{ROOT}/bin/nginx/1.28.0/conf/{f}")), "")
-            .unwrap();
-    }
     let mut deps = h.supervisor.deps().clone();
     deps.fs = std::sync::Arc::new(fs);
     let sup = crate::supervisor::Supervisor::new(deps, Default::default());
@@ -251,4 +247,25 @@ async fn spawn_error_cleans_up_already_started_processes() {
         .detail
         .unwrap()
         .starts_with("No se pudo iniciar php-cgi"));
+}
+
+#[test]
+fn keeps_the_branch_when_the_saved_version_is_gone() {
+    use crate::domain::InstalledVersion;
+    let installed: Vec<InstalledVersion> = ["8.5.1", "8.4.14", "8.3.27"]
+        .iter()
+        .map(|v| InstalledVersion {
+            service: ServiceId::Php,
+            version: v.to_string(),
+            path: format!("/opt/homebrew/Cellar/php/{v}"),
+        })
+        .collect();
+    let pick = |wanted| super::pick_version(&installed, wanted).map(|v| v.version);
+    assert_eq!(pick(Some("8.3.27")).as_deref(), Some("8.3.27"));
+    // brew upgrade cambió 8.4.13 por 8.4.14: se queda en la rama 8.4.
+    assert_eq!(pick(Some("8.4.13")).as_deref(), Some("8.4.14"));
+    // Sin esa rama, o sin preferencia, la más reciente.
+    assert_eq!(pick(Some("8.2.10")).as_deref(), Some("8.5.1"));
+    assert_eq!(pick(None).as_deref(), Some("8.5.1"));
+    assert_eq!(super::pick_version(&[], Some("8.4.1")), None);
 }

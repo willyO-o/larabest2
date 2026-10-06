@@ -20,12 +20,11 @@ use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, RunEvent, WindowEvent};
 
 use adapters::shared::{archive::ZipExtractor, ca::LocalCa, ca::TrustStore, secrets::OsSecrets};
-use adapters::shared::{
-    binaries::DirBinaryProvider, config::JsonConfigStore, fs::StdFileStore,
-    watcher::watch_first_level,
+use adapters::shared::{config::JsonConfigStore, fs::StdFileStore, watcher::watch_first_level};
+use domain::{BinaryLayout, Paths, ServiceStatus, Site, SiteProgress};
+use ports::{
+    BinaryProvider, Downloader, EventSink, HostsManager, PortChecker, ProcessRunner, ShellLauncher,
 };
-use domain::{Paths, ServiceStatus, Site, SiteProgress};
-use ports::{Downloader, EventSink, HostsManager, PortChecker, ProcessRunner, ShellLauncher};
 use supervisor::{Deps, Supervisor, Timings};
 use usecases::{Core, CoreAdapters};
 
@@ -55,21 +54,29 @@ impl EventSink for TauriEvents {
     }
 }
 
+/// Adaptadores de la plataforma actual.
 struct Platform {
+    layout: BinaryLayout,
+    binaries: Arc<dyn BinaryProvider>,
     runner: Arc<dyn ProcessRunner>,
     ports: Arc<dyn PortChecker>,
     shell: Arc<dyn ShellLauncher>,
     hosts: Arc<dyn HostsManager>,
     downloader: Arc<dyn Downloader>,
     trust: Arc<dyn TrustStore>,
+    /// Base del PATH de la terminal (ver `Core::new`).
+    system_path: String,
 }
 
 #[cfg(windows)]
 fn platform(app_name: &str, paths: &Paths) -> Platform {
+    use adapters::shared::binaries::DirBinaryProvider;
     use adapters::windows::*;
     let runner: Arc<dyn ProcessRunner> = Arc::new(WindowsProcessRunner::new());
     let exe = std::env::current_exe().unwrap_or_default();
     Platform {
+        layout: BinaryLayout::Portable,
+        binaries: Arc::new(DirBinaryProvider::new(paths.clone())),
         hosts: Arc::new(WindowsHostsManager::new(
             app_name,
             exe,
@@ -81,19 +88,52 @@ fn platform(app_name: &str, paths: &Paths) -> Platform {
         runner,
         ports: Arc::new(WindowsPortChecker),
         shell: Arc::new(WindowsShellLauncher),
+        system_path: std::env::var("PATH").unwrap_or_default(),
     }
 }
 
-#[cfg(not(windows))]
-fn platform(_app_name: &str, _paths: &Paths) -> Platform {
+#[cfg(target_os = "macos")]
+fn platform(app_name: &str, paths: &Paths) -> Platform {
+    use adapters::macos::*;
+    let runner: Arc<dyn ProcessRunner> = Arc::new(UnixProcessRunner::default());
+    let exe = std::env::current_exe().unwrap_or_default();
+    Platform {
+        layout: BinaryLayout::Homebrew,
+        binaries: Arc::new(HomebrewBinaryProvider::default()),
+        hosts: Arc::new(MacHostsManager::new(
+            app_name,
+            exe,
+            &paths.tmp(),
+            runner.clone(),
+        )),
+        downloader: Arc::new(CurlDownloader::new(runner.clone())),
+        trust: Arc::new(KeychainTrustStore::new(runner.clone())),
+        runner,
+        ports: Arc::new(MacPortChecker),
+        shell: Arc::new(MacShellLauncher::new(
+            app_name,
+            paths.tmp().join("terminal"),
+        )),
+        // Una app abierta desde el Finder tiene un PATH mínimo; la terminal
+        // antepone el PATH propio al de la shell del usuario.
+        system_path: String::new(),
+    }
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
+fn platform(_app_name: &str, paths: &Paths) -> Platform {
+    use adapters::shared::binaries::DirBinaryProvider;
     use adapters::unsupported::*;
     Platform {
+        layout: BinaryLayout::Portable,
+        binaries: Arc::new(DirBinaryProvider::new(paths.clone())),
         runner: Arc::new(UnsupportedRunner),
         ports: Arc::new(UnsupportedPorts),
         shell: Arc::new(UnsupportedShell),
         hosts: Arc::new(UnsupportedHosts),
         downloader: Arc::new(UnsupportedDownloader),
         trust: Arc::new(UnsupportedTrustStore),
+        system_path: std::env::var("PATH").unwrap_or_default(),
     }
 }
 
@@ -107,19 +147,19 @@ pub fn run_helper(args: &[String]) -> Option<i32> {
         return Some(2);
     };
     #[cfg(windows)]
-    {
-        match adapters::windows::apply_hosts_request(std::path::Path::new(file)) {
-            Ok(()) => Some(0),
-            Err(e) => {
-                eprintln!("{e}");
-                Some(1)
-            }
+    let result = adapters::windows::apply_hosts_request(std::path::Path::new(file));
+    #[cfg(target_os = "macos")]
+    let result = adapters::macos::apply_hosts_request(std::path::Path::new(file));
+    #[cfg(not(any(windows, target_os = "macos")))]
+    let result: Result<(), error::AppError> = Err(error::AppError::Unsupported(format!(
+        "--apply-hosts no está disponible en esta plataforma ({file})"
+    )));
+    match result {
+        Ok(()) => Some(0),
+        Err(e) => {
+            eprintln!("{e}");
+            Some(1)
         }
-    }
-    #[cfg(not(windows))]
-    {
-        eprintln!("--apply-hosts solo está disponible en Windows ({file})");
-        Some(1)
     }
 }
 
@@ -142,10 +182,11 @@ fn setup(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     let deps = Deps {
         app_name,
         paths: paths.clone(),
+        layout: platform.layout,
         fs: Arc::new(StdFileStore),
         runner: platform.runner,
         ports: platform.ports,
-        binaries: Arc::new(DirBinaryProvider::new(paths.clone())),
+        binaries: platform.binaries,
         config: Arc::new(JsonConfigStore::new(paths.app_json())),
         events: Arc::new(TauriEvents { app: app.clone() }),
     };
@@ -160,7 +201,7 @@ fn setup(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
             ca,
             secrets: Arc::new(OsSecrets),
         },
-        std::env::var("PATH").unwrap_or_default(),
+        platform.system_path,
     ));
     app.manage(AppState {
         core: core.clone(),
@@ -264,6 +305,12 @@ pub fn run() {
 
     // Al salir se detienen todos los servicios antes de cerrar.
     app.run(|app, event| {
+        // macOS: clic en el icono del Dock con la ventana oculta.
+        #[cfg(target_os = "macos")]
+        if let RunEvent::Reopen { .. } = event {
+            tray::show_main(app);
+            return;
+        }
         if let RunEvent::ExitRequested { api, code, .. } = event {
             if !QUITTING.swap(true, Ordering::SeqCst) {
                 api.prevent_exit();

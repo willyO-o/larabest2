@@ -10,6 +10,10 @@ pub const PHP_INI: &str = "php.ini";
 pub const MY_CNF: &str = "my.cnf";
 pub const ADMINER_PHP: &str = "adminer.php";
 pub const COMPOSER_BAT: &str = "composer.bat";
+pub const COMPOSER_SH: &str = "composer.sh";
+pub const PHP_FPM_CONF: &str = "php-fpm.conf";
+pub const MIME_TYPES: &str = "mime.types";
+pub const FASTCGI_PARAMS: &str = "fastcgi_params";
 pub const USER_INI: &str = "user.ini";
 pub const USER_CNF: &str = "user.cnf";
 pub const WP_CONFIG: &str = "wp-config.php";
@@ -25,6 +29,13 @@ fn environment() -> Environment<'static> {
         (MY_CNF, include_str!("../../templates/my.cnf")),
         (ADMINER_PHP, include_str!("../../templates/adminer.php")),
         (COMPOSER_BAT, include_str!("../../templates/composer.bat")),
+        (COMPOSER_SH, include_str!("../../templates/composer.sh")),
+        (PHP_FPM_CONF, include_str!("../../templates/php-fpm.conf")),
+        (MIME_TYPES, include_str!("../../templates/mime.types")),
+        (
+            FASTCGI_PARAMS,
+            include_str!("../../templates/fastcgi_params"),
+        ),
         (USER_INI, include_str!("../../templates/user.ini")),
         (USER_CNF, include_str!("../../templates/user.cnf")),
         (WP_CONFIG, include_str!("../../templates/wp-config.php")),
@@ -78,6 +89,10 @@ mod tests {
             MY_CNF,
             ADMINER_PHP,
             COMPOSER_BAT,
+            COMPOSER_SH,
+            PHP_FPM_CONF,
+            MIME_TYPES,
+            FASTCGI_PARAMS,
             USER_INI,
             USER_CNF,
             WP_CONFIG,

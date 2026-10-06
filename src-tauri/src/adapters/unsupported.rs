@@ -1,6 +1,6 @@
-//! Adaptadores para plataformas que aún no tienen los suyos (macOS llega en
-//! la fase 3). Permiten compilar y probar el núcleo en Linux; cualquier
-//! acción sobre procesos devuelve un error claro.
+//! Adaptadores para plataformas sin soporte (Linux). Permiten compilar y
+//! probar el núcleo; cualquier acción sobre procesos devuelve un error
+//! claro.
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -17,7 +17,7 @@ use crate::ports::{
 };
 
 fn unsupported() -> AppError {
-    AppError::Unsupported("Esta versión solo funciona en Windows 10 o superior.".into())
+    AppError::Unsupported("Esta versión funciona en Windows 10 o superior y en macOS.".into())
 }
 
 pub struct UnsupportedRunner;
@@ -71,6 +71,10 @@ impl ShellLauncher for UnsupportedShell {
     fn open_terminal(&self, _cwd: &Path, _env: &HashMap<String, String>) -> Result<(), AppError> {
         Err(unsupported())
     }
+
+    fn open_in_editor(&self, _path: &Path) -> Result<(), AppError> {
+        Err(unsupported())
+    }
 }
 
 pub struct UnsupportedHosts;
@@ -99,7 +103,7 @@ pub struct UnsupportedTrustStore;
 
 #[async_trait]
 impl TrustStore for UnsupportedTrustStore {
-    async fn contains(&self, _thumbprint: &str) -> bool {
+    async fn contains(&self, _cert: &Path, _thumbprint: &str) -> bool {
         false
     }
 

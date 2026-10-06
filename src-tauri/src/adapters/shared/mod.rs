@@ -5,6 +5,7 @@ pub mod binaries;
 pub mod ca;
 pub mod config;
 pub mod fs;
+pub mod hosts_file;
 pub mod netstat;
 pub mod secrets;
 pub mod watcher;

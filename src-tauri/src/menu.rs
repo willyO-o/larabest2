@@ -8,7 +8,7 @@ use tauri::menu::{
 use tauri::{AppHandle, Emitter, Manager, Wry};
 
 use crate::commands::{open_path, open_url};
-use crate::domain::{ServiceId, ServiceState, ThemePreference};
+use crate::domain::{BinaryLayout, ServiceId, ServiceState, ThemePreference};
 use crate::error::AppError;
 use crate::usecases::ConfigTarget;
 use crate::{settings, tray, AppState};
@@ -69,10 +69,8 @@ fn versions(
     let list = state.core.versions(id).unwrap_or_default();
     let mut items = Vec::new();
     if list.is_empty() {
-        items.push(disabled(
-            app,
-            &format!("(copia una versión en bin/{})", id.key()),
-        )?);
+        let layout = state.core.supervisor.deps().layout;
+        items.push(disabled(app, &layout.menu_hint(id))?);
     }
     for v in list {
         let checked = active == Some(v.version.as_str());
@@ -158,7 +156,11 @@ pub fn build(app: &AppHandle, from_tray: bool) -> tauri::Result<Menu<Wry>> {
     ];
 
     let mut extensions = Vec::new();
+    let homebrew = sup.deps().layout == BinaryLayout::Homebrew;
     match core.php_extensions() {
+        _ if homebrew => {
+            extensions.push(disabled(app, "(incluidas en el PHP de Homebrew)")?);
+        }
         Ok(list) if !list.is_empty() => {
             for ext in list {
                 extensions.push(check(
@@ -345,7 +347,13 @@ async fn run(app: &AppHandle, id: &str) -> Result<(), AppError> {
     if let Some(target) = id.strip_prefix("open:") {
         let target: ConfigTarget = serde_json::from_value(serde_json::Value::String(target.into()))
             .map_err(|_| AppError::InvalidInput(format!("Opción desconocida: {target}")))?;
-        return open_path(app, core.config_target(target)?);
+        // Carpetas en el Finder o el Explorador; archivos en el editor.
+        let path = core.config_target(target)?;
+        return if path.is_dir() {
+            open_path(app, path)
+        } else {
+            core.open_in_editor(&path)
+        };
     }
     if let Some(name) = id.strip_prefix("ext:") {
         let enabled = core
