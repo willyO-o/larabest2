@@ -1,0 +1,6 @@
+# Las plantillas se embeben con include_str!: deben tener siempre LF para
+# que lo generado sea igual en cualquier sistema (core.autocrlf de Windows).
+* text=auto
+src-tauri/templates/** text eol=lf
+# cmd.exe necesita CRLF.
+*.bat text eol=crlf
