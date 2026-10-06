@@ -60,6 +60,14 @@ async fn busy_port_fails_only_that_service_and_names_the_owner() {
 }
 
 #[tokio::test]
+async fn a_port_that_frees_up_in_a_moment_is_waited_for() {
+    let h = Harness::new();
+    h.ports.set_busy_for(3306, 2);
+    h.supervisor.start(ServiceId::Mariadb).await.unwrap();
+    assert_eq!(h.supervisor.state(ServiceId::Mariadb), Running);
+}
+
+#[tokio::test]
 async fn missing_binary_is_reported_per_service() {
     let h = Harness::new();
     // Sin MariaDB instalada.

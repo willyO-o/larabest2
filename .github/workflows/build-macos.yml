@@ -54,4 +54,7 @@ jobs:
         env:
           LARABEST_E2E_ROOT: ${{ runner.temp }}/larabest-e2e
       - if: failure()
-        run: tail -n 60 "$RUNNER_TEMP"/larabest-e2e/logs/* || true
+        run: |
+          tail -n 60 "$RUNNER_TEMP"/larabest-e2e/logs/* || true
+          # También los puertos de procesos de otros usuarios (root).
+          sudo lsof -nP -iTCP -sTCP:LISTEN || true

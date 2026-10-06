@@ -338,12 +338,18 @@ impl ProcessRunner for FakeRunner {
 #[derive(Default)]
 pub struct FakePorts {
     busy: Mutex<HashMap<u16, String>>,
+    /// Puertos ocupados solo durante las próximas N consultas.
+    busy_for: Mutex<HashMap<u16, u32>>,
     listening: Mutex<HashSet<u16>>,
 }
 
 impl FakePorts {
     pub fn set_busy(&self, port: u16, owner: &str) {
         self.busy.lock().unwrap().insert(port, owner.into());
+    }
+
+    pub fn set_busy_for(&self, port: u16, checks: u32) {
+        self.busy_for.lock().unwrap().insert(port, checks);
     }
 
     pub fn set_listening(&self, ports: &[u16]) {
@@ -353,6 +359,12 @@ impl FakePorts {
 
 impl PortChecker for FakePorts {
     fn is_free(&self, port: u16) -> bool {
+        if let Some(left) = self.busy_for.lock().unwrap().get_mut(&port) {
+            if *left > 0 {
+                *left -= 1;
+                return false;
+            }
+        }
         !self.busy.lock().unwrap().contains_key(&port)
     }
 
@@ -618,6 +630,7 @@ impl Harness {
             health_poll: Duration::from_millis(10),
             stop_grace: Duration::from_millis(50),
             monitor_interval: Duration::from_millis(10),
+            port_grace: Duration::from_millis(30),
         };
         let supervisor = crate::supervisor::Supervisor::new(deps, timings);
         Harness {

@@ -39,6 +39,9 @@ pub struct Timings {
     pub stop_grace: Duration,
     /// Cada cuánto se comprueba que los procesos siguen vivos.
     pub monitor_interval: Duration,
+    /// Cuánto se insiste con un puerto ocupado antes de dar el error: un
+    /// puerto recién soltado puede tardar un momento en quedar libre.
+    pub port_grace: Duration,
 }
 
 impl Default for Timings {
@@ -48,6 +51,7 @@ impl Default for Timings {
             health_poll: Duration::from_millis(300),
             stop_grace: Duration::from_secs(10),
             monitor_interval: Duration::from_secs(1),
+            port_grace: Duration::from_secs(2),
         }
     }
 }
@@ -291,7 +295,7 @@ impl Supervisor {
         let runner = self.deps.runner.as_ref();
 
         for port in driver.ports(ctx) {
-            if !self.deps.ports.is_free(port) {
+            if !self.port_free(port).await {
                 let owner = self.deps.ports.who_uses(port);
                 return Err(AppError::PortInUse { port, owner }.to_string());
             }
@@ -347,6 +351,20 @@ impl Supervisor {
         self.set(id, ServiceState::Running, None);
         self.spawn_monitor(ctx.clone(), id);
         Ok(())
+    }
+
+    /// `true` si el puerto está libre o se libera dentro del plazo.
+    async fn port_free(&self, port: u16) -> bool {
+        let start = Instant::now();
+        loop {
+            if self.deps.ports.is_free(port) {
+                return true;
+            }
+            if start.elapsed() >= self.timings.port_grace {
+                return false;
+            }
+            tokio::time::sleep(self.timings.health_poll).await;
+        }
     }
 
     /// Pasa a `failed` con el mensaje y las últimas líneas del log, y limpia

@@ -231,9 +231,29 @@ fn dump_logs(root: &Path) {
     }
 }
 
+/// Quién escucha en cada puerto TCP (con su PID), para entender un
+/// "puerto ocupado".
+fn dump_listeners() {
+    let (program, args): (&str, &[&str]) = if cfg!(windows) {
+        (r"C:\Windows\System32\NETSTAT.EXE", &["-ano", "-p", "TCP"])
+    } else {
+        ("/usr/sbin/netstat", &["-anv", "-p", "tcp"])
+    };
+    let Ok(out) = std::process::Command::new(program).args(args).output() else {
+        return;
+    };
+    eprintln!("==== {program}");
+    for line in String::from_utf8_lossy(&out.stdout).lines() {
+        if line.contains("LISTEN") {
+            eprintln!("{line}");
+        }
+    }
+}
+
 pub fn check(w: &World, ok: bool, what: &str) {
     if !ok {
         dump_logs(&w.root);
+        dump_listeners();
         for status in w.core.supervisor.snapshot() {
             eprintln!("{:?}: {:?} {:?}", status.id, status.state, status.detail);
         }
