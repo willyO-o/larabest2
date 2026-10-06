@@ -1,0 +1,221 @@
+use std::path::PathBuf;
+
+use async_trait::async_trait;
+use minijinja::context;
+
+use super::{templates, RenderContext, ServiceDriver};
+use crate::domain::{slash, Health, ServiceId};
+use crate::error::AppError;
+use crate::ports::{write_if_changed, ProcessRunner, ProcessSpec};
+
+/// Extensiones que piden Laravel y WordPress.
+pub const EXTENSIONS: [&str; 10] = [
+    "curl",
+    "fileinfo",
+    "gd",
+    "intl",
+    "mbstring",
+    "openssl",
+    "pdo_mysql",
+    "mysqli",
+    "zip",
+    "exif",
+];
+
+pub struct PhpDriver;
+
+fn log_for_port(ctx: &RenderContext, port: u16) -> PathBuf {
+    ctx.paths.logs().join(format!("php-cgi-{port}.log"))
+}
+
+/// Windows: N procesos `php-cgi -b 127.0.0.1:900N`; Nginx los reparte con
+/// `upstream php_upstream`. Cada `php-cgi` atiende una petición a la vez.
+/// `PHP_FCGI_MAX_REQUESTS=0` evita que cada proceso se cierre tras 500
+/// peticiones; `PHP_FCGI_CHILDREN` no funciona en Windows.
+///
+/// macOS usará `php-fpm` (fase 3) detrás de `#[cfg(target_os = "macos")]`.
+fn cgi_specs(ctx: &RenderContext) -> Result<Vec<ProcessSpec>, AppError> {
+    let dir = ctx.install_dir(ServiceId::Php)?;
+    let program = dir.join(super::exe("php-cgi"));
+    let ini = slash(&ctx.paths.php_ini());
+    Ok(ctx
+        .config
+        .php_ports()
+        .into_iter()
+        .map(|port| {
+            // El directorio de trabajo es el de PHP para que
+            // `extension_dir = "ext"` apunte a su carpeta `ext/`.
+            ProcessSpec::new(&program, &dir)
+                .arg("-b")
+                .arg(format!("127.0.0.1:{port}"))
+                .arg("-c")
+                .arg(&ini)
+                .env("PHP_FCGI_MAX_REQUESTS", "0")
+                .log_to(log_for_port(ctx, port))
+        })
+        .collect())
+}
+
+#[async_trait]
+impl ServiceDriver for PhpDriver {
+    fn id(&self) -> ServiceId {
+        ServiceId::Php
+    }
+
+    fn depends_on(&self) -> &[ServiceId] {
+        &[]
+    }
+
+    fn default_port(&self) -> u16 {
+        9000
+    }
+
+    fn ports(&self, ctx: &RenderContext) -> Vec<u16> {
+        ctx.config.php_ports()
+    }
+
+    fn log_files(&self, ctx: &RenderContext) -> Vec<PathBuf> {
+        let mut logs: Vec<PathBuf> = ctx
+            .config
+            .php_ports()
+            .into_iter()
+            .map(|p| log_for_port(ctx, p))
+            .collect();
+        logs.push(ctx.paths.logs().join("php-error.log"));
+        logs
+    }
+
+    async fn render_config(&self, ctx: &RenderContext) -> Result<(), AppError> {
+        let install = ctx.install(ServiceId::Php)?;
+        let fs = ctx.fs.as_ref();
+        fs.create_dir_all(&ctx.paths.tmp().join("php").join("sessions"))?;
+        fs.create_dir_all(&ctx.paths.logs())?;
+        let ini = templates::render(
+            templates::PHP_INI,
+            context! {
+                app_name => ctx.app_name,
+                version => install.version,
+                logs => slash(&ctx.paths.logs()),
+                tmp => slash(&ctx.paths.tmp()),
+                extensions => EXTENSIONS,
+            },
+        )?;
+        write_if_changed(fs, &ctx.paths.php_ini(), &ini)?;
+        Ok(())
+    }
+
+    fn start_specs(&self, ctx: &RenderContext) -> Vec<ProcessSpec> {
+        cgi_specs(ctx).unwrap_or_default()
+    }
+
+    async fn stop(
+        &self,
+        ctx: &RenderContext,
+        pids: &[u32],
+        runner: &dyn ProcessRunner,
+    ) -> Result<(), AppError> {
+        for &pid in pids {
+            runner.stop_tree(pid, ctx.stop_grace).await?;
+        }
+        Ok(())
+    }
+
+    async fn health(&self, ctx: &RenderContext) -> Health {
+        let down: Vec<String> = ctx
+            .config
+            .php_ports()
+            .into_iter()
+            .filter(|&p| !ctx.ports.is_listening(p))
+            .map(|p| p.to_string())
+            .collect();
+        if down.is_empty() {
+            Health::Up
+        } else {
+            Health::Down(format!("sin respuesta en los puertos {}", down.join(", ")))
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::drivers::{exe, test_support::fixture};
+    use crate::ports::FileStore;
+    use std::path::Path;
+    use std::time::Duration;
+
+    #[tokio::test]
+    async fn renders_php_ini_with_required_extensions() {
+        let f = fixture();
+        PhpDriver.render_config(&f.ctx).await.unwrap();
+        let ini = f.fs.read("C:/APP/etc/php/php.ini");
+        assert!(ini.contains("PHP 8.4.6"));
+        assert!(ini.contains("extension_dir = \"ext\"\n"));
+        for ext in EXTENSIONS {
+            assert!(ini.contains(&format!("\nextension={ext}\n")), "{ext}");
+        }
+        assert!(ini.contains(r#"session.save_path = "C:/APP/tmp/php/sessions""#));
+        assert!(f.fs.exists(Path::new("C:/APP/tmp/php/sessions")));
+    }
+
+    #[test]
+    fn launches_one_cgi_per_port_with_max_requests_zero() {
+        let f = fixture();
+        let specs = PhpDriver.start_specs(&f.ctx);
+        assert_eq!(specs.len(), 4);
+        let first = &specs[0];
+        assert_eq!(
+            slash(&first.program),
+            format!("C:/APP/bin/php/8.4.6/{}", exe("php-cgi"))
+        );
+        assert_eq!(slash(&first.cwd), "C:/APP/bin/php/8.4.6");
+        assert_eq!(
+            first.args,
+            vec!["-b", "127.0.0.1:9000", "-c", "C:/APP/etc/php/php.ini"]
+        );
+        assert_eq!(
+            first.env,
+            vec![("PHP_FCGI_MAX_REQUESTS".to_string(), "0".to_string())]
+        );
+        assert_eq!(specs[3].args[1], "127.0.0.1:9003");
+        assert_eq!(
+            slash(first.log_file.as_ref().unwrap()),
+            "C:/APP/logs/php-cgi-9000.log"
+        );
+    }
+
+    #[test]
+    fn no_specs_without_installed_version() {
+        let mut f = fixture();
+        f.ctx.versions.remove(&ServiceId::Php);
+        assert!(PhpDriver.start_specs(&f.ctx).is_empty());
+    }
+
+    #[tokio::test]
+    async fn health_requires_every_port() {
+        let f = fixture();
+        f.ports.set_listening(&[9000, 9001, 9002]);
+        assert_eq!(
+            PhpDriver.health(&f.ctx).await,
+            Health::Down("sin respuesta en los puertos 9003".into())
+        );
+        f.ports.set_listening(&[9000, 9001, 9002, 9003]);
+        assert!(PhpDriver.health(&f.ctx).await.is_up());
+    }
+
+    #[tokio::test]
+    async fn stop_terminates_every_process_with_grace() {
+        let f = fixture();
+        PhpDriver
+            .stop(&f.ctx, &[1, 2], f.runner.as_ref())
+            .await
+            .unwrap();
+        assert_eq!(
+            f.runner.stopped(),
+            vec![
+                (1, Duration::from_millis(200)),
+                (2, Duration::from_millis(200))
+            ]
+        );
+    }
+}
