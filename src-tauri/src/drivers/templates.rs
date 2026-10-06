@@ -17,6 +17,8 @@ pub const FASTCGI_PARAMS: &str = "fastcgi_params";
 pub const REDIS_CONF: &str = "redis.conf";
 pub const USER_REDIS_CONF: &str = "user-redis.conf";
 pub const MONGOD_CONF: &str = "mongod.conf";
+pub const PHPMYADMIN_CONFIG: &str = "phpmyadmin.config.inc.php";
+pub const PHPMYADMIN_CUSTOM: &str = "phpmyadmin.custom.inc.php";
 pub const USER_INI: &str = "user.ini";
 pub const USER_CNF: &str = "user.cnf";
 pub const WP_CONFIG: &str = "wp-config.php";
@@ -45,6 +47,14 @@ fn environment() -> Environment<'static> {
             include_str!("../../templates/user-redis.conf"),
         ),
         (MONGOD_CONF, include_str!("../../templates/mongod.conf")),
+        (
+            PHPMYADMIN_CONFIG,
+            include_str!("../../templates/phpmyadmin.config.inc.php"),
+        ),
+        (
+            PHPMYADMIN_CUSTOM,
+            include_str!("../../templates/phpmyadmin.custom.inc.php"),
+        ),
         (USER_INI, include_str!("../../templates/user.ini")),
         (USER_CNF, include_str!("../../templates/user.cnf")),
         (WP_CONFIG, include_str!("../../templates/wp-config.php")),
@@ -105,6 +115,8 @@ mod tests {
             REDIS_CONF,
             USER_REDIS_CONF,
             MONGOD_CONF,
+            PHPMYADMIN_CONFIG,
+            PHPMYADMIN_CUSTOM,
             USER_INI,
             USER_CNF,
             WP_CONFIG,

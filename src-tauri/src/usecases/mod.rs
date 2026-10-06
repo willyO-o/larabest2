@@ -13,10 +13,10 @@ use std::sync::Arc;
 use minijinja::context;
 
 use crate::domain::{
-    slash, BinaryLayout, HostEntry, InstalledVersion, ServiceId, ServiceState, Site,
-    ThemePreference,
+    slash, BinaryLayout, DatabaseClient, HostEntry, InstalledVersion, ServiceId, ServiceState,
+    Site, ThemePreference,
 };
-use crate::drivers::{mailpit, nginx, postgresql, templates};
+use crate::drivers::{mailpit, nginx, postgresql, templates, tools};
 use crate::error::AppError;
 use crate::ports::{
     write_if_changed, ArchiveExtractor, CertificateAuthority, Downloader, HostsManager,
@@ -435,12 +435,10 @@ impl Core {
             .iter()
             .map(|s| HostEntry::local(s.domain.clone()))
             .collect();
-        if ctx.fs.exists(&ctx.paths.adminer_php()) {
-            wanted.insert(HostEntry::local(format!(
-                "{}.{}",
-                nginx::ADMINER_SITE,
-                ctx.config.tld
-            )));
+        for tool in tools::ALL {
+            if tools::installed(ctx.fs.as_ref(), &ctx.paths, tool) {
+                wanted.insert(HostEntry::local(format!("{tool}.{}", ctx.config.tld)));
+            }
         }
         let wanted: Vec<HostEntry> = wanted.into_iter().collect();
         let hosts_result = self.hosts.sync(&wanted).await;
@@ -473,9 +471,58 @@ impl Core {
         })
     }
 
-    /// Adminer servido como sitio local en `adminer.<tld>`, con MariaDB.
+    /// Botón "Base de datos": Adminer o phpMyAdmin según Preferencias.
     pub fn database_url(&self) -> Result<String, AppError> {
-        self.adminer_url(ServiceId::Mariadb)
+        match self.supervisor.deps().config.load()?.database_client {
+            DatabaseClient::Adminer => self.adminer_url(ServiceId::Mariadb),
+            DatabaseClient::Phpmyadmin => self.phpmyadmin_url(),
+        }
+    }
+
+    /// phpMyAdmin en `phpmyadmin.<tld>`, ya dentro como root.
+    pub fn phpmyadmin_url(&self) -> Result<String, AppError> {
+        let deps = self.supervisor.deps();
+        let cfg = deps.config.load()?;
+        let own_project = deps.paths.www().join(tools::PHPMYADMIN);
+        if !tools::installed(deps.fs.as_ref(), &deps.paths, tools::PHPMYADMIN)
+            && !deps.fs.exists(&own_project)
+        {
+            return Err(AppError::NotFound(format!(
+                "phpMyAdmin no está instalado. Descomprime phpMyAdmin en {} (debe quedar {}).",
+                slash(&deps.paths.bin_phpmyadmin()),
+                slash(&deps.paths.phpmyadmin_index())
+            )));
+        }
+        self.require_web()?;
+        Ok(sites::site_url(
+            &cfg,
+            &format!("{}.{}", tools::PHPMYADMIN, cfg.tld),
+        ))
+    }
+
+    fn require_web(&self) -> Result<(), AppError> {
+        if self.supervisor.state(ServiceId::Nginx) != ServiceState::Running {
+            return Err(AppError::InvalidInput(
+                "Inicia Nginx para abrir la base de datos.".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn database_client(&self) -> DatabaseClient {
+        self.supervisor
+            .deps()
+            .config
+            .load()
+            .map(|c| c.database_client)
+            .unwrap_or_default()
+    }
+
+    pub fn set_database_client(&self, client: DatabaseClient) -> Result<(), AppError> {
+        let deps = self.supervisor.deps();
+        let mut cfg = deps.config.load()?;
+        cfg.database_client = client;
+        deps.config.save(&cfg)
     }
 
     /// Adminer con MariaDB (root) o con PostgreSQL (postgres), ambos sin
@@ -483,19 +530,17 @@ impl Core {
     pub fn adminer_url(&self, engine: ServiceId) -> Result<String, AppError> {
         let deps = self.supervisor.deps();
         let cfg = deps.config.load()?;
-        let own_project = deps.paths.www().join(nginx::ADMINER_SITE);
-        if !deps.fs.exists(&deps.paths.adminer_php()) && !deps.fs.exists(&own_project) {
+        let own_project = deps.paths.www().join(tools::ADMINER);
+        if !tools::installed(deps.fs.as_ref(), &deps.paths, tools::ADMINER)
+            && !deps.fs.exists(&own_project)
+        {
             return Err(AppError::NotFound(format!(
                 "Adminer no está instalado. Descarga adminer.php y cópialo en {}",
                 slash(&deps.paths.bin_adminer())
             )));
         }
-        if self.supervisor.state(ServiceId::Nginx) != ServiceState::Running {
-            return Err(AppError::InvalidInput(
-                "Inicia Nginx para abrir la base de datos.".into(),
-            ));
-        }
-        let url = sites::site_url(&cfg, &format!("{}.{}", nginx::ADMINER_SITE, cfg.tld));
+        self.require_web()?;
+        let url = sites::site_url(&cfg, &format!("{}.{}", tools::ADMINER, cfg.tld));
         Ok(match engine {
             ServiceId::Postgresql => format!(
                 "{url}?pgsql=127.0.0.1:{}&username={}",

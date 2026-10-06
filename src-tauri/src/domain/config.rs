@@ -88,6 +88,15 @@ pub enum ThemePreference {
     Dark,
 }
 
+/// Qué abre el botón "Base de datos".
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DatabaseClient {
+    #[default]
+    Adminer,
+    Phpmyadmin,
+}
+
 /// Extensiones que piden Laravel y WordPress (más `pdo_sqlite`); activas
 /// por defecto.
 pub const DEFAULT_PHP_EXTENSIONS: [&str; 11] = [
@@ -125,6 +134,7 @@ pub struct AppConfig {
     pub ssl: bool,
     pub https_port: u16,
     pub services: OptionalServices,
+    pub database_client: DatabaseClient,
     pub postgresql_port: u16,
     pub redis_port: u16,
     pub mongodb_port: u16,
@@ -149,6 +159,7 @@ impl Default for AppConfig {
             ssl: false,
             https_port: 443,
             services: OptionalServices::default(),
+            database_client: DatabaseClient::Adminer,
             postgresql_port: 5432,
             redis_port: 6379,
             mongodb_port: 27017,

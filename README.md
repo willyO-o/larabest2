@@ -35,6 +35,10 @@ Lo generado (`etc\nginx\nginx.conf`, `etc\php\php.ini`, `etc\mariadb\my.cnf`) se
 
 Las extensiones marcadas en el menú se guardan en `app.json` y PHP se reinicia solo si estaba en marcha. Al cambiar de versión, se reinicia solo ese servicio.
 
+## Base de datos: Adminer o phpMyAdmin
+
+El botón **Base de datos** abre Adminer en `http://adminer.test` (con MariaDB como root sin contraseña). Con phpMyAdmin copiado en `bin\phpmyadmin\`, se sirve en `http://phpmyadmin.test` y entra solo como root; en **Menú → Preferencias → Botón Base de datos** se elige cuál abre el botón (**Menú → MariaDB** tiene los dos). La app genera `bin\phpmyadmin\config.inc.php` (phpMyAdmin solo lo lee de su carpeta); tus ajustes van en `etc\phpmyadmin\custom.inc.php`.
+
 ## Servicios opcionales
 
 Además de la pila base (Nginx, PHP y MariaDB), la app gestiona cuatro servicios opcionales. Cada uno aparece como una fila más (la ventana crece) y arranca con **Iniciar todo** en cuanto está instalado; en **Menú → Preferencias → Servicios** se puede quitar o volver a poner en la pila. Al quitarlo, si estaba en marcha, se detiene.
@@ -43,7 +47,7 @@ Además de la pila base (Nginx, PHP y MariaDB), la app gestiona cuatro servicios
 | --- | --- | --- | --- | --- |
 | PostgreSQL | 5432 | otra base de datos (Laravel puede usarla) | zip de binarios de <https://www.enterprisedb.com/download-postgresql-binaries>: la carpeta `pgsql` pasa a ser `bin\postgresql\17.6\` (la app busca `bin\postgres.exe`) | `brew install postgresql@17` |
 | Redis | 6379 | caché, sesiones y colas | no hay versión oficial; la de <https://github.com/redis-windows/redis-windows/releases> (`redis-server.exe` en la raíz de la carpeta) | `brew install redis` |
-| MongoDB | 27017 | base de datos de documentos | zip de <https://www.mongodb.com/try/download/community> (Windows x64, *zip*): `bin\mongodb\8.0.x\bin\mongod.exe` | `brew install mongodb/brew/mongodb-community` |
+| MongoDB | 27017 | base de datos de documentos | zip de <https://www.mongodb.com/try/download/community> (Windows x64, *zip*): `bin\mongodb\8.0.x\bin\mongod.exe` | `brew tap mongodb/brew`, `brew trust mongodb/brew` y `brew install mongodb/brew/mongodb-community` |
 | Mailpit | 1025 (SMTP) y 8025 (web) | atrapa el correo que envían los sitios | `mailpit-windows-amd64.zip` de <https://github.com/axllent/mailpit/releases>: `bin\mailpit\1.27.x\mailpit.exe` | `brew install mailpit` |
 
 - **PostgreSQL**: la primera vez se crea el clúster en `data\postgresql` con `initdb` (UTF-8, usuario `postgres` sin contraseña, solo en 127.0.0.1). Sus ajustes propios van en `data\postgresql\postgresql.conf` (**Menú → PostgreSQL**); la app solo fija el puerto y las direcciones. **Menú → PostgreSQL → Abrir Adminer** entra como `postgres`. En Windows PHP necesita la extensión `pdo_pgsql` (márcala en **Menú → PHP → Extensiones**); el PHP de Homebrew ya la trae.
@@ -105,7 +109,8 @@ En la fase 1 los binarios se descargan y copian a mano. Cada versión va en su p
 | PHP 8.3 | <https://windows.php.net/download/> | PHP 8.3 → **VS16 x64 Non Thread Safe** (zip) | `bin\php\8.3.x\` | `php-cgi.exe` |
 | PHP 8.4 | <https://windows.php.net/download/> | PHP 8.4 → **VS17 x64 Non Thread Safe** (zip) | `bin\php\8.4.x\` | `php-cgi.exe` |
 | MariaDB 11.4 | <https://mariadb.org/download/> | MariaDB Server 11.4 (LTS), *MS Windows (64-bit)*, tipo **ZIP file** | `bin\mariadb\11.4.x\` | `bin\mariadbd.exe` |
-| Adminer | <https://www.adminer.org/#download> | *Adminer for MySQL* (`adminer-x.y.z-mysql.php`) | `bin\adminer\` renombrado a **`adminer.php`** | `adminer.php` |
+| Adminer | <https://www.adminer.org/#download> | *Adminer* (`adminer-x.y.z.php`, sirve para MariaDB y PostgreSQL) | `bin\adminer\` renombrado a **`adminer.php`** | `adminer.php` |
+| phpMyAdmin (opcional) | <https://www.phpmyadmin.net/downloads/> | *all-languages* (zip) | el contenido de la carpeta en `bin\phpmyadmin\` | `index.php` |
 | Composer (opcional: se descarga solo al crear un sitio Laravel) | <https://getcomposer.org/download/> | `composer.phar` | `bin\composer\composer.phar` | `composer.phar` |
 
 Pasos:
@@ -125,6 +130,7 @@ bin\
   php\8.4.6\php-cgi.exe
   mariadb\11.4.5\bin\mariadbd.exe
   adminer\adminer.php
+  phpmyadmin\index.php        (opcional)
   composer\composer.phar      (opcional)
 ```
 

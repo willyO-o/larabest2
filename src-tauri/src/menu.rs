@@ -8,7 +8,7 @@ use tauri::menu::{
 use tauri::{AppHandle, Emitter, Manager, Wry};
 
 use crate::commands::{open_path, open_url};
-use crate::domain::{BinaryLayout, ServiceId, ServiceState, ThemePreference};
+use crate::domain::{BinaryLayout, DatabaseClient, ServiceId, ServiceState, ThemePreference};
 use crate::error::AppError;
 use crate::usecases::ConfigTarget;
 use crate::{settings, tray, AppState};
@@ -195,7 +195,8 @@ pub fn build(app: &AppHandle, from_tray: bool) -> tauri::Result<Menu<Wry>> {
             active(ServiceId::Mariadb).as_deref(),
         )?,
         open(app, "mariadbUserCnf", "my.cnf (ajustes propios)")?,
-        text(app, "database", "Abrir Adminer")?,
+        text(app, "adminer:mariadb", "Abrir Adminer")?,
+        text(app, "phpmyadmin", "Abrir phpMyAdmin")?,
         sep(app)?,
         open(app, "mariadbCnf", "my.cnf generado (solo lectura)")?,
         open(app, "mariadbData", "Carpeta de datos")?,
@@ -262,9 +263,14 @@ pub fn build(app: &AppHandle, from_tray: bool) -> tauri::Result<Menu<Wry>> {
     logs.push(sep(app)?);
     logs.push(open(app, "logs", "Abrir carpeta de logs")?);
 
+    let client = core.database_client();
+    let client_label = match client {
+        DatabaseClient::Adminer => "Adminer",
+        DatabaseClient::Phpmyadmin => "phpMyAdmin",
+    };
     let mut tools = vec![
         text(app, "web", "Web (localhost)")?,
-        text(app, "database", "Base de datos (Adminer)")?,
+        text(app, "database", &format!("Base de datos ({client_label})"))?,
     ];
     if enabled.contains(&ServiceId::Mailpit) {
         tools.push(text(app, "mailpit", "Correo (Mailpit)")?);
@@ -300,9 +306,24 @@ pub fn build(app: &AppHandle, from_tray: bool) -> tauri::Result<Menu<Wry>> {
         check(app, "theme:light", "Claro", theme == ThemePreference::Light)?,
         check(app, "theme:dark", "Oscuro", theme == ThemePreference::Dark)?,
     ];
+    let clients = vec![
+        check(
+            app,
+            "dbclient:adminer",
+            "Adminer",
+            client == DatabaseClient::Adminer,
+        )?,
+        check(
+            app,
+            "dbclient:phpmyadmin",
+            "phpMyAdmin",
+            client == DatabaseClient::Phpmyadmin,
+        )?,
+    ];
     let prefs = vec![
         Box::new(submenu(app, "Tema", themes)?) as Item,
         Box::new(submenu(app, "Servicios", services)?) as Item,
+        Box::new(submenu(app, "Botón Base de datos", clients)?) as Item,
         check(
             app,
             "auto_start",
@@ -385,6 +406,8 @@ async fn run(app: &AppHandle, id: &str) -> Result<(), AppError> {
         "web" => return open_url(app, &core.web_url()?),
         "database" => return open_url(app, &core.database_url()?),
         "adminer:postgresql" => return open_url(app, &core.adminer_url(ServiceId::Postgresql)?),
+        "adminer:mariadb" => return open_url(app, &core.adminer_url(ServiceId::Mariadb)?),
+        "phpmyadmin" => return open_url(app, &core.phpmyadmin_url()?),
         "mailpit" => return open_url(app, &core.mailpit_url()?),
         "terminal" => return core.open_terminal(None),
         "root" => return open_path(app, core.root()),
@@ -432,6 +455,12 @@ async fn run(app: &AppHandle, id: &str) -> Result<(), AppError> {
         } else {
             core.open_in_editor(&path)
         };
+    }
+    if let Some(client) = id.strip_prefix("dbclient:") {
+        let client: DatabaseClient =
+            serde_json::from_value(serde_json::Value::String(client.into()))
+                .map_err(|_| AppError::InvalidInput(id.into()))?;
+        return core.set_database_client(client);
     }
     if let Some(key) = id.strip_prefix("svc:") {
         let service: ServiceId = serde_json::from_value(serde_json::Value::String(key.into()))

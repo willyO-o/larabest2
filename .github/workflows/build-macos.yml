@@ -44,6 +44,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+      # MongoDB no está en homebrew-core: su tap hay que agregarlo y marcarlo
+      # como de confianza.
+      - run: brew tap mongodb/brew && brew trust mongodb/brew
       - run: >-
           brew install nginx php@8.3 php@8.4 mariadb@11.4 postgresql@17 redis
           mailpit mongodb/brew/mongodb-community

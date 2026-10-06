@@ -5,13 +5,10 @@ use std::time::Duration;
 use async_trait::async_trait;
 use minijinja::context;
 
-use super::{force_stop, templates, wait_for_exit, RenderContext, ServiceDriver};
+use super::{force_stop, templates, tools, wait_for_exit, RenderContext, ServiceDriver};
 use crate::domain::{slash, BinaryLayout, Health, ServiceId, Site};
 use crate::error::AppError;
 use crate::ports::{write_if_changed, ProcessRunner, ProcessSpec};
-
-/// Nombre reservado para el sitio de Adminer (`adminer.<tld>`).
-pub const ADMINER_SITE: &str = "adminer";
 
 const CONTROL_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -37,15 +34,6 @@ fn base_spec(ctx: &RenderContext) -> Result<ProcessSpec, AppError> {
 
 fn signal_spec(ctx: &RenderContext, signal: &str) -> Result<ProcessSpec, AppError> {
     Ok(base_spec(ctx)?.arg("-s").arg(signal))
-}
-
-/// `true` si `bin/adminer/adminer.php` existe y ningún proyecto de `www/`
-/// usa ya el nombre `adminer`.
-pub fn adminer_enabled(ctx: &RenderContext, sites: &[Site]) -> bool {
-    ctx.fs.exists(&ctx.paths.adminer_php())
-        && !sites
-            .iter()
-            .any(|s| s.name.eq_ignore_ascii_case(ADMINER_SITE))
 }
 
 /// HTTPS solo si está activado y el certificado del dominio ya existe: un
@@ -77,8 +65,9 @@ fn vhost(ctx: &RenderContext, name: &str, domain: &str, root: &str) -> Result<St
     )
 }
 
-/// Genera un `etc/nginx/sites/<sitio>.conf` por sitio (más el de Adminer) y
-/// borra los que ya no corresponden. Devuelve `true` si cambió algún archivo.
+/// Genera un `etc/nginx/sites/<sitio>.conf` por sitio (más los de Adminer y
+/// phpMyAdmin) y borra los que ya no corresponden. Devuelve `true` si
+/// cambió algún archivo.
 pub fn render_sites(ctx: &RenderContext, sites: &[Site]) -> Result<bool, AppError> {
     let fs = ctx.fs.as_ref();
     let dir = ctx.paths.nginx_sites();
@@ -94,18 +83,12 @@ pub fn render_sites(ctx: &RenderContext, sites: &[Site]) -> Result<bool, AppErro
         keep.insert(file);
     }
 
-    if adminer_enabled(ctx, sites) {
-        let wrapper = templates::render(
-            templates::ADMINER_PHP,
-            context! {
-                app_name => ctx.app_name,
-                adminer_php => slash(&ctx.paths.adminer_php()),
-            },
-        )?;
-        changed |= write_if_changed(fs, &ctx.paths.etc_adminer().join("index.php"), &wrapper)?;
-        let domain = format!("{ADMINER_SITE}.{}", ctx.config.tld);
-        let content = vhost(ctx, ADMINER_SITE, &domain, &slash(&ctx.paths.etc_adminer()))?;
-        let file = format!("{ADMINER_SITE}.conf");
+    for tool in tools::served(ctx, sites) {
+        let (root, tool_changed) = tools::prepare(ctx, tool)?;
+        changed |= tool_changed;
+        let domain = format!("{tool}.{}", ctx.config.tld);
+        let content = vhost(ctx, tool, &domain, &slash(&root))?;
+        let file = format!("{tool}.conf");
         changed |= write_if_changed(fs, &dir.join(&file), &content)?;
         keep.insert(file);
     }

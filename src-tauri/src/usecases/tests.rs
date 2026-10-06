@@ -799,3 +799,41 @@ async fn optional_service_files_open_from_the_menu() {
     );
     assert!(core.config_target(ConfigTarget::MailpitLog).is_ok());
 }
+
+#[tokio::test]
+async fn phpmyadmin_is_served_registered_and_can_be_the_database_button() {
+    let h = Harness::new();
+    h.fs.write(
+        Path::new(&format!("{ROOT}/bin/phpmyadmin/index.php")),
+        "<?php",
+    )
+    .unwrap();
+    let core = h.core();
+    core.sync_sites().await.unwrap();
+    assert!(h
+        .hosts
+        .entries
+        .lock()
+        .unwrap()
+        .contains(&HostEntry::local("phpmyadmin.test")));
+    let vhost =
+        h.fs.read(&format!("{ROOT}/etc/nginx/sites/phpmyadmin.conf"));
+    assert!(vhost.contains(r#"root "C:/APP/bin/phpmyadmin";"#));
+    assert!(h
+        .fs
+        .read(&format!("{ROOT}/bin/phpmyadmin/config.inc.php"))
+        .contains("'auth_type'] = 'config'"));
+
+    core.start(ServiceId::Nginx).await.unwrap();
+    // Adminer sigue siendo el botón por defecto (y no está instalado).
+    assert!(core.database_url().is_err());
+    core.set_database_client(crate::domain::DatabaseClient::Phpmyadmin)
+        .unwrap();
+    assert_eq!(core.database_url().unwrap(), "http://phpmyadmin.test/");
+
+    let err = core
+        .create_site("phpMyAdmin", SitePreset::Blank)
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("reservado"));
+}

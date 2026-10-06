@@ -2,7 +2,7 @@
 
 use super::Core;
 use crate::domain::{ServiceId, ServiceState};
-use crate::drivers::nginx;
+use crate::drivers::tools;
 use crate::error::AppError;
 
 impl Core {
@@ -54,7 +54,8 @@ impl Core {
         Ok(())
     }
 
-    /// Con HTTPS activo, crea el certificado que falte (sitios y Adminer).
+    /// Con HTTPS activo, crea el certificado que falte (sitios, Adminer y
+    /// phpMyAdmin).
     pub(super) fn ensure_certs(&self) -> Result<(), AppError> {
         let deps = self.supervisor.deps();
         let cfg = deps.config.load()?;
@@ -66,8 +67,10 @@ impl Core {
                 .into_iter()
                 .map(|s| s.domain)
                 .collect();
-        if deps.fs.exists(&deps.paths.adminer_php()) {
-            domains.push(format!("{}.{}", nginx::ADMINER_SITE, cfg.tld));
+        for tool in tools::ALL {
+            if tools::installed(deps.fs.as_ref(), &deps.paths, tool) {
+                domains.push(format!("{tool}.{}", cfg.tld));
+            }
         }
         for domain in domains {
             self.ca.ensure_cert(&domain)?;

@@ -31,6 +31,17 @@ impl BinaryLayout {
         }
     }
 
+    /// Comando de Terminal que lo instala. MongoDB está en un tap aparte
+    /// que Homebrew pide marcar como de confianza.
+    pub fn brew_command(service: ServiceId) -> String {
+        let install = format!("brew install {}", Self::brew_formulas(service).join(" "));
+        if service == ServiceId::Mongodb {
+            format!("brew tap mongodb/brew; brew trust mongodb/brew; {install}")
+        } else {
+            install
+        }
+    }
+
     /// Qué hacer cuando no hay ninguna versión instalada del servicio.
     pub fn install_hint(self, paths: &Paths, service: ServiceId) -> String {
         match self {
@@ -39,8 +50,8 @@ impl BinaryLayout {
                 slash(&paths.bin_service(service))
             ),
             BinaryLayout::Homebrew => format!(
-                "no está instalado. Instálalo desde la Terminal con: brew install {}",
-                Self::brew_formulas(service).join(" ")
+                "no está instalado. Instálalo desde la Terminal con: {}",
+                Self::brew_command(service)
             ),
         }
     }
@@ -83,5 +94,8 @@ mod tests {
             BinaryLayout::Portable.menu_hint(ServiceId::Nginx),
             "(copia una versión en bin/nginx)"
         );
+        assert!(BinaryLayout::Homebrew
+            .install_hint(&paths, ServiceId::Mongodb)
+            .ends_with("brew tap mongodb/brew; brew trust mongodb/brew; brew install mongodb/brew/mongodb-community"));
     }
 }

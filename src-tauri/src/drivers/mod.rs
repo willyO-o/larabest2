@@ -10,6 +10,7 @@ pub mod php;
 pub mod postgresql;
 pub mod redis;
 pub mod templates;
+pub mod tools;
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};

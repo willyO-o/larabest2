@@ -11,7 +11,7 @@ use crate::domain::{
     database_name, is_valid_site_name, set_env, slash, ProgressState, ServiceId, ServiceState,
     Site, SitePreset, SiteProgress,
 };
-use crate::drivers::{mariadb, nginx, php, templates, RenderContext};
+use crate::drivers::{mariadb, php, templates, tools, RenderContext};
 use crate::error::AppError;
 
 /// WordPress en español; se descarga una vez y se reutiliza.
@@ -92,10 +92,11 @@ impl Core {
                     .into(),
             ));
         }
-        if name.eq_ignore_ascii_case(nginx::ADMINER_SITE) {
-            return Err(AppError::InvalidInput(
-                "El nombre «adminer» está reservado para la base de datos.".into(),
-            ));
+        if tools::is_reserved(name) {
+            return Err(AppError::InvalidInput(format!(
+                "El nombre «{}» está reservado para la base de datos.",
+                name.to_ascii_lowercase()
+            )));
         }
         let dir = deps.paths.www().join(name);
         let taken = deps

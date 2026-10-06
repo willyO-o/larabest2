@@ -34,6 +34,25 @@ impl Paths {
         self.bin_adminer().join("adminer.php")
     }
 
+    /// Carpeta de phpMyAdmin (el zip descomprimido, con `index.php`).
+    pub fn bin_phpmyadmin(&self) -> PathBuf {
+        self.bin().join("phpmyadmin")
+    }
+
+    pub fn phpmyadmin_index(&self) -> PathBuf {
+        self.bin_phpmyadmin().join("index.php")
+    }
+
+    /// phpMyAdmin solo lee `config.inc.php` de su propia carpeta: la app
+    /// lo genera ahí y deja los ajustes propios en `etc/phpmyadmin/`.
+    pub fn phpmyadmin_config(&self) -> PathBuf {
+        self.bin_phpmyadmin().join("config.inc.php")
+    }
+
+    pub fn phpmyadmin_custom(&self) -> PathBuf {
+        self.etc().join("phpmyadmin").join("custom.inc.php")
+    }
+
     /// Carpeta donde se copia `composer.phar` (opcional).
     pub fn bin_composer(&self) -> PathBuf {
         self.bin().join("composer")
