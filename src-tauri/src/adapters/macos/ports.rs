@@ -32,10 +32,13 @@ impl PortChecker for MacPortChecker {
     /// `SO_REUSEADDR` al escuchar, así que además nadie debe responder en
     /// 127.0.0.1.
     fn is_free(&self, port: u16) -> bool {
-        match TcpListener::bind((Ipv4Addr::UNSPECIFIED, port)) {
-            Err(e) if e.kind() == ErrorKind::AddrInUse => false,
-            _ => !self.is_listening(port),
+        let bound = TcpListener::bind((Ipv4Addr::UNSPECIFIED, port));
+        if matches!(&bound, Err(e) if e.kind() == ErrorKind::AddrInUse) {
+            return false;
         }
+        // Se suelta antes de probar: si no, se respondería a sí mismo.
+        drop(bound);
+        !self.is_listening(port)
     }
 
     /// `lsof` solo ve los procesos del propio usuario; si el puerto es de
@@ -70,6 +73,18 @@ mod tests {
         );
         assert_eq!(parse_lsof("p99\n"), Some((99, None)));
         assert_eq!(parse_lsof(""), None);
+    }
+
+    #[test]
+    fn unused_port_is_free() {
+        let port = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port();
+        let checker = MacPortChecker;
+        assert!(checker.is_free(port));
+        assert!(!checker.is_listening(port));
     }
 
     #[test]

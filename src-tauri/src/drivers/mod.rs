@@ -78,9 +78,15 @@ pub fn program_subpath(layout: BinaryLayout, id: ServiceId, name: &str) -> PathB
         (BinaryLayout::Homebrew, ServiceId::Php) if name == "php-fpm" => Some("sbin"),
         (BinaryLayout::Homebrew, _) => Some("bin"),
     };
+    // Homebrew solo existe en macOS: nunca lleva ".exe", aunque las pruebas
+    // corran en Windows.
+    let file = match layout {
+        BinaryLayout::Portable => exe(name),
+        BinaryLayout::Homebrew => name.to_string(),
+    };
     match dir {
-        Some(dir) => Path::new(dir).join(exe(name)),
-        None => PathBuf::from(exe(name)),
+        Some(dir) => Path::new(dir).join(file),
+        None => PathBuf::from(file),
     }
 }
 

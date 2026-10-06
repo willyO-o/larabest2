@@ -482,17 +482,13 @@ impl Core {
             deps.fs.set_executable(&target)?;
             path.push(slash(&deps.paths.etc_shell()));
         }
-        // Las rutas internas usan "/", pero en el PATH van con "\" en Windows.
-        let sep = if cfg!(windows) { ";" } else { ":" };
+        // Las rutas internas usan "/", pero en el PATH de Windows van con "\"
+        // y separadas por ";". La disposición indica la plataforma.
+        let windows = deps.layout == BinaryLayout::Portable;
+        let sep = if windows { ";" } else { ":" };
         let mut joined: Vec<String> = path
             .into_iter()
-            .map(|p| {
-                if cfg!(windows) {
-                    p.replace('/', "\\")
-                } else {
-                    p
-                }
-            })
+            .map(|p| if windows { p.replace('/', "\\") } else { p })
             .collect();
         if !self.system_path.is_empty() {
             joined.push(self.system_path.clone());
