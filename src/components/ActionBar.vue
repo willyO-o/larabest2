@@ -11,25 +11,27 @@ const busy = computed(() => services.pending.has('all'))
 </script>
 
 <template>
-  <div class="action-bar">
+  <nav class="actions" aria-label="Acciones">
     <button
-      class="btn btn-primary"
+      class="action action-main"
       :class="{ 'is-stop': services.anyActive }"
       :disabled="busy"
       @click="services.anyActive ? services.stopAll() : services.startAll()"
     >
       <AppIcon :name="services.anyActive ? 'stop' : 'play'" />
-      {{ services.anyActive ? 'Detener' : 'Iniciar todo' }}
+      <span>{{ services.anyActive ? 'Detener' : 'Iniciar todo' }}</span>
     </button>
-    <div class="action-grid">
-      <button class="btn" @click="settings.openWeb()"><AppIcon name="globe" />Web</button>
-      <button class="btn" @click="settings.openDatabase()">
-        <AppIcon name="database" />Base de datos
-      </button>
-      <button class="btn" @click="settings.openTerminal()">
-        <AppIcon name="terminal" />Terminal
-      </button>
-      <button class="btn" @click="settings.openRoot()"><AppIcon name="folder" />Raíz</button>
-    </div>
-  </div>
+    <button class="action" @click="settings.openWeb()">
+      <AppIcon name="globe" /><span>Web</span>
+    </button>
+    <button class="action" @click="settings.openDatabase()">
+      <AppIcon name="database" /><span>Base de datos</span>
+    </button>
+    <button class="action" @click="settings.openTerminal()">
+      <AppIcon name="terminal" /><span>Terminal</span>
+    </button>
+    <button class="action" @click="settings.openRoot()">
+      <AppIcon name="folder" /><span>Raíz</span>
+    </button>
+  </nav>
 </template>

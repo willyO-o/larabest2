@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed } from 'vue'
-import AppIcon from './AppIcon.vue'
 import { SERVICE_LABEL, useServicesStore } from '../stores/services'
 import type { ServiceStatus } from '../types/ipc'
 
@@ -8,11 +7,11 @@ const props = defineProps<{ status: ServiceStatus }>()
 const services = useServicesStore()
 
 const STATE_LABEL = {
-  stopped: 'Detenido',
-  starting: 'Iniciando…',
-  running: 'En marcha',
-  stopping: 'Deteniendo…',
-  failed: 'Error',
+  stopped: 'detenido',
+  starting: 'iniciando…',
+  running: 'en marcha',
+  stopping: 'deteniendo…',
+  failed: 'error',
 } as const
 
 const busy = computed(
@@ -23,6 +22,9 @@ const busy = computed(
     props.status.state === 'stopping',
 )
 const isUp = computed(() => props.status.state === 'running')
+const port = computed(() =>
+  props.status.id === 'php' ? `${props.status.port}–${props.status.port + 3}` : `${props.status.port}`,
+)
 
 function toggle() {
   if (isUp.value) services.stop(props.status.id)
@@ -32,35 +34,24 @@ function toggle() {
 
 <template>
   <li class="service" :data-state="status.state">
-    <div class="service-main">
-      <span class="dot" :title="STATE_LABEL[status.state]" />
-      <div class="service-text">
-        <span class="service-name">{{ SERVICE_LABEL[status.id] }}</span>
-        <span class="service-meta">
-          <template v-if="status.version">{{ status.version }}</template>
-          <template v-else>sin instalar</template>
-          · {{ status.id === 'php' ? `${status.port}+` : status.port }}
-        </span>
-      </div>
-      <span class="service-state">{{ STATE_LABEL[status.state] }}</span>
+    <span class="dot" aria-hidden="true" />
+    <span class="service-name">{{ SERVICE_LABEL[status.id] }}</span>
+    <span class="service-version">{{ status.version ?? 'sin instalar' }}</span>
+    <span class="service-port">puerto {{ port }}</span>
+    <span class="service-state">{{ STATE_LABEL[status.state] }}</span>
+    <span class="service-actions">
       <button
-        class="icon-btn"
+        class="row-btn"
         :disabled="busy || !isUp"
-        :title="status.id === 'nginx' ? 'Recargar configuración' : 'Reiniciar'"
+        :title="status.id === 'nginx' ? 'Recargar la configuración sin cortar' : 'Reiniciar'"
         @click="services.reload(status.id)"
       >
-        <AppIcon name="refresh" />
+        Recargar
       </button>
-      <button
-        class="icon-btn"
-        :class="{ 'is-stop': isUp }"
-        :disabled="busy"
-        :title="isUp ? 'Detener' : 'Iniciar'"
-        @click="toggle"
-      >
-        <AppIcon :name="isUp ? 'stop' : 'play'" />
+      <button class="row-btn" :class="{ 'is-stop': isUp }" :disabled="busy" @click="toggle">
+        {{ isUp ? 'Detener' : 'Iniciar' }}
       </button>
-    </div>
+    </span>
     <p v-if="status.state === 'failed' && status.detail" class="service-detail">
       {{ status.detail }}
     </p>

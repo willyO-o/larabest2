@@ -1,0 +1,138 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-06T16:09:27.412989Z",
+  "title": "Design System: LARABEST",
+  "extensions": {
+    "colorMeta": {
+      "accent": {
+        "role": "primary",
+        "displayName": "Índigo de acción"
+      },
+      "ground": {
+        "role": "neutral",
+        "displayName": "Fondo frío"
+      },
+      "band-running": {
+        "role": "state",
+        "displayName": "Banda: todo en marcha"
+      },
+      "band-failed": {
+        "role": "state",
+        "displayName": "Banda: fallo"
+      },
+      "band-busy": {
+        "role": "state",
+        "displayName": "Banda: iniciando"
+      },
+      "band-partial": {
+        "role": "state",
+        "displayName": "Banda: parcial"
+      },
+      "band-stopped": {
+        "role": "state",
+        "displayName": "Banda: detenido"
+      }
+    },
+    "typographyMeta": {
+      "body": {
+        "displayName": "Base",
+        "purpose": "Datos, botones y textos."
+      },
+      "wordmark": {
+        "displayName": "Marca",
+        "purpose": "Solo el nombre LARABEST en la banda."
+      }
+    },
+    "shadows": [],
+    "motion": [
+      {
+        "name": "ease-out",
+        "value": "cubic-bezier(0.23, 1, 0.32, 1)",
+        "purpose": "Respuesta al pulsar (scale 0.97, 140ms)."
+      },
+      {
+        "name": "band-state",
+        "value": "background-color 320ms ease",
+        "purpose": "Cambio de color de la banda con el estado."
+      }
+    ],
+    "breakpoints": []
+  },
+  "components": [
+    {
+      "name": "Banda de estado",
+      "kind": "nav",
+      "refersTo": "band",
+      "description": "Banda superior que toma el color del estado de la pila.",
+      "html": "<header class=\"ds-band\"><b>LARABEST</b><span>0.1.0</span><em>Todo en marcha</em><button>Menú</button></header>",
+      "css": ".ds-band{display:flex;align-items:center;gap:8px;height:46px;padding:0 8px 0 14px;background:#155e37;color:#fff;font:13px 'Segoe UI',system-ui}.ds-band b{letter-spacing:.06em}.ds-band span{opacity:.72;font-size:12px}.ds-band em{margin-left:auto;font-style:normal;font-weight:600}.ds-band button{height:30px;padding:0 12px;border:0;border-radius:6px;background:rgba(255,255,255,.12);color:#fff;font:600 13px 'Segoe UI',system-ui}"
+    },
+    {
+      "name": "Botón principal",
+      "kind": "button",
+      "refersTo": "button-main",
+      "description": "Iniciar todo / Detener.",
+      "html": "<button class=\"ds-main\">Iniciar todo</button>",
+      "css": ".ds-main{height:64px;width:140px;border:0;border-radius:8px;background:#3d4ed8;color:#fff;font:700 13px 'Segoe UI',system-ui;transition:transform 140ms cubic-bezier(.23,1,.32,1)}.ds-main:active{transform:scale(.97)}"
+    },
+    {
+      "name": "Botón de acción",
+      "kind": "button",
+      "refersTo": "button-action",
+      "description": "Web, Base de datos, Terminal, Raíz.",
+      "html": "<button class=\"ds-act\">Terminal</button>",
+      "css": ".ds-act{height:64px;width:110px;border:1px solid #dde0e7;border-radius:8px;background:#fff;color:#15171c;font:500 13px 'Segoe UI',system-ui}"
+    },
+    {
+      "name": "Botón de fila",
+      "kind": "button",
+      "refersTo": "button-row",
+      "description": "Recargar e Iniciar/Detener en cada servicio.",
+      "html": "<button class=\"ds-row\">Detener</button>",
+      "css": ".ds-row{min-width:74px;height:28px;padding:0 10px;border:1px solid #dde0e7;border-radius:6px;background:#fff;color:#b42318;font:500 13px 'Segoe UI',system-ui}"
+    },
+    {
+      "name": "Detalle de fallo",
+      "kind": "custom",
+      "refersTo": "failure-detail",
+      "description": "Causa del fallo dentro de la fila.",
+      "html": "<p class=\"ds-fail\">El puerto 80 está ocupado por httpd.exe (PID 4321)</p>",
+      "css": ".ds-fail{margin:0;padding:7px 10px;border-radius:6px;background:#fdeceb;color:#b42318;font:13px 'Segoe UI',system-ui}"
+    }
+  ],
+  "narrative": {
+    "northStar": "La ventana es la luz de estado",
+    "overview": "Estructura de Laragon con identidad propia: filas de servicio, cinco botones y menú contextual nativo; la banda superior cambia de color con el estado de la pila.",
+    "keyCharacteristics": [
+      "Estructura de Laragon",
+      "Banda semáforo",
+      "Una familia del sistema, cifras tabulares",
+      "Menú contextual nativo en árbol"
+    ],
+    "rules": [
+      {
+        "name": "La banda es el semáforo",
+        "body": "Un color por estado de la pila, texto siempre blanco.",
+        "section": "colors"
+      },
+      {
+        "name": "El estado nunca va solo en color",
+        "body": "Cada punto lleva su palabra.",
+        "section": "colors"
+      },
+      {
+        "name": "El rojo explica",
+        "body": "El fondo rojo solo aparece con la causa de un fallo.",
+        "section": "colors"
+      }
+    ],
+    "dos": [
+      "Mantener filas de servicio, cinco botones y menú contextual.",
+      "Mostrar cada fallo en su fila con la solución."
+    ],
+    "donts": [
+      "No usar nombre, logo ni íconos de Laragon.",
+      "No usar tarjetas ni sombras."
+    ]
+  }
+}
