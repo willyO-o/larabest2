@@ -1,6 +1,6 @@
 # LARABEST
 
-Servidor local para Windows 10 y 11 y para macOS 13 o posterior, inspirado en Laragon: gestiona **Nginx**, **PHP** y **MariaDB** como procesos propios y crea un dominio `<carpeta>.test` por cada proyecto de `www/`. Hecho con Tauri 2, Rust y Vue 3.
+Servidor local para Windows 10 y 11 y para macOS 13 o posterior, inspirado en Laragon: gestiona **Nginx** (o **Apache**), **PHP** y **MariaDB** como procesos propios y crea un dominio `<carpeta>.test` por cada proyecto de `www/`. Hecho con Tauri 2, Rust y Vue 3.
 
 La interfaz sigue la estructura de Laragon (ventana compacta, una fila por servicio, cinco botones abajo y un menú contextual en árbol) con identidad propia. La banda superior cambia de color con el estado: grafito detenido, ámbar iniciando, verde todo en marcha, rojo con un fallo.
 
@@ -12,6 +12,10 @@ La interfaz sigue la estructura de Laragon (ventana compacta, una fila por servi
 
 **Servicios opcionales:** PostgreSQL, Redis, MongoDB y Mailpit, en Windows y macOS. Ver [Servicios opcionales](#servicios-opcionales).
 
+**Apache:** se puede usar Apache en lugar de Nginx, con los mismos sitios. Ver [Apache en lugar de Nginx](#apache-en-lugar-de-nginx).
+
+**Agregar desde el menú:** versiones de PHP, Nginx, Apache, MariaDB y los servicios opcionales, más Adminer, phpMyAdmin y Composer, con un clic. Ver [Agregar programas desde el menú](#agregar-programas-desde-el-menú).
+
 ## Menú contextual
 
 Clic derecho en cualquier parte de la ventana, el botón **Menú** o el ícono de la bandeja abren el mismo menú:
@@ -20,12 +24,14 @@ Clic derecho en cualquier parte de la ventana, el botón **Menú** o el ícono d
 | --- | --- |
 | Iniciar todo / Detener todo | según el estado |
 | www | un sitio por carpeta (abre `http://<carpeta>.test`), **Crear sitio** (en blanco, WordPress, Laravel), abrir la carpeta www, actualizar sitios y archivo hosts |
-| Nginx | versión, recargar configuración, carpeta de configuración propia por sitio (`etc\nginx\custom\<sitio>.conf`), `nginx.conf` generado, logs |
+| Nginx o Apache | el servidor web elegido: versión, recargar configuración, carpeta de configuración propia por sitio (`etc\nginx\custom\<sitio>.conf` o `etc\apache\custom\<sitio>.conf`), configuración generada, logs |
 | PHP | versión, `php.ini` de ajustes propios, extensiones (marcar o desmarcar), `php.ini` generado, log de errores |
-| MariaDB | versión, `my.cnf` de ajustes propios, Adminer, `my.cnf` generado, carpeta de datos, log de errores |
-| Logs | errores y accesos de Nginx, errores de PHP y de MariaDB, carpeta de logs |
-| Herramientas | Web, Base de datos, Terminal, carpeta raíz |
-| Preferencias | tema (Sistema, Claro, Oscuro), iniciar todo al abrir, HTTPS para los sitios `.test`, carpeta de certificados, cambiar la carpeta raíz, abrir `app.json` |
+| MariaDB | versión, `my.cnf` de ajustes propios, Adminer, phpMyAdmin, `my.cnf` generado, carpeta de datos, log de errores |
+| PostgreSQL, Redis, MongoDB, Mailpit | uno por cada servicio opcional en la pila (ver abajo) |
+| Logs | errores y accesos del servidor web, errores de PHP y de MariaDB, logs de los opcionales, carpeta de logs |
+| Herramientas | Web, Base de datos, Correo (con Mailpit), Terminal, carpeta raíz |
+| Agregar | descargar versiones y herramientas (ver abajo) |
+| Preferencias | tema (Sistema, Claro, Oscuro), servidor web (Nginx o Apache), servicios opcionales, botón Base de datos (Adminer o phpMyAdmin), iniciar todo al abrir, HTTPS para los sitios `.test`, carpeta de certificados, cambiar la carpeta raíz, abrir `app.json` |
 
 Lo generado (`etc\nginx\nginx.conf`, `etc\php\php.ini`, `etc\mariadb\my.cnf`) se regenera en cada inicio: ábrelo solo para consultarlo. Tus ajustes van en archivos que nunca se regeneran:
 
@@ -43,6 +49,7 @@ Las extensiones marcadas en el menú se guardan en `app.json` y PHP se reinicia 
 | --- | --- | --- |
 | PHP 8.4 y 8.3 | última versión de la rama desde `windows.php.net` (NTS x64) | `brew install php@8.4` / `php@8.3` |
 | Nginx | versión estable de `nginx.org` | `brew install nginx` |
+| Apache | build de Apache Lounge para Windows x64, desde su réplica en `fossies.org` (la misma que usa Scoop; `apachelounge.com` bloquea algunas descargas automáticas) | `brew install httpd` |
 | MariaDB 11.4 | última 11.4 de `archive.mariadb.org` | `brew install mariadb@11.4` |
 | PostgreSQL 17 | binarios de EDB (`get.enterprisedb.com`) | `brew install postgresql@17` |
 | Redis | `redis-windows/redis-windows` (GitHub) | `brew install redis` |
@@ -51,6 +58,18 @@ Las extensiones marcadas en el menú se guardan en `app.json` y PHP se reinicia 
 | Adminer, phpMyAdmin, Composer | sus descargas oficiales, en `bin\` | igual |
 
 En Windows cada versión queda en su carpeta (`bin\php\8.4.13\`), así que conviven varias y se elige en **Menú → PHP → Versión**. El menú muestra al lado lo que ya está instalado; volver a agregar algo baja la versión más nueva de esa rama si la hay. El progreso aparece en la línea de estado y, al terminar, la fila del servicio ya muestra la versión nueva. En macOS hace falta tener Homebrew (<https://brew.sh>); la app solo ejecuta `brew install`.
+
+## Apache en lugar de Nginx
+
+**Menú → Preferencias → Servidor web → Apache** (antes, **Menú → Agregar → Apache**). Si el servidor web estaba en marcha, Nginx se detiene y Apache arranca en su lugar; la fila de la ventana cambia de Nginx a Apache. Se vuelve igual a Nginx.
+
+Todo lo demás es igual: los mismos sitios `<carpeta>.test`, puertos 80 y 443, HTTPS con los mismos certificados, Adminer y phpMyAdmin, y PHP por FastCGI (los 4 `php-cgi` en Windows, repartidos con `mod_proxy_balancer`; `php-fpm` en macOS). Con Apache funcionan los `.htaccess` de WordPress y Laravel (`AllowOverride All` y `mod_rewrite`).
+
+- Configuración generada: `etc\apache\httpd.conf` y un `etc\apache\sites\<sitio>.conf` por sitio (no editar). Tus ajustes por sitio van en `etc\apache\custom\<sitio>.conf`, incluido dentro de su `<VirtualHost>`.
+- Logs: `logs\apache-error.log` y `logs\apache-access.log` (**Menú → Logs**).
+- **Recargar** (al crear o borrar un sitio, o desde el menú): en macOS es `httpd -k graceful`, sin cortar las visitas. En Windows Apache corre como aplicación de consola y no se puede recargar desde otro proceso (`httpd -k` solo controla el servicio de Windows): la app lo reinicia, que tarda un segundo.
+- Windows: las compilaciones recientes de Apache Lounge (VS18) piden el **runtime de Visual C++ más reciente** (<https://aka.ms/vs/17/release/vc_redist.x64.exe> instala la última versión 14.x). Si falta o es viejo, la fila de Apache lo dice.
+- macOS: el Apache que trae el sistema puede estar ocupando el puerto 80 (`sudo apachectl stop`).
 
 ## Base de datos: Adminer o phpMyAdmin
 
@@ -126,6 +145,7 @@ Lo más simple es **Menú → Agregar** (ver arriba). También se pueden copiar 
 | PHP 8.3 | <https://windows.php.net/download/> | PHP 8.3 → **VS16 x64 Non Thread Safe** (zip) | `bin\php\8.3.x\` | `php-cgi.exe` |
 | PHP 8.4 | <https://windows.php.net/download/> | PHP 8.4 → **VS17 x64 Non Thread Safe** (zip) | `bin\php\8.4.x\` | `php-cgi.exe` |
 | MariaDB 11.4 | <https://mariadb.org/download/> | MariaDB Server 11.4 (LTS), *MS Windows (64-bit)*, tipo **ZIP file** | `bin\mariadb\11.4.x\` | `bin\mariadbd.exe` |
+| Apache (opcional) | <https://www.apachelounge.com/download/> | `httpd-2.4.x-…-Win64-VS18.zip` | el contenido de su carpeta `Apache24` en `bin\apache\2.4.x\` | `bin\httpd.exe` |
 | Adminer | <https://www.adminer.org/#download> | *Adminer* (`adminer-x.y.z.php`, sirve para MariaDB y PostgreSQL) | `bin\adminer\` renombrado a **`adminer.php`** | `adminer.php` |
 | phpMyAdmin (opcional) | <https://www.phpmyadmin.net/downloads/> | *all-languages* (zip) | el contenido de la carpeta en `bin\phpmyadmin\` | `index.php` |
 | Composer (opcional: se descarga solo al crear un sitio Laravel) | <https://getcomposer.org/download/> | `composer.phar` | `bin\composer\composer.phar` | `composer.phar` |
@@ -135,7 +155,7 @@ Pasos:
 1. Descomprime cada zip y renombra la carpeta resultante con el número de versión. Por ejemplo, `php-8.4.6-nts-Win32-vs17-x64` pasa a ser `bin\php\8.4.6\`, y `mariadb-11.4.5-winx64` pasa a ser `bin\mariadb\11.4.5\`.
 2. Comprueba que el ejecutable quede directamente dentro de la carpeta de versión (`bin\php\8.4.6\php-cgi.exe`) y no en una subcarpeta extra.
 3. PHP usa builds **NTS x64** (Non Thread Safe). Las *Thread Safe* no sirven con `php-cgi`.
-4. PHP y MariaDB necesitan el **runtime de Visual C++ 2015-2022 x64**: <https://aka.ms/vs/17/release/vc_redist.x64.exe>. Si falta, la fila del servicio lo dice.
+4. PHP, MariaDB y Apache necesitan el **runtime de Visual C++ x64** reciente: <https://aka.ms/vs/17/release/vc_redist.x64.exe> instala el último. Si falta o es antiguo, la fila del servicio lo dice.
 5. No hace falta tocar `php.ini`, `nginx.conf` ni `my.cnf`: la app los genera en `etc\`.
 
 Resultado esperado:
@@ -146,6 +166,7 @@ bin\
   php\8.3.20\php-cgi.exe
   php\8.4.6\php-cgi.exe
   mariadb\11.4.5\bin\mariadbd.exe
+  apache\2.4.69\bin\httpd.exe  (opcional)
   adminer\adminer.php
   phpmyadmin\index.php        (opcional)
   composer\composer.phar      (opcional)
@@ -258,6 +279,21 @@ Prepara `bin\` como se describe arriba y crea `www\blog\index.php` con `<?php ph
 - [ ] Con MongoDB: arranca, y **Detener** lo cierra sin forzarlo (el log `logs\mongodb.log` muestra un cierre normal, sin «unclean shutdown» al volver a iniciarlo).
 - [ ] Con Mailpit: un sitio WordPress nuevo envía el correo de «¿Olvidaste tu contraseña?» y aparece en **Menú → Mailpit → Abrir el correo recibido**.
 
+**Agregar desde el menú**
+
+- [ ] **Menú → Agregar → PHP 8.4**: la línea de estado muestra el progreso (buscar versión, descargar, extraer) y al terminar la fila de PHP y **Menú → PHP → Versión** tienen la versión nueva. El menú Agregar la marca como instalada.
+- [ ] **Agregar → MongoDB** (o cualquier servicio opcional) hace aparecer su fila.
+- [ ] Con la ventana oculta, agregar desde la bandeja termina con un diálogo.
+
+**Apache**
+
+- [ ] **Menú → Agregar → Apache** y luego **Preferencias → Servidor web → Apache** con todo en marcha: la fila Nginx cambia por Apache, *En marcha*, y en el Administrador de tareas hay dos `httpd.exe` y ningún `nginx.exe`.
+- [ ] `http://blog.test` y `http://tienda.test` funcionan igual; en Laravel, `http://tienda.test/up` responde (pasa por el `.htaccess`). En WordPress, **Ajustes → Enlaces permanentes → Nombre de la entrada** funciona (crea su `.htaccess`).
+- [ ] Crear `www\nuevo\index.php` con Apache en marcha: `http://nuevo.test` funciona en un par de segundos (Apache se reinicia solo).
+- [ ] Con HTTPS activo, `https://blog.test` abre con candado.
+- [ ] **Detener** cierra los dos `httpd.exe` sin forzarlos (en `logs\apache-error.log` no hay errores de cierre).
+- [ ] **Servidor web → Nginx** vuelve atrás.
+
 ## macOS
 
 En macOS la app usa los programas de **Homebrew** en vez de copiarlos a `bin/`. Funciona en Apple Silicon y en Intel (el `.dmg` es universal) desde macOS 13 Ventura; Homebrew ofrece binarios listos para macOS 14 o posterior (en versiones anteriores, y en Intel para algunas fórmulas, los compila y tarda bastante).
@@ -270,6 +306,8 @@ En macOS la app usa los programas de **Homebrew** en vez de copiarlos a `bin/`. 
    ```bash
    brew install nginx php@8.3 php@8.4 mariadb@11.4
    ```
+
+   Opcional: `brew install httpd` para usar Apache en lugar de Nginx, y los servicios opcionales (`postgresql@17`, `redis`, `mailpit`, y MongoDB con `brew tap mongodb/brew`, `brew trust mongodb/brew` y `brew install mongodb/brew/mongodb-community`). También se instalan desde **Menú → Agregar**.
 
    No hace falta `brew services start`: la app arranca y detiene cada programa con su propia configuración. Si ya tenías alguno corriendo con `brew services`, detenlo (`brew services stop nginx`, etc.) para liberar los puertos.
 3. Opcional, igual que en Windows: `adminer.php` en `~/LARABEST/bin/adminer/` y `composer.phar` en `~/LARABEST/bin/composer/` (Composer se descarga solo al crear un sitio Laravel).
@@ -325,8 +363,12 @@ Instala los servicios con Homebrew y la app como se indica arriba. Crea `~/LARAB
 - [ ] El ícono de la barra de menús se ve en tema claro y oscuro.
 - [ ] **Menú → PHP → php.ini (ajustes propios)** abre `user.ini` en el editor de texto.
 - [ ] **Salir** (o Cmd+Q) detiene los servicios antes de cerrar. Si la app se cierra a la fuerza, al abrirla de nuevo detiene los procesos que quedaron (no aparece «puerto ocupado»).
+- [ ] **Menú → Agregar → Redis** ejecuta `brew install redis` (la línea de estado muestra el progreso) y aparece la fila Redis.
+- [ ] Con `brew install httpd`, **Preferencias → Servidor web → Apache**: los sitios siguen funcionando y crear una carpeta nueva en `www/` la sirve sin cortar las visitas (`httpd -k graceful`).
 
-El CI de macOS ya prueba, con los programas reales de Homebrew: arranque de los tres servicios, un sitio servido por Nginx y php-fpm, la base de datos con root sin contraseña, Adminer, la creación de un sitio WordPress y uno Laravel, la Terminal, HTTPS, el cambio de versión de PHP y la limpieza de procesos huérfanos. Lo que no prueba (necesita una persona frente al Mac): los avisos de contraseña, la ventana, la barra de menús y abrir la app descargada.
+El CI de macOS ya prueba, con los programas reales de Homebrew: arranque de la pila con los servicios opcionales, un sitio servido por Nginx y php-fpm, el correo a Mailpit, la base de datos con root sin contraseña, Adminer, la creación de un sitio WordPress y uno Laravel, MongoDB cerrado en orden, HTTPS, PostgreSQL, la Terminal, el cambio de versión de PHP, el cambio a Apache (con su recarga) y la limpieza de procesos huérfanos. Lo que no prueba (necesita una persona frente al Mac): los avisos de contraseña, la ventana, la barra de menús y abrir la app descargada.
+
+El CI de Windows (job `servicios`) agrega todo el catálogo desde **Menú → Agregar** con las descargas oficiales y recorre lo mismo con Nginx y luego con Apache, salvo PostgreSQL (el runner corre como administrador y `postgres.exe` se niega a arrancar así; en una PC normal no pasa).
 
 ## Desarrollo
 
@@ -352,6 +394,6 @@ CC_aarch64_apple_darwin=clang AR_aarch64_apple_darwin=llvm-ar \
   cargo clippy --target aarch64-apple-darwin --all-targets
 ```
 
-En un Mac con Homebrew, la prueba de punta a punta (`cargo test --lib -- --ignored --nocapture e2e_homebrew`) arranca los servicios de verdad en una carpeta temporal y usa los puertos 80, 443, 9070 y 3307.
+En un Mac con Homebrew, la prueba de punta a punta (`cargo test --lib -- --ignored --nocapture e2e_homebrew`) arranca los servicios de verdad en una carpeta temporal y usa los puertos 80, 443, 9070, 3307, 5433, 6380, 27018, 1026 y 8026. En Windows, `e2e_windows` descarga todo el catálogo y usa 8080 y 8443 en lugar de 80 y 443.
 
 La guía de arquitectura está en `.claude/skills/servidor-local-tauri/SKILL.md`.

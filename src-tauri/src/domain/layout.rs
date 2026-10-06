@@ -21,6 +21,7 @@ impl BinaryLayout {
     pub fn brew_formulas(service: ServiceId) -> &'static [&'static str] {
         match service {
             ServiceId::Nginx => &["nginx"],
+            ServiceId::Apache => &["httpd"],
             ServiceId::Php => &["php@8.3", "php@8.4"],
             ServiceId::Mariadb => &["mariadb@11.4"],
             ServiceId::Postgresql => &["postgresql@17"],

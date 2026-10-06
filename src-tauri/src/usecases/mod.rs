@@ -15,9 +15,9 @@ use minijinja::context;
 
 use crate::domain::{
     slash, BinaryLayout, DatabaseClient, HostEntry, InstalledVersion, ServiceId, ServiceState,
-    Site, ThemePreference,
+    Site, ThemePreference, WebServer,
 };
-use crate::drivers::{mailpit, nginx, postgresql, templates, tools};
+use crate::drivers::{apache, mailpit, nginx, postgresql, templates, tools};
 use crate::error::AppError;
 use crate::ports::{
     write_if_changed, ArchiveExtractor, CertificateAuthority, Downloader, HostsManager,
@@ -38,6 +38,10 @@ pub enum ConfigTarget {
     NginxCustom,
     NginxErrorLog,
     NginxAccessLog,
+    ApacheConf,
+    ApacheCustom,
+    ApacheErrorLog,
+    ApacheAccessLog,
     PhpIni,
     PhpUserIni,
     PhpErrorLog,
@@ -140,7 +144,7 @@ impl Core {
     }
 
     pub async fn start(&self, id: ServiceId) -> Result<(), AppError> {
-        if id == ServiceId::Nginx {
+        if id.is_web() {
             self.ensure_certs()?;
         }
         self.supervisor.start(id).await
@@ -151,10 +155,51 @@ impl Core {
     }
 
     pub async fn reload(&self, id: ServiceId) -> Result<(), AppError> {
-        if id == ServiceId::Nginx {
+        if id.is_web() {
             self.ensure_certs()?;
         }
         self.supervisor.reload(id).await
+    }
+
+    /// Servidor web elegido en Preferencias.
+    pub fn web_server(&self) -> WebServer {
+        self.supervisor
+            .deps()
+            .config
+            .load()
+            .map(|c| c.web_server)
+            .unwrap_or_default()
+    }
+
+    /// Cambia de servidor web. Si el anterior estaba en marcha se detiene y
+    /// el nuevo arranca en su lugar, con los mismos sitios y puertos.
+    pub async fn set_web_server(&self, web: WebServer) -> Result<(), AppError> {
+        let deps = self.supervisor.deps();
+        let mut cfg = deps.config.load()?;
+        if cfg.web_server == web {
+            return Ok(());
+        }
+        let (old, new) = (cfg.web_server.service(), web.service());
+        if self.versions(new)?.is_empty() {
+            return Err(AppError::BinaryMissing {
+                service: new,
+                detail: format!(
+                    "agrégalo desde el menú Agregar → {} y vuelve a elegirlo.",
+                    new.label()
+                ),
+            });
+        }
+        let was_active = self.supervisor.state(old).is_active();
+        if was_active {
+            self.supervisor.stop(old).await?;
+        }
+        cfg.web_server = web;
+        deps.config.save(&cfg)?;
+        self.supervisor.emit_all();
+        if was_active {
+            self.start(new).await?;
+        }
+        Ok(())
     }
 
     pub fn php_versions(&self) -> Result<Vec<InstalledVersion>, AppError> {
@@ -347,6 +392,13 @@ impl Core {
             }
             ConfigTarget::NginxErrorLog => log("nginx-error.log"),
             ConfigTarget::NginxAccessLog => log("nginx-access.log"),
+            ConfigTarget::ApacheConf => generated(paths.apache_conf(), ServiceId::Apache),
+            ConfigTarget::ApacheCustom => {
+                fs.create_dir_all(&paths.apache_custom())?;
+                Ok(paths.apache_custom())
+            }
+            ConfigTarget::ApacheErrorLog => log("apache-error.log"),
+            ConfigTarget::ApacheAccessLog => log("apache-access.log"),
             ConfigTarget::PhpIni => generated(paths.php_ini(), ServiceId::Php),
             ConfigTarget::PhpUserIni => {
                 templates::ensure_user_file(
@@ -426,14 +478,19 @@ impl Core {
         }
     }
 
-    /// Genera o borra los vhosts, sincroniza el bloque del archivo hosts
-    /// (un solo pedido de permiso) y recarga Nginx si está en marcha.
+    /// Genera o borra los vhosts del servidor web elegido, sincroniza el
+    /// bloque del archivo hosts (un solo pedido de permiso) y recarga el
+    /// servidor web si está en marcha.
     pub async fn sync_sites(&self) -> Result<Vec<Site>, AppError> {
         let _guard = self.sites_lock.lock().await;
         self.ensure_certs()?;
         let ctx = self.supervisor.context()?;
         let mut sites = ctx.sites.clone();
-        let changed = nginx::render_sites(&ctx, &sites)?;
+        let web = ctx.web();
+        let changed = match web {
+            ServiceId::Apache => apache::render_sites(&ctx, &sites)?,
+            _ => nginx::render_sites(&ctx, &sites)?,
+        };
 
         let mut wanted: BTreeSet<HostEntry> = sites
             .iter()
@@ -448,12 +505,11 @@ impl Core {
         let hosts_result = self.hosts.sync(&wanted).await;
         self.mark_in_hosts(&mut sites).await;
 
-        let reload_result =
-            if changed && self.supervisor.state(ServiceId::Nginx) == ServiceState::Running {
-                self.supervisor.reload(ServiceId::Nginx).await
-            } else {
-                Ok(())
-            };
+        let reload_result = if changed && self.supervisor.state(web) == ServiceState::Running {
+            self.supervisor.reload(web).await
+        } else {
+            Ok(())
+        };
 
         self.supervisor.deps().events.sites_changed(&sites);
         hosts_result?;
@@ -505,10 +561,12 @@ impl Core {
     }
 
     fn require_web(&self) -> Result<(), AppError> {
-        if self.supervisor.state(ServiceId::Nginx) != ServiceState::Running {
-            return Err(AppError::InvalidInput(
-                "Inicia Nginx para abrir la base de datos.".into(),
-            ));
+        let web = self.web_server().service();
+        if self.supervisor.state(web) != ServiceState::Running {
+            return Err(AppError::InvalidInput(format!(
+                "Inicia {} para abrir la base de datos.",
+                web.label()
+            )));
         }
         Ok(())
     }
@@ -601,10 +659,14 @@ impl Core {
         let deps = self.supervisor.deps();
         let ctx = self.supervisor.context()?;
         let mut path: Vec<String> = Vec::new();
+        let web = match ctx.web() {
+            ServiceId::Apache => (ServiceId::Apache, "httpd"),
+            _ => (ServiceId::Nginx, "nginx"),
+        };
         for (id, program) in [
             (ServiceId::Php, "php"),
             (ServiceId::Mariadb, "mariadb"),
-            (ServiceId::Nginx, "nginx"),
+            web,
         ] {
             if let Some(dir) = ctx
                 .program(id, program)

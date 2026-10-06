@@ -61,12 +61,25 @@ const fn service(
     }
 }
 
+impl Package {
+    /// Grupo en el menú Agregar: 0 la pila base, 1 los servicios
+    /// opcionales y 2 las herramientas.
+    pub fn group(&self) -> u8 {
+        match self.kind {
+            PackageKind::Service { service, .. } if service.is_optional() => 1,
+            PackageKind::Service { .. } => 0,
+            PackageKind::Tool(_) => 2,
+        }
+    }
+}
+
 /// El catálogo, en el orden del menú. Las versiones elegidas para la app:
 /// PHP 8.3 y 8.4, MariaDB 11.4 (LTS) y PostgreSQL 17.
-pub const PACKAGES: [Package; 11] = [
+pub const PACKAGES: [Package; 12] = [
     service("php-8.4", "PHP 8.4", ServiceId::Php, "8.4"),
     service("php-8.3", "PHP 8.3", ServiceId::Php, "8.3"),
     service("nginx", "Nginx", ServiceId::Nginx, ""),
+    service("apache", "Apache", ServiceId::Apache, ""),
     service("mariadb-11.4", "MariaDB 11.4", ServiceId::Mariadb, "11.4"),
     service(
         "postgresql-17",
@@ -110,6 +123,9 @@ pub mod urls {
     pub const REDIS_LATEST: &str =
         "https://api.github.com/repos/redis-windows/redis-windows/releases/latest";
     pub const MAILPIT_LATEST: &str = "https://api.github.com/repos/axllent/mailpit/releases/latest";
+    /// Réplica en fossies.org de los binarios de Apache Lounge (la que usa
+    /// Scoop): apachelounge.com bloquea algunas descargas automáticas.
+    pub const APACHE_INDEX: &str = "https://fossies.org/windows/www/";
     pub const ADMINER: &str = "https://www.adminer.org/latest.php";
     pub const PHPMYADMIN: &str =
         "https://www.phpmyadmin.net/downloads/phpMyAdmin-latest-all-languages.zip";
@@ -137,6 +153,10 @@ pub mod urls {
         format!(
             "https://github.com/redis-windows/redis-windows/releases/download/{tag}/Redis-{tag}-Windows-x64-msys2.zip"
         )
+    }
+
+    pub fn apache_zip(file: &str) -> String {
+        format!("{APACHE_INDEX}{file}")
     }
 
     pub fn mailpit_zip(tag: &str) -> String {
@@ -232,6 +252,63 @@ pub fn mongodb_latest(json: &str) -> Option<(String, String)> {
     })
 }
 
+/// Carpeta del zip de Apache Lounge con el servidor: lo demás (léame,
+/// avisos) no se extrae.
+pub const APACHE_ZIP_FOLDER: &str = "Apache24";
+
+/// Índice de fossies.org: el zip de Apache Lounge para Windows x64 más
+/// reciente (`httpd-2.4.69-261002-Win64-VS18.zip`). Si la misma compilación
+/// está para dos Visual Studio, el más antiguo: pide un runtime de Visual
+/// C++ menos nuevo. Devuelve la versión y el nombre del archivo.
+pub fn apache_latest(html: &str) -> Option<(String, String)> {
+    let mut best: Option<(String, u64, u32, String)> = None;
+    for (start, _) in html.match_indices("httpd-") {
+        let file: String = html[start..]
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))
+            .collect();
+        let Some(stem) = file
+            .strip_prefix("httpd-")
+            .and_then(|f| f.strip_suffix(".zip"))
+        else {
+            continue;
+        };
+        let parts: Vec<&str> = stem.split('-').collect();
+        let [version, build, arch, toolset] = parts[..] else {
+            continue;
+        };
+        let numeric = |s: &str| !s.is_empty() && s.chars().all(|c| c.is_ascii_digit());
+        let vs = toolset
+            .strip_prefix("VS")
+            .or_else(|| toolset.strip_prefix("vs"))
+            .filter(|n| numeric(n));
+        let (Some(vs), true, true) = (
+            vs,
+            arch.eq_ignore_ascii_case("win64"),
+            numeric(build) && version.split('.').all(numeric),
+        ) else {
+            continue;
+        };
+        let candidate = (
+            version.to_string(),
+            build.parse().unwrap_or(0),
+            vs.parse().unwrap_or(0),
+            file.clone(),
+        );
+        let newer = match &best {
+            None => true,
+            Some((v, b, t, _)) => super::compare_versions(&candidate.0, v)
+                .then(candidate.1.cmp(b))
+                .then(t.cmp(&candidate.2))
+                .is_gt(),
+        };
+        if newer {
+            best = Some(candidate);
+        }
+    }
+    best.map(|(version, _, _, file)| (version, file))
+}
+
 /// Último release de GitHub (`/releases/latest`): su etiqueta.
 pub fn github_tag(json: &str) -> Option<String> {
     let doc: Value = serde_json::from_str(json).ok()?;
@@ -309,6 +386,36 @@ mod tests {
                 "https://fastdl.mongodb.org/windows/mongodb-windows-x86_64-8.0.13.zip".into()
             ))
         );
+    }
+
+    #[test]
+    fn reads_the_newest_apache_lounge_win64_zip() {
+        let html = r#"<a href="/windows/www/httpd-2.4.68-260715-Win64-VS18.zip/">httpd-2.4.68-260715-Win64-VS18.zip</a>
+            <a href="/windows/www/httpd-2.4.69-261002-win64-VS17.zip/">x</a>
+            <a href="/windows/www/httpd-2.4.69-261002-Win64-VS18.zip/">httpd-2.4.69-261002-Win64-VS18.zip</a>
+            <a href="/windows/www/httpd-2.4.70-261009-Win32-VS18.zip/">32 bits</a>
+            <a href="/windows/www/httpd-2.4.69-261002-Win64-VS18.zip.sha256">sha</a>
+            <a href="/windows/www/mod_fcgid-2.3.10-win64-VS18.zip/">módulo</a>"#;
+        assert_eq!(
+            apache_latest(html),
+            Some(("2.4.69".into(), "httpd-2.4.69-261002-win64-VS17.zip".into()))
+        );
+        let only_vs18 = html.replace("win64-VS17", "Win32-VS17");
+        assert_eq!(
+            apache_latest(&only_vs18).unwrap().1,
+            "httpd-2.4.69-261002-Win64-VS18.zip"
+        );
+        assert_eq!(
+            urls::apache_zip("httpd-2.4.69-261002-Win64-VS18.zip"),
+            "https://fossies.org/windows/www/httpd-2.4.69-261002-Win64-VS18.zip"
+        );
+        assert_eq!(apache_latest("sin zips"), None);
+    }
+
+    #[test]
+    fn packages_are_grouped_for_the_menu() {
+        let groups: Vec<u8> = PACKAGES.iter().map(Package::group).collect();
+        assert_eq!(groups, vec![0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2]);
     }
 
     #[test]

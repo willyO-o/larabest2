@@ -190,9 +190,15 @@ pub trait Downloader: Send + Sync {
 }
 
 pub trait ArchiveExtractor: Send + Sync {
-    /// Extrae un `.zip` en `dest`. Con `strip_top`, si todo cuelga de una
-    /// sola carpeta (como `wordpress/`), se extrae solo su contenido.
-    fn extract_zip(&self, archive: &Path, dest: &Path, strip_top: bool) -> Result<(), AppError>;
+    /// Extrae un `.zip` en `dest`. Si todo cuelga de una sola carpeta (como
+    /// `wordpress/`), se extrae solo su contenido. Con `folder`, solo el de
+    /// esa carpeta (el `Apache24/` del zip de Apache).
+    fn extract_zip(
+        &self,
+        archive: &Path,
+        dest: &Path,
+        folder: Option<&str>,
+    ) -> Result<(), AppError>;
 }
 
 /// Certificado y clave de un sitio, en PEM.

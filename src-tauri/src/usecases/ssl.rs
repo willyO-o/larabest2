@@ -1,7 +1,7 @@
 //! HTTPS opcional con la CA local.
 
 use super::Core;
-use crate::domain::{ServiceId, ServiceState};
+use crate::domain::ServiceState;
 use crate::drivers::tools;
 use crate::error::AppError;
 
@@ -22,8 +22,8 @@ impl Core {
 
     /// Activa o desactiva HTTPS. Al activarlo instala la CA en el sistema
     /// (Windows pide confirmar y macOS la contraseña, una vez) y emite un
-    /// certificado por sitio. Nginx se reinicia para comprobar que el
-    /// puerto 443 esté libre.
+    /// certificado por sitio. El servidor web se reinicia para comprobar
+    /// que el puerto 443 esté libre.
     pub async fn set_ssl(&self, enabled: bool) -> Result<(), AppError> {
         let deps = self.supervisor.deps();
         if enabled {
@@ -41,12 +41,13 @@ impl Core {
         deps.config.save(&cfg)?;
         self.ensure_certs()?;
 
-        match self.supervisor.render(ServiceId::Nginx).await {
+        let web = cfg.web_server.service();
+        match self.supervisor.render(web).await {
             Ok(()) | Err(AppError::BinaryMissing { .. }) => {}
             Err(e) => return Err(e),
         }
-        if self.supervisor.state(ServiceId::Nginx) == ServiceState::Running {
-            self.supervisor.restart(ServiceId::Nginx).await?;
+        if self.supervisor.state(web) == ServiceState::Running {
+            self.supervisor.restart(web).await?;
         }
         // Las URLs pasan a https:// (o vuelven a http://).
         let sites = self.sites().await?;

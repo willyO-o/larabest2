@@ -1,5 +1,6 @@
 //! Prueba de punta a punta en Windows: agrega todo desde el menú Agregar
-//! (las descargas oficiales de verdad) y arranca la pila. La corre el CI
+//! (las descargas oficiales de verdad), arranca la pila con Nginx y después
+//! con Apache. La corre el CI
 //! (`build-windows`, job servicios):
 //!
 //! ```sh
@@ -101,6 +102,9 @@ async fn e2e_windows() {
     w.core.switch_php(&php83.version).await.unwrap();
     let page = get("hola.test", PORTS.http, "/", false).await;
     check(&w, page.contains("hola 8.3."), &page);
+
+    // Apache (de Apache Lounge) en lugar de Nginx, con los php-cgi.
+    e2e::apache_flow(&w).await;
 
     e2e::orphans_are_cleaned(&w).await;
 }

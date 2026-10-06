@@ -2,6 +2,7 @@
 //! programa. No tocan el sistema operativo: escriben por `FileStore` y
 //! devuelven `ProcessSpec` que lanza el supervisor.
 
+pub mod apache;
 pub mod mailpit;
 pub mod mariadb;
 pub mod mongodb;
@@ -12,16 +13,18 @@ pub mod redis;
 pub mod templates;
 pub mod tools;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 
-use crate::domain::{AppConfig, BinaryLayout, Health, InstalledVersion, Paths, ServiceId, Site};
+use crate::domain::{
+    slash, AppConfig, BinaryLayout, Health, InstalledVersion, Paths, ServiceId, Site,
+};
 use crate::error::AppError;
-use crate::ports::{FileStore, PortChecker, ProcessRunner, ProcessSpec};
+use crate::ports::{write_if_changed, FileStore, PortChecker, ProcessRunner, ProcessSpec};
 
 /// Todo lo que un driver necesita para trabajar.
 #[derive(Clone)]
@@ -63,13 +66,22 @@ impl RenderContext {
             .join(program_subpath(self.layout, id, name)))
     }
 
-    /// `true` si el servicio forma parte de la pila: la base siempre; los
-    /// opcionales según Preferencias o, si no se eligió, si están instalados.
+    /// `true` si el servicio forma parte de la pila: el servidor web
+    /// elegido; el resto de la base, siempre; los opcionales según
+    /// Preferencias o, si no se eligió, si están instalados.
     pub fn is_enabled(&self, id: ServiceId) -> bool {
+        if id.is_web() {
+            return id == self.web();
+        }
         self.config
             .services
             .get(id)
             .unwrap_or_else(|| self.versions.contains_key(&id))
+    }
+
+    /// Servidor web elegido en Preferencias (Nginx o Apache).
+    pub fn web(&self) -> ServiceId {
+        self.config.web_server.service()
     }
 
     /// Puertos FastCGI de PHP: uno por cada `php-cgi` en Windows; `php-fpm`
@@ -89,10 +101,10 @@ pub fn program_subpath(layout: BinaryLayout, id: ServiceId, name: &str) -> PathB
     let dir = match (layout, id) {
         (BinaryLayout::Homebrew, ServiceId::Php) if name == "php-fpm" => Some("sbin"),
         (BinaryLayout::Homebrew, _) => Some("bin"),
-        // Los zip de MariaDB, PostgreSQL y MongoDB traen todo en bin\.
+        // Los zip de Apache, MariaDB, PostgreSQL y MongoDB traen todo en bin\.
         (
             BinaryLayout::Portable,
-            ServiceId::Mariadb | ServiceId::Postgresql | ServiceId::Mongodb,
+            ServiceId::Apache | ServiceId::Mariadb | ServiceId::Postgresql | ServiceId::Mongodb,
         ) => Some("bin"),
         (BinaryLayout::Portable, _) => None,
     };
@@ -112,6 +124,7 @@ pub fn program_subpath(layout: BinaryLayout, id: ServiceId, name: &str) -> PathB
 pub fn server_program(layout: BinaryLayout, id: ServiceId) -> &'static str {
     match (id, layout) {
         (ServiceId::Nginx, _) => "nginx",
+        (ServiceId::Apache, _) => "httpd",
         (ServiceId::Php, BinaryLayout::Portable) => "php-cgi",
         (ServiceId::Php, BinaryLayout::Homebrew) => "php-fpm",
         (ServiceId::Mariadb, _) => "mariadbd",
@@ -143,6 +156,11 @@ pub trait ServiceDriver: Send + Sync {
         runner: &dyn ProcessRunner,
     ) -> Result<(), AppError>;
     async fn health(&self, ctx: &RenderContext) -> Health;
+    /// `true` si `reload` aplica la configuración nueva sin reiniciar el
+    /// proceso; si no, el supervisor lo reinicia.
+    fn reloads_in_place(&self, _ctx: &RenderContext) -> bool {
+        false
+    }
     async fn reload(&self, _ctx: &RenderContext) -> Result<(), AppError> {
         Ok(())
     }
@@ -152,6 +170,7 @@ pub trait ServiceDriver: Send + Sync {
 pub fn all() -> Vec<Arc<dyn ServiceDriver>> {
     vec![
         Arc::new(nginx::NginxDriver),
+        Arc::new(apache::ApacheDriver),
         Arc::new(php::PhpDriver),
         Arc::new(mariadb::MariadbDriver),
         Arc::new(postgresql::PostgresqlDriver),
@@ -159,6 +178,53 @@ pub fn all() -> Vec<Arc<dyn ServiceDriver>> {
         Arc::new(mongodb::MongodbDriver),
         Arc::new(mailpit::MailpitDriver),
     ]
+}
+
+/// Certificado y clave de un dominio si HTTPS está activado y ya existen:
+/// un certificado que falta nunca debe impedir que arranque el servidor web.
+pub fn ssl_for(ctx: &RenderContext, domain: &str) -> Option<(String, String)> {
+    if !ctx.config.ssl {
+        return None;
+    }
+    let (cert, key) = (ctx.paths.site_cert(domain), ctx.paths.site_key(domain));
+    (ctx.fs.exists(&cert) && ctx.fs.exists(&key)).then(|| (slash(&cert), slash(&key)))
+}
+
+/// Un archivo `<sitio>.conf` por sitio en `dir`, más los de Adminer y
+/// phpMyAdmin, y borra los que ya no corresponden. `vhost(nombre, dominio,
+/// raíz)` arma cada uno. Devuelve `true` si cambió algún archivo.
+pub fn write_vhosts(
+    ctx: &RenderContext,
+    sites: &[Site],
+    dir: &Path,
+    vhost: impl Fn(&str, &str, &str) -> Result<String, AppError>,
+) -> Result<bool, AppError> {
+    let fs = ctx.fs.as_ref();
+    fs.create_dir_all(dir)?;
+    let mut changed = false;
+    let mut keep = HashSet::new();
+    for site in sites {
+        let file = format!("{}.conf", site.name.to_ascii_lowercase());
+        let content = vhost(&site.name, &site.domain, &site.document_root)?;
+        changed |= write_if_changed(fs, &dir.join(&file), &content)?;
+        keep.insert(file);
+    }
+    for tool in tools::served(ctx, sites) {
+        let (root, tool_changed) = tools::prepare(ctx, tool)?;
+        changed |= tool_changed;
+        let domain = format!("{tool}.{}", ctx.config.tld);
+        let content = vhost(tool, &domain, &slash(&root))?;
+        let file = format!("{tool}.conf");
+        changed |= write_if_changed(fs, &dir.join(&file), &content)?;
+        keep.insert(file);
+    }
+    for file in fs.list_files(dir)? {
+        if file.ends_with(".conf") && !keep.contains(&file) {
+            fs.remove_file(&dir.join(&file))?;
+            changed = true;
+        }
+    }
+    Ok(changed)
 }
 
 /// Nombre del ejecutable en la plataforma actual.

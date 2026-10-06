@@ -3,6 +3,7 @@
 
 export type ServiceId =
   | 'nginx'
+  | 'apache'
   | 'php'
   | 'mariadb'
   | 'postgresql'

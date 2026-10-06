@@ -9,7 +9,9 @@ use tauri::{AppHandle, Emitter, Manager, Wry};
 
 use crate::commands::{open_path, open_url};
 use crate::domain::catalog;
-use crate::domain::{BinaryLayout, DatabaseClient, ServiceId, ServiceState, ThemePreference};
+use crate::domain::{
+    BinaryLayout, DatabaseClient, ServiceId, ServiceState, ThemePreference, WebServer,
+};
 use crate::error::AppError;
 use crate::usecases::ConfigTarget;
 use crate::{settings, tray, AppState};
@@ -129,31 +131,44 @@ pub fn build(app: &AppHandle, from_tray: bool) -> tauri::Result<Menu<Wry>> {
         "Actualizar sitios y archivo hosts",
     )?);
 
-    let nginx_up = sup.state(ServiceId::Nginx) == ServiceState::Running;
-    let nginx = vec![
-        versions(
-            app,
-            &state,
-            ServiceId::Nginx,
-            active(ServiceId::Nginx).as_deref(),
-        )?,
+    // El servidor web elegido (Nginx o Apache).
+    let web = core.web_server().service();
+    let web_up = sup.state(web) == ServiceState::Running;
+    let (conf_target, conf_label, custom_target, error_log, access_log) = match web {
+        ServiceId::Apache => (
+            "apacheConf",
+            "httpd.conf (generado, solo lectura)",
+            "apacheCustom",
+            "apacheErrorLog",
+            "apacheAccessLog",
+        ),
+        _ => (
+            "nginxConf",
+            "nginx.conf (generado, solo lectura)",
+            "nginxCustom",
+            "nginxErrorLog",
+            "nginxAccessLog",
+        ),
+    };
+    let web_menu = vec![
+        versions(app, &state, web, active(web).as_deref())?,
         Box::new(MenuItem::with_id(
             app,
-            "nginx_reload",
+            "web_reload",
             "Recargar configuración",
-            nginx_up,
+            web_up,
             None::<&str>,
         )?) as Item,
         sep(app)?,
         open(
             app,
-            "nginxCustom",
+            custom_target,
             "Configuración propia por sitio (custom)",
         )?,
-        open(app, "nginxConf", "nginx.conf (generado, solo lectura)")?,
+        open(app, conf_target, conf_label)?,
         sep(app)?,
-        open(app, "nginxErrorLog", "Log de errores")?,
-        open(app, "nginxAccessLog", "Log de accesos")?,
+        open(app, error_log, "Log de errores")?,
+        open(app, access_log, "Log de accesos")?,
     ];
 
     let mut extensions = Vec::new();
@@ -247,8 +262,8 @@ pub fn build(app: &AppHandle, from_tray: bool) -> tauri::Result<Menu<Wry>> {
     }
 
     let mut logs = vec![
-        open(app, "nginxErrorLog", "Nginx: errores")?,
-        open(app, "nginxAccessLog", "Nginx: accesos")?,
+        open(app, error_log, &format!("{}: errores", web.label()))?,
+        open(app, access_log, &format!("{}: accesos", web.label()))?,
         open(app, "phpErrorLog", "PHP: errores")?,
         open(app, "mariadbErrorLog", "MariaDB: errores")?,
     ];
@@ -300,7 +315,7 @@ pub fn build(app: &AppHandle, from_tray: bool) -> tauri::Result<Menu<Wry>> {
     let mut add = Vec::new();
     for (i, package) in catalog::PACKAGES.iter().enumerate() {
         // Separadores entre la pila base, los opcionales y las herramientas.
-        if i == 4 || i == 8 {
+        if i > 0 && catalog::PACKAGES[i - 1].group() != package.group() {
             add.push(sep(app)?);
         }
         let label = match core.package_status(package) {
@@ -335,8 +350,20 @@ pub fn build(app: &AppHandle, from_tray: bool) -> tauri::Result<Menu<Wry>> {
             client == DatabaseClient::Phpmyadmin,
         )?,
     ];
+    // Preferencias → Servidor web: Nginx o Apache.
+    let mut web_servers = Vec::new();
+    for (key, choice) in [("nginx", WebServer::Nginx), ("apache", WebServer::Apache)] {
+        let id = choice.service();
+        let label = if core.versions(id).unwrap_or_default().is_empty() {
+            format!("{} (sin instalar)", id.label())
+        } else {
+            id.label().to_string()
+        };
+        web_servers.push(check(app, &format!("webserver:{key}"), &label, id == web)?);
+    }
     let prefs = vec![
         Box::new(submenu(app, "Tema", themes)?) as Item,
+        Box::new(submenu(app, "Servidor web", web_servers)?) as Item,
         Box::new(submenu(app, "Servicios", services)?) as Item,
         Box::new(submenu(app, "Botón Base de datos", clients)?) as Item,
         check(
@@ -374,7 +401,7 @@ pub fn build(app: &AppHandle, from_tray: bool) -> tauri::Result<Menu<Wry>> {
     builder = builder
         .separator()
         .item(&submenu(app, "www", www)?)
-        .item(&submenu(app, "Nginx", nginx)?)
+        .item(&submenu(app, web.label(), web_menu)?)
         .item(&submenu(app, "PHP", php)?)
         .item(&submenu(app, "MariaDB", mariadb)?);
     for menu in &optional {
@@ -427,7 +454,7 @@ async fn run(app: &AppHandle, id: &str) -> Result<(), AppError> {
         "mailpit" => return open_url(app, &core.mailpit_url()?),
         "terminal" => return core.open_terminal(None),
         "root" => return open_path(app, core.root()),
-        "nginx_reload" => return core.reload(ServiceId::Nginx).await,
+        "web_reload" => return core.reload(core.web_server().service()).await,
         "hosts_sync" => return core.sync_sites().await.map(|_| ()),
         "auto_start" => return core.set_auto_start(!core.auto_start()),
         "ssl_toggle" => {
@@ -483,6 +510,11 @@ async fn run(app: &AppHandle, id: &str) -> Result<(), AppError> {
             tray::show_info(app, &message);
         }
         return Ok(());
+    }
+    if let Some(web) = id.strip_prefix("webserver:") {
+        let web: WebServer = serde_json::from_value(serde_json::Value::String(web.into()))
+            .map_err(|_| AppError::InvalidInput(id.into()))?;
+        return core.set_web_server(web).await;
     }
     if let Some(client) = id.strip_prefix("dbclient:") {
         let client: DatabaseClient =

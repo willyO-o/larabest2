@@ -82,6 +82,20 @@ impl Paths {
         self.etc_nginx().join("custom")
     }
 
+    pub fn apache_conf(&self) -> PathBuf {
+        self.etc_service(ServiceId::Apache).join("httpd.conf")
+    }
+
+    pub fn apache_sites(&self) -> PathBuf {
+        self.etc_service(ServiceId::Apache).join("sites")
+    }
+
+    /// Inclusiones del usuario por sitio (`<sitio>.conf`); nunca se
+    /// regeneran.
+    pub fn apache_custom(&self) -> PathBuf {
+        self.etc_service(ServiceId::Apache).join("custom")
+    }
+
     pub fn etc_php(&self) -> PathBuf {
         self.etc().join("php")
     }

@@ -721,6 +721,8 @@ pub struct FakeArchive {
     pub broken: Mutex<bool>,
     /// Si se indica, los archivos (rutas relativas) que trae el zip.
     pub files: Mutex<Option<Vec<String>>>,
+    /// Carpeta pedida en la última extracción.
+    pub folder: Mutex<Option<String>>,
 }
 
 impl FakeArchive {
@@ -729,6 +731,7 @@ impl FakeArchive {
             fs,
             broken: Mutex::new(false),
             files: Mutex::new(None),
+            folder: Mutex::new(None),
         }
     }
 
@@ -738,7 +741,13 @@ impl FakeArchive {
 }
 
 impl crate::ports::ArchiveExtractor for FakeArchive {
-    fn extract_zip(&self, _archive: &Path, dest: &Path, _strip_top: bool) -> Result<(), AppError> {
+    fn extract_zip(
+        &self,
+        _archive: &Path,
+        dest: &Path,
+        folder: Option<&str>,
+    ) -> Result<(), AppError> {
+        *self.folder.lock().unwrap() = folder.map(str::to_string);
         if let Some(files) = self.files.lock().unwrap().clone() {
             for file in files {
                 self.fs.write(&dest.join(file), "")?;

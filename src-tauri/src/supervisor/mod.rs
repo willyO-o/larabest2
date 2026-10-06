@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use crate::domain::{
     explain_exit_code, BinaryLayout, Health, InstalledVersion, Paths, ServiceId, ServiceState,
-    ServiceStatus, STATUS_DLL_NOT_FOUND,
+    ServiceStatus, STATUS_DLL_NOT_FOUND, STATUS_ENTRYPOINT_NOT_FOUND,
 };
 use crate::drivers::{self, RenderContext, ServiceDriver};
 use crate::error::AppError;
@@ -96,7 +96,11 @@ impl Supervisor {
                         version: None,
                         port: cfg.port_of(id),
                         ports: vec![cfg.port_of(id)],
-                        enabled: !id.is_optional(),
+                        enabled: if id.is_web() {
+                            id == cfg.web_server.service()
+                        } else {
+                            !id.is_optional()
+                        },
                         generation: 0,
                     },
                 )
@@ -463,18 +467,21 @@ impl Supervisor {
         }
     }
 
-    /// Nginx primero (deja de recibir visitas); luego el resto en paralelo.
+    /// El servidor web primero (deja de recibir visitas); luego el resto en
+    /// paralelo.
     pub async fn stop_all(self: &Arc<Self>) -> Result<(), AppError> {
-        let nginx = self.stop(ServiceId::Nginx).await;
+        let mut result = Ok(());
+        for id in ServiceId::WEB {
+            result = result.and(self.stop(id).await);
+        }
         let others: Vec<_> = ServiceId::ALL
             .into_iter()
-            .filter(|&id| id != ServiceId::Nginx)
+            .filter(|id| !id.is_web())
             .map(|id| {
                 let this = self.clone();
                 tokio::spawn(async move { this.stop(id).await })
             })
             .collect();
-        let mut result = nginx;
         for handle in others {
             let stopped = handle
                 .await
@@ -489,13 +496,17 @@ impl Supervisor {
         self.start(id).await
     }
 
-    /// Nginx en marcha: regenera y `nginx -s reload`. Los demás se reinician.
+    /// Servidor web en marcha: regenera y recarga sin cortar las visitas
+    /// (`nginx -s reload`, `httpd -k graceful`) si el driver puede; si no,
+    /// y para los demás servicios, reinicia.
     pub async fn reload(self: &Arc<Self>, id: ServiceId) -> Result<(), AppError> {
-        if id == ServiceId::Nginx && self.state(id) == ServiceState::Running {
+        if id.is_web() && self.state(id) == ServiceState::Running {
             let ctx = self.context()?;
             let driver = self.driver(id);
-            driver.render_config(&ctx).await?;
-            return driver.reload(&ctx).await;
+            if driver.reloads_in_place(&ctx) {
+                driver.render_config(&ctx).await?;
+                return driver.reload(&ctx).await;
+            }
         }
         if self.state(id) == ServiceState::Running {
             self.restart(id).await
@@ -567,7 +578,10 @@ fn same_branch(a: &str, b: &str) -> bool {
 }
 
 fn exit_message(id: ServiceId, code: Option<i32>, at_start: bool) -> String {
-    if code == Some(STATUS_DLL_NOT_FOUND) {
+    if matches!(
+        code,
+        Some(STATUS_DLL_NOT_FOUND | STATUS_ENTRYPOINT_NOT_FOUND)
+    ) {
         return AppError::VcRuntimeMissing { service: id }.to_string();
     }
     let when = if at_start {

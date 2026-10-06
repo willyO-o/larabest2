@@ -7,6 +7,7 @@ use super::ServiceId;
 #[serde(rename_all = "camelCase", default)]
 pub struct ActiveVersions {
     pub nginx: Option<String>,
+    pub apache: Option<String>,
     pub php: Option<String>,
     pub mariadb: Option<String>,
     pub postgresql: Option<String>,
@@ -19,6 +20,7 @@ impl ActiveVersions {
     fn slot(&mut self, id: ServiceId) -> &mut Option<String> {
         match id {
             ServiceId::Nginx => &mut self.nginx,
+            ServiceId::Apache => &mut self.apache,
             ServiceId::Php => &mut self.php,
             ServiceId::Mariadb => &mut self.mariadb,
             ServiceId::Postgresql => &mut self.postgresql,
@@ -31,6 +33,7 @@ impl ActiveVersions {
     pub fn get(&self, id: ServiceId) -> Option<&str> {
         match id {
             ServiceId::Nginx => self.nginx.as_deref(),
+            ServiceId::Apache => self.apache.as_deref(),
             ServiceId::Php => self.php.as_deref(),
             ServiceId::Mariadb => self.mariadb.as_deref(),
             ServiceId::Postgresql => self.postgresql.as_deref(),
@@ -88,6 +91,24 @@ pub enum ThemePreference {
     Dark,
 }
 
+/// Servidor web de los sitios: Nginx o Apache, nunca los dos.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum WebServer {
+    #[default]
+    Nginx,
+    Apache,
+}
+
+impl WebServer {
+    pub fn service(self) -> ServiceId {
+        match self {
+            WebServer::Nginx => ServiceId::Nginx,
+            WebServer::Apache => ServiceId::Apache,
+        }
+    }
+}
+
 /// Qué abre el botón "Base de datos".
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -134,6 +155,7 @@ pub struct AppConfig {
     pub ssl: bool,
     pub https_port: u16,
     pub services: OptionalServices,
+    pub web_server: WebServer,
     pub database_client: DatabaseClient,
     pub postgresql_port: u16,
     pub redis_port: u16,
@@ -159,6 +181,7 @@ impl Default for AppConfig {
             ssl: false,
             https_port: 443,
             services: OptionalServices::default(),
+            web_server: WebServer::Nginx,
             database_client: DatabaseClient::Adminer,
             postgresql_port: 5432,
             redis_port: 6379,
@@ -187,7 +210,7 @@ impl AppConfig {
 
     pub fn port_of(&self, id: ServiceId) -> u16 {
         match id {
-            ServiceId::Nginx => self.http_port,
+            ServiceId::Nginx | ServiceId::Apache => self.http_port,
             ServiceId::Php => self.php_base_port,
             ServiceId::Mariadb => self.mariadb_port,
             ServiceId::Postgresql => self.postgresql_port,
@@ -216,6 +239,16 @@ mod tests {
         assert_eq!(cfg.redis_port, 6379);
         assert_eq!(cfg.services.get(ServiceId::Redis), None);
         assert_eq!(cfg.services.get(ServiceId::Php), Some(true));
+        assert_eq!(cfg.web_server, WebServer::Nginx);
+    }
+
+    #[test]
+    fn remembers_the_web_server() {
+        let cfg: AppConfig = serde_json::from_str(r#"{"webServer":"apache"}"#).unwrap();
+        assert_eq!(cfg.web_server.service(), ServiceId::Apache);
+        assert_eq!(cfg.port_of(ServiceId::Apache), 80);
+        let json = serde_json::to_value(AppConfig::default()).unwrap();
+        assert_eq!(json["webServer"], "nginx");
     }
 
     #[test]

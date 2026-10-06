@@ -194,7 +194,7 @@ impl Core {
         progress.step("Extrayendo WordPress");
         let archive = self.archive.clone();
         let (zip_path, dest) = (zip.clone(), dir.to_path_buf());
-        tokio::task::spawn_blocking(move || archive.extract_zip(&zip_path, &dest, true))
+        tokio::task::spawn_blocking(move || archive.extract_zip(&zip_path, &dest, None))
             .await
             .map_err(|e| AppError::Process(format!("La extracción se interrumpió: {e}")))??;
         if !deps.fs.exists(&dir.join("wp-settings.php")) {

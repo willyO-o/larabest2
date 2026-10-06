@@ -6,6 +6,8 @@ use crate::error::AppError;
 
 pub const NGINX_CONF: &str = "nginx.conf";
 pub const VHOST_CONF: &str = "vhost.conf";
+pub const HTTPD_CONF: &str = "httpd.conf";
+pub const HTTPD_VHOST_CONF: &str = "httpd-vhost.conf";
 pub const PHP_INI: &str = "php.ini";
 pub const MY_CNF: &str = "my.cnf";
 pub const ADMINER_PHP: &str = "adminer.php";
@@ -30,6 +32,11 @@ fn environment() -> Environment<'static> {
     let templates = [
         (NGINX_CONF, include_str!("../../templates/nginx.conf")),
         (VHOST_CONF, include_str!("../../templates/vhost.conf")),
+        (HTTPD_CONF, include_str!("../../templates/httpd.conf")),
+        (
+            HTTPD_VHOST_CONF,
+            include_str!("../../templates/httpd-vhost.conf"),
+        ),
         (PHP_INI, include_str!("../../templates/php.ini")),
         (MY_CNF, include_str!("../../templates/my.cnf")),
         (ADMINER_PHP, include_str!("../../templates/adminer.php")),

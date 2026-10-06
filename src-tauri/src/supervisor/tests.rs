@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::time::Duration;
 
-use crate::domain::{ServiceId, ServiceState, STATUS_DLL_NOT_FOUND};
+use crate::domain::{ServiceId, ServiceState, STATUS_DLL_NOT_FOUND, STATUS_ENTRYPOINT_NOT_FOUND};
 use crate::ports::FileStore;
 use crate::testing::{Harness, ROOT};
 
@@ -106,6 +106,18 @@ async fn missing_vc_runtime_gives_clear_message() {
         "no deja procesos colgados"
     );
     assert!(!h.fs.exists(Path::new(&format!("{ROOT}/tmp/php.pids"))));
+
+    // Un runtime viejo (falta una función en la DLL) dice lo mismo.
+    h.runner
+        .die_on_spawn("mariadbd", STATUS_ENTRYPOINT_NOT_FOUND);
+    h.supervisor.start(ServiceId::Mariadb).await.unwrap();
+    let detail = h
+        .events
+        .last_of(ServiceId::Mariadb)
+        .unwrap()
+        .detail
+        .unwrap();
+    assert!(detail.contains("o es antiguo"), "{detail}");
 }
 
 #[tokio::test]

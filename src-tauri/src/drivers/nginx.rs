@@ -1,11 +1,12 @@
-use std::collections::HashSet;
 use std::path::PathBuf;
 use std::time::Duration;
 
 use async_trait::async_trait;
 use minijinja::context;
 
-use super::{force_stop, templates, tools, wait_for_exit, RenderContext, ServiceDriver};
+use super::{
+    force_stop, ssl_for, templates, wait_for_exit, write_vhosts, RenderContext, ServiceDriver,
+};
 use crate::domain::{slash, BinaryLayout, Health, ServiceId, Site};
 use crate::error::AppError;
 use crate::ports::{write_if_changed, ProcessRunner, ProcessSpec};
@@ -36,16 +37,6 @@ fn signal_spec(ctx: &RenderContext, signal: &str) -> Result<ProcessSpec, AppErro
     Ok(base_spec(ctx)?.arg("-s").arg(signal))
 }
 
-/// HTTPS solo si está activado y el certificado del dominio ya existe: un
-/// certificado que falta nunca debe impedir que Nginx arranque.
-fn ssl_for(ctx: &RenderContext, domain: &str) -> Option<(String, String)> {
-    if !ctx.config.ssl {
-        return None;
-    }
-    let (cert, key) = (ctx.paths.site_cert(domain), ctx.paths.site_key(domain));
-    (ctx.fs.exists(&cert) && ctx.fs.exists(&key)).then(|| (slash(&cert), slash(&key)))
-}
-
 fn vhost(ctx: &RenderContext, name: &str, domain: &str, root: &str) -> Result<String, AppError> {
     let ssl = ssl_for(ctx, domain);
     templates::render(
@@ -69,37 +60,13 @@ fn vhost(ctx: &RenderContext, name: &str, domain: &str, root: &str) -> Result<St
 /// phpMyAdmin) y borra los que ya no corresponden. Devuelve `true` si
 /// cambió algún archivo.
 pub fn render_sites(ctx: &RenderContext, sites: &[Site]) -> Result<bool, AppError> {
-    let fs = ctx.fs.as_ref();
-    let dir = ctx.paths.nginx_sites();
-    fs.create_dir_all(&dir)?;
-    fs.create_dir_all(&ctx.paths.nginx_custom())?;
-
-    let mut changed = false;
-    let mut keep = HashSet::new();
-    for site in sites {
-        let file = format!("{}.conf", site.name.to_ascii_lowercase());
-        let content = vhost(ctx, &site.name, &site.domain, &site.document_root)?;
-        changed |= write_if_changed(fs, &dir.join(&file), &content)?;
-        keep.insert(file);
-    }
-
-    for tool in tools::served(ctx, sites) {
-        let (root, tool_changed) = tools::prepare(ctx, tool)?;
-        changed |= tool_changed;
-        let domain = format!("{tool}.{}", ctx.config.tld);
-        let content = vhost(ctx, tool, &domain, &slash(&root))?;
-        let file = format!("{tool}.conf");
-        changed |= write_if_changed(fs, &dir.join(&file), &content)?;
-        keep.insert(file);
-    }
-
-    for file in fs.list_files(&dir)? {
-        if file.ends_with(".conf") && !keep.contains(&file) {
-            fs.remove_file(&dir.join(&file))?;
-            changed = true;
-        }
-    }
-    Ok(changed)
+    ctx.fs.create_dir_all(&ctx.paths.nginx_custom())?;
+    write_vhosts(
+        ctx,
+        sites,
+        &ctx.paths.nginx_sites(),
+        |name, domain, root| vhost(ctx, name, domain, root),
+    )
 }
 
 #[async_trait]
@@ -201,6 +168,10 @@ impl ServiceDriver for NginxDriver {
                 ctx.config.http_port
             ))
         }
+    }
+
+    fn reloads_in_place(&self, _ctx: &RenderContext) -> bool {
+        true
     }
 
     async fn reload(&self, ctx: &RenderContext) -> Result<(), AppError> {

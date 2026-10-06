@@ -1,6 +1,6 @@
 //! Prueba de punta a punta en macOS con los programas reales de Homebrew
-//! (`brew install nginx php@8.3 php@8.4 mariadb@11.4 postgresql@17 redis
-//! mongodb/brew/mongodb-community mailpit`). Necesita internet para
+//! (`brew install nginx httpd php@8.3 php@8.4 mariadb@11.4 postgresql@17
+//! redis mongodb/brew/mongodb-community mailpit`). Necesita internet para
 //! Adminer, WordPress y Composer. La corre el CI (`build-macos`):
 //!
 //! ```sh
@@ -51,7 +51,12 @@ async fn e2e_homebrew() {
     let added = w.core.install_package("adminer").await;
     check(&w, added.is_ok(), &format!("{added:?}"));
 
-    e2e::common_flow(&w, &ServiceId::ALL).await;
+    // Primero con Nginx: Apache espera su turno.
+    let stack: Vec<ServiceId> = ServiceId::ALL
+        .into_iter()
+        .filter(|&id| id != ServiceId::Apache)
+        .collect();
+    e2e::common_flow(&w, &stack).await;
 
     // PostgreSQL con postgres sin contraseña.
     let psql = w
@@ -102,6 +107,9 @@ async fn e2e_homebrew() {
     w.core.switch_php(&php83.version).await.unwrap();
     let page = get("hola.test", PORTS.http, "/", false).await;
     check(&w, page.contains("hola 8.3."), &page);
+
+    // Apache (brew install httpd) en lugar de Nginx, con php-fpm.
+    e2e::apache_flow(&w).await;
 
     e2e::orphans_are_cleaned(&w).await;
     let _ = std::fs::remove_dir_all(&w.root);

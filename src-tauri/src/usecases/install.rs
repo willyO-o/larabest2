@@ -45,6 +45,7 @@ impl Progress<'_> {
 /// Fórmula de Homebrew de un paquete.
 fn brew_formula(service: ServiceId, branch: &str) -> String {
     match service {
+        ServiceId::Apache => "httpd".into(),
         ServiceId::Php => format!("php@{branch}"),
         ServiceId::Mariadb => format!("mariadb@{branch}"),
         ServiceId::Postgresql => format!("postgresql@{branch}"),
@@ -121,6 +122,12 @@ impl Core {
                     .ok_or_else(|| unreadable("windows.php.net"))?;
                 Ok((version, format!("{}{path}", urls::PHP_DOWNLOADS)))
             }
+            ServiceId::Apache => {
+                let html = self.fetch_text(urls::APACHE_INDEX).await?;
+                let (version, file) =
+                    catalog::apache_latest(&html).ok_or_else(|| unreadable("fossies.org"))?;
+                Ok((version, urls::apache_zip(&file)))
+            }
             ServiceId::Nginx => {
                 let html = self.fetch_text(urls::NGINX_PAGE).await?;
                 let version =
@@ -192,7 +199,9 @@ impl Core {
             .join(format!("{}-{version}.zip", service.key()));
         self.downloader.download(&url, &zip).await?;
         progress.step(format!("Extrayendo en {}", slash(&dest)));
-        let extracted = self.extract(&zip, &dest).await;
+        // Del zip de Apache Lounge solo interesa su carpeta Apache24.
+        let folder = (service == ServiceId::Apache).then_some(catalog::APACHE_ZIP_FOLDER);
+        let extracted = self.extract(&zip, &dest, folder).await;
         let _ = deps.fs.remove_file(&zip);
         extracted?;
         if !deps.fs.exists(&marker) {
@@ -205,11 +214,16 @@ impl Core {
         Ok(format!("{} {version} instalado.", service.label()))
     }
 
-    async fn extract(&self, archive: &Path, dest: &Path) -> Result<(), AppError> {
+    async fn extract(
+        &self,
+        archive: &Path,
+        dest: &Path,
+        folder: Option<&'static str>,
+    ) -> Result<(), AppError> {
         let extractor = self.archive.clone();
         let (archive, dest_dir) = (archive.to_path_buf(), dest.to_path_buf());
         let result =
-            tokio::task::spawn_blocking(move || extractor.extract_zip(&archive, &dest_dir, true))
+            tokio::task::spawn_blocking(move || extractor.extract_zip(&archive, &dest_dir, folder))
                 .await
                 .map_err(|e| AppError::Process(format!("La extracción se interrumpió: {e}")))?;
         if result.is_err() {
@@ -312,7 +326,7 @@ impl Core {
                 // Se reemplaza la versión anterior; su config.inc.php se
                 // vuelve a generar.
                 deps.fs.remove_dir_all(&deps.paths.bin_phpmyadmin())?;
-                let extracted = self.extract(&zip, &deps.paths.bin_phpmyadmin()).await;
+                let extracted = self.extract(&zip, &deps.paths.bin_phpmyadmin(), None).await;
                 let _ = deps.fs.remove_file(&zip);
                 extracted?;
                 if !tools::installed(deps.fs.as_ref(), &deps.paths, tools::PHPMYADMIN) {
@@ -365,6 +379,7 @@ mod tests {
     #[test]
     fn brew_formulas_follow_the_chosen_versions() {
         assert_eq!(brew_formula(ServiceId::Php, "8.3"), "php@8.3");
+        assert_eq!(brew_formula(ServiceId::Apache, ""), "httpd");
         assert_eq!(brew_formula(ServiceId::Mariadb, "11.4"), "mariadb@11.4");
         assert_eq!(brew_formula(ServiceId::Postgresql, "17"), "postgresql@17");
         assert_eq!(

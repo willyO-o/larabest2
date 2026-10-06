@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { SERVICE_LABEL, useServicesStore } from '../stores/services'
-import type { ServiceStatus } from '../types/ipc'
+import type { ServiceId, ServiceStatus } from '../types/ipc'
 
 const props = defineProps<{ status: ServiceStatus }>()
 const services = useServicesStore()
@@ -22,6 +22,12 @@ const busy = computed(
     props.status.state === 'stopping',
 )
 const isUp = computed(() => props.status.state === 'running')
+
+/** Los servidores web recargan su configuración; el resto se reinicia. */
+const RELOAD_TITLE: Partial<Record<ServiceId, string>> = {
+  nginx: 'Recargar la configuración sin cortar',
+  apache: 'Recargar la configuración',
+}
 
 /** "puertos 9000–9003" si son seguidos (php-cgi), "puertos 1025/8025" si no. */
 const port = computed(() => {
@@ -51,7 +57,7 @@ function toggle() {
       <button
         class="row-btn"
         :disabled="busy || !isUp"
-        :title="status.id === 'nginx' ? 'Recargar la configuración sin cortar' : 'Reiniciar'"
+        :title="RELOAD_TITLE[status.id] ?? 'Reiniciar'"
         @click="services.reload(status.id)"
       >
         Recargar

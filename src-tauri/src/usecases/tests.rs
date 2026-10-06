@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use crate::domain::{HostEntry, ServiceId, ServiceState};
+use crate::domain::{HostEntry, ServiceId, ServiceState, WebServer};
 use crate::ports::FileStore;
 use crate::testing::{Harness, MAC_ROOT, ROOT};
 
@@ -947,4 +947,129 @@ async fn homebrew_installs_formulas_and_trusts_the_mongodb_tap() {
     let message = core.install_package("php-8.4").await.unwrap();
     assert_eq!(message, "PHP 8.4.13 instalado con Homebrew.");
     assert_eq!(h.runner.ran()[3].args, vec!["install", "php@8.4"]);
+}
+
+#[tokio::test]
+async fn switching_to_apache_swaps_the_running_web_server() {
+    let h = Harness::new();
+    let core = h.core();
+    let err = core.set_web_server(WebServer::Apache).await.unwrap_err();
+    assert!(err.to_string().contains("Agregar → Apache"), "{err}");
+    assert_eq!(h.config.get().web_server, WebServer::Nginx);
+
+    h.binaries.add(ROOT, ServiceId::Apache, "2.4.69");
+    core.start_all().await.unwrap();
+    assert_eq!(h.supervisor.state(ServiceId::Nginx), ServiceState::Running);
+    assert_eq!(h.supervisor.state(ServiceId::Apache), ServiceState::Stopped);
+
+    core.set_web_server(WebServer::Apache).await.unwrap();
+    assert_eq!(h.config.get().web_server, WebServer::Apache);
+    assert_eq!(h.supervisor.state(ServiceId::Nginx), ServiceState::Stopped);
+    assert_eq!(h.supervisor.state(ServiceId::Apache), ServiceState::Running);
+    assert!(h.events.last_of(ServiceId::Apache).unwrap().enabled);
+    assert!(!h.events.last_of(ServiceId::Nginx).unwrap().enabled);
+    assert!(h
+        .fs
+        .exists(Path::new(&format!("{ROOT}/etc/apache/httpd.conf"))));
+}
+
+#[tokio::test]
+async fn with_apache_the_sites_are_its_vhosts_and_windows_restarts_it() {
+    let h = Harness::new();
+    let core = h.core();
+    h.binaries.add(ROOT, ServiceId::Apache, "2.4.69");
+    core.set_web_server(WebServer::Apache).await.unwrap();
+    core.start_all().await.unwrap();
+    assert_eq!(h.supervisor.state(ServiceId::Apache), ServiceState::Running);
+    assert_eq!(h.supervisor.state(ServiceId::Nginx), ServiceState::Stopped);
+    let apache_starts = |h: &Harness| {
+        h.runner
+            .spawned()
+            .iter()
+            .filter(|s| s.exe_name().starts_with("httpd"))
+            .count()
+    };
+    assert_eq!(apache_starts(&h), 1);
+
+    h.fs.create_dir_all(Path::new(&format!("{ROOT}/www/nuevo")))
+        .unwrap();
+    core.sync_sites().await.unwrap();
+    assert!(h
+        .fs
+        .read(&format!("{ROOT}/etc/apache/sites/nuevo.conf"))
+        .contains("ServerName nuevo.test"));
+    assert!(!h
+        .fs
+        .exists(Path::new(&format!("{ROOT}/etc/nginx/sites/nuevo.conf"))));
+    // Apache en consola de Windows no se recarga desde otro proceso: se
+    // reinicia.
+    assert_eq!(apache_starts(&h), 2);
+    assert_eq!(h.supervisor.state(ServiceId::Apache), ServiceState::Running);
+
+    h.fs.write(Path::new(&format!("{ROOT}/bin/adminer/adminer.php")), "")
+        .unwrap();
+    assert!(core.database_url().is_ok());
+    core.stop(ServiceId::Apache).await.unwrap();
+    assert!(core
+        .database_url()
+        .unwrap_err()
+        .to_string()
+        .contains("Inicia Apache"));
+}
+
+#[tokio::test]
+async fn homebrew_apache_reloads_gracefully() {
+    let h = Harness::homebrew();
+    h.binaries.add_at(
+        ServiceId::Apache,
+        "2.4.69",
+        "/opt/homebrew/Cellar/httpd/2.4.69",
+    );
+    let core = h.core();
+    core.set_web_server(WebServer::Apache).await.unwrap();
+    core.start(ServiceId::Apache).await.unwrap();
+    h.fs.create_dir_all(Path::new(&format!("{MAC_ROOT}/www/nuevo")))
+        .unwrap();
+    core.sync_sites().await.unwrap();
+    let graceful: Vec<_> = h
+        .runner
+        .ran()
+        .into_iter()
+        .filter(|s| {
+            s.args
+                .ends_with(&["-k".to_string(), "graceful".to_string()])
+        })
+        .collect();
+    assert_eq!(graceful.len(), 1);
+    assert_eq!(
+        crate::domain::slash(&graceful[0].program),
+        "/opt/homebrew/Cellar/httpd/2.4.69/bin/httpd"
+    );
+    let env = core.terminal_env().unwrap();
+    assert!(env["PATH"].contains("/opt/homebrew/Cellar/httpd/2.4.69/bin"));
+}
+
+#[tokio::test]
+async fn apache_comes_from_the_apache_lounge_zip_mirrored_on_fossies() {
+    use crate::domain::catalog::urls;
+    let h = Harness::new();
+    h.downloader.respond(
+        urls::APACHE_INDEX,
+        r#"<a href="/windows/www/httpd-2.4.69-261002-Win64-VS18.zip/">httpd-2.4.69-261002-Win64-VS18.zip</a>"#,
+    );
+    let httpd = format!("bin/{}", crate::drivers::exe("httpd"));
+    h.archive.contains(&[&httpd]);
+    let message = h.core().install_package("apache").await.unwrap();
+    assert_eq!(message, "Apache 2.4.69 instalado.");
+    assert_eq!(
+        h.downloader.urls.lock().unwrap()[1],
+        "https://fossies.org/windows/www/httpd-2.4.69-261002-Win64-VS18.zip"
+    );
+    assert_eq!(
+        h.archive.folder.lock().unwrap().as_deref(),
+        Some("Apache24")
+    );
+    assert!(h
+        .fs
+        .exists(Path::new(&format!("{ROOT}/bin/apache/2.4.69/{httpd}"))));
 }

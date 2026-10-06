@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "lowercase")]
 pub enum ServiceId {
     Nginx,
+    Apache,
     Php,
     Mariadb,
     Postgresql,
@@ -14,8 +15,9 @@ pub enum ServiceId {
 
 impl ServiceId {
     /// En el orden en que se muestran.
-    pub const ALL: [ServiceId; 7] = [
+    pub const ALL: [ServiceId; 8] = [
         ServiceId::Nginx,
+        ServiceId::Apache,
         ServiceId::Php,
         ServiceId::Mariadb,
         ServiceId::Postgresql,
@@ -33,14 +35,22 @@ impl ServiceId {
         ServiceId::Mailpit,
     ];
 
+    /// Servidores web: se usa uno u otro (Preferencias → Servidor web).
+    pub const WEB: [ServiceId; 2] = [ServiceId::Nginx, ServiceId::Apache];
+
     pub fn is_optional(self) -> bool {
         Self::OPTIONAL.contains(&self)
+    }
+
+    pub fn is_web(self) -> bool {
+        Self::WEB.contains(&self)
     }
 
     /// Nombre de la carpeta dentro de `bin/` y de los archivos en `tmp/`.
     pub fn key(self) -> &'static str {
         match self {
             ServiceId::Nginx => "nginx",
+            ServiceId::Apache => "apache",
             ServiceId::Php => "php",
             ServiceId::Mariadb => "mariadb",
             ServiceId::Postgresql => "postgresql",
@@ -54,6 +64,7 @@ impl ServiceId {
     pub fn label(self) -> &'static str {
         match self {
             ServiceId::Nginx => "Nginx",
+            ServiceId::Apache => "Apache",
             ServiceId::Php => "PHP",
             ServiceId::Mariadb => "MariaDB",
             ServiceId::Postgresql => "PostgreSQL",
@@ -128,6 +139,11 @@ pub fn explain_exit_code(code: i32) -> Option<&'static str> {
 
 /// Código de salida de Windows cuando no se encuentra una DLL.
 pub const STATUS_DLL_NOT_FOUND: i32 = 0xC000_0135_u32 as i32;
+
+/// Código de salida de Windows cuando una DLL no tiene una función: con
+/// PHP y Apache, un runtime de Visual C++ más viejo que el compilador con
+/// que se armaron.
+pub const STATUS_ENTRYPOINT_NOT_FOUND: i32 = 0xC000_0139_u32 as i32;
 
 #[cfg(test)]
 mod tests {

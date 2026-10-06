@@ -7,6 +7,7 @@ import { EVENTS, type ServiceId, type ServiceStatus } from '../types/ipc'
 
 export const SERVICE_ORDER: ServiceId[] = [
   'nginx',
+  'apache',
   'php',
   'mariadb',
   'postgresql',
@@ -17,6 +18,7 @@ export const SERVICE_ORDER: ServiceId[] = [
 
 export const SERVICE_LABEL: Record<ServiceId, string> = {
   nginx: 'Nginx',
+  apache: 'Apache',
   php: 'PHP',
   mariadb: 'MariaDB',
   postgresql: 'PostgreSQL',

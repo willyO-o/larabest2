@@ -31,6 +31,7 @@ impl HomebrewBinaryProvider {
 fn formula_base(service: ServiceId) -> &'static str {
     match service {
         ServiceId::Nginx => "nginx",
+        ServiceId::Apache => "httpd",
         ServiceId::Php => "php",
         ServiceId::Mariadb => "mariadb",
         ServiceId::Postgresql => "postgresql",

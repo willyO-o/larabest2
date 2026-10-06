@@ -25,7 +25,12 @@ fn common_top(names: &[PathBuf]) -> Option<PathBuf> {
 }
 
 impl ArchiveExtractor for ZipExtractor {
-    fn extract_zip(&self, archive: &Path, dest: &Path, strip_top: bool) -> Result<(), AppError> {
+    fn extract_zip(
+        &self,
+        archive: &Path,
+        dest: &Path,
+        folder: Option<&str>,
+    ) -> Result<(), AppError> {
         let file = File::open(archive).map_err(|e| zip_error(archive, e))?;
         let mut zip = zip::ZipArchive::new(file).map_err(|e| zip_error(archive, e))?;
 
@@ -36,7 +41,10 @@ impl ArchiveExtractor for ZipExtractor {
             names.push(entry.enclosed_name());
         }
         let safe: Vec<PathBuf> = names.iter().flatten().cloned().collect();
-        let top = if strip_top { common_top(&safe) } else { None };
+        let top = match folder {
+            Some(folder) => Some(PathBuf::from(folder)),
+            None => common_top(&safe),
+        };
 
         std::fs::create_dir_all(dest).map_err(|e| zip_error(archive, e))?;
         for (i, name) in names.into_iter().enumerate() {
@@ -97,7 +105,7 @@ mod tests {
             ],
         );
         ZipExtractor
-            .extract_zip(&archive, &dir.join("blog"), true)
+            .extract_zip(&archive, &dir.join("blog"), None)
             .unwrap();
         assert_eq!(
             std::fs::read_to_string(dir.join("blog/index.php")).unwrap(),
@@ -114,10 +122,33 @@ mod tests {
         let archive = dir.join("a.zip");
         make_zip(&archive, &[("a.txt", "a"), ("b/c.txt", "c")]);
         ZipExtractor
-            .extract_zip(&archive, &dir.join("out"), true)
+            .extract_zip(&archive, &dir.join("out"), None)
             .unwrap();
         assert!(dir.join("out/a.txt").is_file());
         assert!(dir.join("out/b/c.txt").is_file());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn extracts_only_the_named_folder() {
+        let dir = temp_dir("zip-apache");
+        let archive = dir.join("httpd.zip");
+        make_zip(
+            &archive,
+            &[
+                ("Apache24/bin/httpd.exe", "MZ"),
+                ("Apache24/modules/mod_rewrite.so", "so"),
+                ("ReadMe.txt", "léeme"),
+                ("-- Win64 VS18  --", ""),
+            ],
+        );
+        ZipExtractor
+            .extract_zip(&archive, &dir.join("2.4.69"), Some("Apache24"))
+            .unwrap();
+        assert!(dir.join("2.4.69/bin/httpd.exe").is_file());
+        assert!(dir.join("2.4.69/modules/mod_rewrite.so").is_file());
+        assert!(!dir.join("2.4.69/ReadMe.txt").exists());
+        assert!(!dir.join("2.4.69/Apache24").exists());
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -127,7 +158,7 @@ mod tests {
         let archive = dir.join("evil.zip");
         make_zip(&archive, &[("../evil.txt", "x"), ("ok.txt", "ok")]);
         ZipExtractor
-            .extract_zip(&archive, &dir.join("out"), false)
+            .extract_zip(&archive, &dir.join("out"), None)
             .unwrap();
         assert!(dir.join("out/ok.txt").is_file());
         assert!(!dir.join("evil.txt").exists());
@@ -140,7 +171,7 @@ mod tests {
         let archive = dir.join("bad.zip");
         std::fs::write(&archive, "no es un zip").unwrap();
         let err = ZipExtractor
-            .extract_zip(&archive, &dir.join("out"), true)
+            .extract_zip(&archive, &dir.join("out"), None)
             .unwrap_err();
         assert!(err.to_string().starts_with("No se pudo extraer"));
         std::fs::remove_dir_all(dir).unwrap();

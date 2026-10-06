@@ -16,7 +16,9 @@ use crate::adapters::shared::ca::{LocalCa, TrustStore};
 use crate::adapters::shared::config::JsonConfigStore;
 use crate::adapters::shared::fs::StdFileStore;
 use crate::adapters::shared::secrets::OsSecrets;
-use crate::domain::{AppConfig, BinaryLayout, Paths, ServiceId, ServiceState, SitePreset};
+use crate::domain::{
+    AppConfig, BinaryLayout, Paths, ServiceId, ServiceState, SitePreset, WebServer,
+};
 use crate::error::AppError;
 use crate::ports::{BinaryProvider, ConfigStore, Downloader, PortChecker, ProcessRunner};
 use crate::supervisor::{Deps, Supervisor, Timings};
@@ -185,6 +187,21 @@ pub async fn get(host: &str, port: u16, path: &str, https: bool) -> String {
     .await
 }
 
+/// Como `get`, pero insiste hasta 15 s mientras la respuesta no traiga
+/// `expected`: tras crear un sitio, Nginx y Apache aplican la configuración
+/// recargada un momento después.
+pub async fn get_until(host: &str, port: u16, path: &str, https: bool, expected: &str) -> String {
+    let mut page = String::new();
+    for _ in 0..30 {
+        page = get(host, port, path, https).await;
+        if page.contains(expected) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+    page
+}
+
 /// Entra a Adminer como root sin contraseña, como lo haría el usuario, y
 /// devuelve la página con la lista de bases de datos. Desde Adminer 6 el
 /// formulario de entrada lleva un token contra CSRF: primero se abre la
@@ -326,13 +343,13 @@ pub async fn common_flow(w: &World, stack: &[ServiceId]) {
     // WordPress en español: descarga, base de datos y wp-config.php.
     let wp = w.core.create_site("blog", SitePreset::Wordpress).await;
     check(w, wp.is_ok(), &format!("{wp:?}"));
-    let install = get("blog.test", ports.http, "/", false).await;
+    let install = get_until("blog.test", ports.http, "/", false, "wp-admin/install.php").await;
     check(w, install.contains("wp-admin/install.php"), &install);
 
     // Laravel con Composer, migraciones en MariaDB y correo a Mailpit.
     let laravel = w.core.create_site("tienda", SitePreset::Laravel).await;
     check(w, laravel.is_ok(), &format!("{laravel:?}"));
-    let home = get("tienda.test", ports.http, "/", false).await;
+    let home = get_until("tienda.test", ports.http, "/", false, "Laravel").await;
     check(
         w,
         home.contains("200 OK") && home.contains("Laravel"),
@@ -367,6 +384,57 @@ pub async fn common_flow(w: &World, stack: &[ServiceId]) {
     check(w, running(w, stack), "Nginx debe volver con HTTPS");
     let secure = get("hola.test", ports.https, "/", true).await;
     check(w, secure.contains("hola 8."), &secure);
+}
+
+/// Apache en lugar de Nginx (Preferencias → Servidor web), con lo que dejó
+/// `common_flow`: PHP, la ruta de Laravel por su `.htaccess`, Adminer,
+/// HTTPS, un sitio nuevo con Apache en marcha y una parada en orden.
+pub async fn apache_flow(w: &World) {
+    let ports = w.ports;
+    let switched = w.core.set_web_server(WebServer::Apache).await;
+    check(w, switched.is_ok(), &format!("{switched:?}"));
+    check(
+        w,
+        running(w, &[ServiceId::Apache])
+            && w.core.supervisor.state(ServiceId::Nginx) == ServiceState::Stopped,
+        "Apache debe reemplazar a Nginx",
+    );
+    let page = get("hola.test", ports.http, "/", false).await;
+    check(
+        w,
+        page.contains("Server: Apache") && page.contains("hola 8.") && page.contains(" pdo"),
+        &page,
+    );
+    let up = get("tienda.test", ports.http, "/up", false).await;
+    check(w, up.contains("200 OK"), &up);
+    let adminer = adminer_databases(w).await;
+    check(w, adminer.contains("e2e"), &adminer);
+    let secure = get("hola.test", ports.https, "/", true).await;
+    check(w, secure.contains("hola 8."), &secure);
+
+    std::fs::create_dir_all(w.root.join("www").join("nuevo")).unwrap();
+    std::fs::write(
+        w.root.join("www").join("nuevo").join("index.php"),
+        "<?php echo 'sitio ' . 'nuevo';",
+    )
+    .unwrap();
+    w.core.sync_sites().await.unwrap();
+    let nuevo = get_until("nuevo.test", ports.http, "/", false, "sitio nuevo").await;
+    check(w, nuevo.contains("sitio nuevo"), &nuevo);
+
+    // Se detiene en orden (Ctrl+C o SIGTERM) y vuelve a arrancar.
+    w.core.stop(ServiceId::Apache).await.unwrap();
+    let released = (0..50).any(|_| {
+        std::thread::sleep(Duration::from_millis(100));
+        !w.deps.ports.is_listening(ports.http)
+    });
+    check(w, released, "Apache debe soltar el puerto al detenerse");
+    w.core.start(ServiceId::Apache).await.unwrap();
+    check(
+        w,
+        running(w, &[ServiceId::Apache]),
+        "Apache debe volver a arrancar",
+    );
 }
 
 /// Si la app muere sin detener nada, al volver a abrirla limpia los

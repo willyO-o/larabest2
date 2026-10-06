@@ -26,7 +26,7 @@ pub enum AppError {
     BinaryMissing { service: ServiceId, detail: String },
 
     #[error(
-        "{} no pudo iniciar: falta el runtime de Visual C++ 2015-2022 (x64). Instálalo desde {VC_REDIST_URL}",
+        "{} no pudo iniciar: falta el runtime de Visual C++ (x64) o es antiguo. Instala el más reciente desde {VC_REDIST_URL}",
         .service.label()
     )]
     VcRuntimeMissing { service: ServiceId },

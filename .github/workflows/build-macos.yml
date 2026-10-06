@@ -48,8 +48,8 @@ jobs:
       # como de confianza.
       - run: brew tap mongodb/brew && brew trust mongodb/brew
       - run: >-
-          brew install nginx php@8.3 php@8.4 mariadb@11.4 postgresql@17 redis
-          mailpit mongodb/brew/mongodb-community
+          brew install nginx httpd php@8.3 php@8.4 mariadb@11.4 postgresql@17
+          redis mailpit mongodb/brew/mongodb-community
       - run: cargo test --manifest-path src-tauri/Cargo.toml --lib -- --ignored --nocapture e2e_homebrew
         env:
           LARABEST_E2E_ROOT: ${{ runner.temp }}/larabest-e2e
