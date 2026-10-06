@@ -31,3 +31,7 @@ lto = true
 codegen-units = 1
 strip = true
 panic = "abort"
+
+[target.'cfg(windows)'.dependencies]
+win32job = "2"
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading"] }

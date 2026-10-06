@@ -105,6 +105,34 @@ pub fn merge_block(original: &str, app_name: &str, entries: &[HostEntry]) -> Str
     out
 }
 
+/// Archivo que la app escribe para el proceso auxiliar elevado
+/// (`--apply-hosts`): primera línea `app=<nombre>`, luego `ip host`.
+pub fn encode_request(app_name: &str, entries: &[HostEntry]) -> String {
+    let mut out = format!("app={app_name}\n");
+    for e in entries {
+        out.push_str(&format!("{} {}\n", e.ip, e.host));
+    }
+    out
+}
+
+pub fn decode_request(text: &str) -> Option<(String, Vec<HostEntry>)> {
+    let mut lines = text.lines();
+    let app = lines.next()?.strip_prefix("app=")?.trim().to_string();
+    if app.is_empty() {
+        return None;
+    }
+    let entries = lines
+        .filter_map(|l| {
+            let mut parts = l.split_whitespace();
+            Some(HostEntry {
+                ip: parts.next()?.into(),
+                host: parts.next()?.into(),
+            })
+        })
+        .collect();
+    Some((app, entries))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -154,5 +182,13 @@ mod tests {
         let original = "# >>> Other (x)\n127.0.0.1 o.test\n# <<< Other\n";
         let merged = merge_block(original, APP, &[]);
         assert_eq!(merged, original);
+    }
+
+    #[test]
+    fn request_round_trips() {
+        let entries = vec![HostEntry::local("a.test"), HostEntry::local("b.test")];
+        let text = encode_request(APP, &entries);
+        assert_eq!(decode_request(&text), Some((APP.to_string(), entries)));
+        assert_eq!(decode_request("basura"), None);
     }
 }
