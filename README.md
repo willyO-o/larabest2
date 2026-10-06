@@ -1,12 +1,14 @@
 # LARABEST
 
-Servidor local para Windows 10 y 11, inspirado en Laragon: gestiona **Nginx**, **PHP** y **MariaDB** como procesos propios y crea un dominio `<carpeta>.test` por cada proyecto de `www/`. Hecho con Tauri 2, Rust y Vue 3.
+Servidor local para Windows 10 y 11 y para macOS 13 o posterior, inspirado en Laragon: gestiona **Nginx**, **PHP** y **MariaDB** como procesos propios y crea un dominio `<carpeta>.test` por cada proyecto de `www/`. Hecho con Tauri 2, Rust y Vue 3.
 
 La interfaz sigue la estructura de Laragon (ventana compacta, una fila por servicio, cinco botones abajo y un menú contextual en árbol) con identidad propia. La banda superior cambia de color con el estado: grafito detenido, ámbar iniciando, verde todo en marcha, rojo con un fallo.
 
 **Fase 1:** iniciar y detener todos los servicios o uno a la vez, cambiar la versión de PHP, crear un sitio `.test` por carpeta, vivir en la bandeja del sistema, y los botones Web, Base de datos, Terminal y Raíz.
 
 **Fase 2:** crear un sitio en blanco, WordPress o Laravel con un clic, HTTPS opcional con una autoridad certificadora local, acceso a configuraciones y logs desde el menú, y tema Sistema/Claro/Oscuro.
+
+**Fase 3:** la misma app en macOS, con Nginx, PHP (`php-fpm`) y MariaDB instalados con Homebrew. Ver [macOS](#macos).
 
 ## Menú contextual
 
@@ -79,7 +81,7 @@ En la fase 1 los binarios se descargan y copian a mano. Cada versión va en su p
 
 | Servicio | De dónde | Qué descargar | Carpeta destino | La app busca |
 | --- | --- | --- | --- | --- |
-| Nginx | <https://nginx.org/en/download.html> | *Stable version* → `nginx/Windows-1.28.x` (zip) | `bin\nginx\1.28.0\` | `nginx.exe` y `conf\` |
+| Nginx | <https://nginx.org/en/download.html> | *Stable version* → `nginx/Windows-1.28.x` (zip) | `bin\nginx\1.28.0\` | `nginx.exe` |
 | PHP 8.3 | <https://windows.php.net/download/> | PHP 8.3 → **VS16 x64 Non Thread Safe** (zip) | `bin\php\8.3.x\` | `php-cgi.exe` |
 | PHP 8.4 | <https://windows.php.net/download/> | PHP 8.4 → **VS17 x64 Non Thread Safe** (zip) | `bin\php\8.4.x\` | `php-cgi.exe` |
 | MariaDB 11.4 | <https://mariadb.org/download/> | MariaDB Server 11.4 (LTS), *MS Windows (64-bit)*, tipo **ZIP file** | `bin\mariadb\11.4.x\` | `bin\mariadbd.exe` |
@@ -205,6 +207,76 @@ Prepara `bin\` como se describe arriba y crea `www\blog\index.php` con `<?php ph
 - [ ] **Salir** desde la bandeja detiene los servicios (MariaDB de forma ordenada) y cierra la app.
 - [ ] Si la app se cierra a la fuerza (Administrador de tareas → Finalizar tarea), Nginx, PHP y MariaDB también se cierran.
 
+## macOS
+
+En macOS la app usa los programas de **Homebrew** en vez de copiarlos a `bin/`. Funciona en Apple Silicon y en Intel (el `.dmg` es universal) desde macOS 13 Ventura; Homebrew ofrece binarios listos para macOS 14 o posterior (en versiones anteriores, y en Intel para algunas fórmulas, los compila y tarda bastante).
+
+### Instalar los servicios
+
+1. Instala Homebrew si no lo tienes: <https://brew.sh> (pide la contraseña de administrador una vez).
+2. En la Terminal:
+
+   ```bash
+   brew install nginx php@8.3 php@8.4 mariadb@11.4
+   ```
+
+   No hace falta `brew services start`: la app arranca y detiene cada programa con su propia configuración. Si ya tenías alguno corriendo con `brew services`, detenlo (`brew services stop nginx`, etc.) para liberar los puertos.
+3. Opcional, igual que en Windows: `adminer.php` en `~/LARABEST/bin/adminer/` y `composer.phar` en `~/LARABEST/bin/composer/` (Composer se descarga solo al crear un sitio Laravel).
+
+La app encuentra las versiones en `/opt/homebrew/Cellar` (Apple Silicon) o `/usr/local/Cellar` (Intel). Cambiar de versión de PHP funciona igual que en Windows (**Menú → PHP → Versión**). Si `brew upgrade` cambia 8.4.13 por 8.4.14, la app sigue en la rama 8.4.
+
+### Instalar la app (sin firma de Apple)
+
+La app no está firmada con un certificado de Apple Developer (cuesta 99 USD al año). No hace falta para usarla: macOS la instala igual, pero la primera vez bloquea la apertura y hay que permitirla una sola vez.
+
+1. En GitHub ve a **Actions → build-macos**, abre la última ejecución en verde y descarga el artefacto `instalador-macos`.
+2. Descomprime el `.zip`, abre `LARABEST_0.1.0_universal.dmg` y arrastra LARABEST a **Aplicaciones**.
+3. Ábrela. macOS dice que no puede verificar al desarrollador: pulsa **Listo** (o **Cancelar**).
+4. Ve a **Configuración del Sistema → Privacidad y seguridad**, baja hasta «Se bloqueó el uso de LARABEST» y pulsa **Abrir igualmente**; confirma con tu contraseña. En macOS 14 o anterior también sirve: clic derecho sobre la app → **Abrir** → **Abrir**.
+5. Desde ese momento se abre normalmente.
+
+Alternativa por Terminal (quita la marca de «descargado de internet»): `xattr -dr com.apple.quarantine /Applications/LARABEST.app`.
+
+Si macOS dice que la app «está dañada», es la misma marca de cuarentena: usa el comando anterior.
+
+### Diferencias con Windows
+
+| | Windows | macOS |
+| --- | --- | --- |
+| Programas | zip copiados en `C:\LARABEST\bin\` | Homebrew (`brew install`) |
+| PHP | 4 procesos `php-cgi` (puertos 9000–9003) | un `php-fpm` en el puerto 9000 que reparte entre sus procesos |
+| Extensiones de PHP | se marcan en **Menú → PHP → Extensiones** | vienen compiladas en el PHP de Homebrew (pdo_mysql, intl, gd, zip, sodium…); para otras, `pecl install` y `extension=` en `user.ini` |
+| Carpeta raíz | `C:\LARABEST` | `~/LARABEST` |
+| Archivo hosts | aviso de UAC | `/etc/hosts`, con la contraseña de administrador (aviso estándar de macOS) |
+| HTTPS | almacén de certificados del usuario (`certutil`) | llavero de inicio de sesión, «Confiar siempre» (pide tu contraseña) |
+| Terminal | `cmd.exe` | Terminal.app con tu shell (zsh o bash); PHP, MariaDB, Nginx y Composer de la app quedan primero en el PATH aunque tu `.zshrc` agregue Homebrew |
+| MariaDB | puerto 3306 | puerto 3306 y socket propio `~/LARABEST/tmp/mariadb.sock` (en la Terminal de la app `mariadb -u root` lo usa solo) |
+| Bandeja | ícono en la bandeja; clic izquierdo abre la ventana | ícono en la barra de menús; el clic abre el menú. Clic en el ícono del Dock muestra la ventana |
+
+Nginx escucha en todas las interfaces: en macOS los puertos 80 y 443 solo se pueden abrir sin ser administrador así. Si el firewall de macOS está activo, puede preguntar si `nginx` acepta conexiones entrantes; para trabajar en local da igual la respuesta. Si el puerto 80 está ocupado y la fila no dice por quién, suele ser el Apache que trae macOS: `sudo apachectl stop`.
+
+Para quitar la CA de HTTPS: **Acceso a Llaveros → inicio de sesión → Certificados → LARABEST Local CA → Eliminar**. Firefox usa su propio almacén: impórtala en sus ajustes de certificados si lo usas.
+
+### Pruebas manuales en macOS
+
+Instala los servicios con Homebrew y la app como se indica arriba. Crea `~/LARABEST/www/blog/index.php` con `<?php phpinfo();`.
+
+- [ ] Al abrir aparece la ventana con Nginx, PHP y MariaDB *Detenido*, con las versiones de Homebrew. Sin Homebrew, cada fila dice qué `brew install` falta.
+- [ ] macOS pide la contraseña de administrador para `/etc/hosts`; al aceptarla, `/etc/hosts` tiene el bloque `# >>> LARABEST` y lo demás no cambió. Si se cancela, los sitios muestran el aviso ⚠ y **Reintentar** vuelve a pedirla.
+- [ ] **Iniciar todo**: los tres llegan a *En marcha*. En Monitor de Actividad hay `nginx` (2), `php-fpm` (varios) y `mariadbd`.
+- [ ] `http://blog.test` muestra `phpinfo()` de 8.4 con pdo_mysql, intl, gd, mbstring y zip.
+- [ ] **Menú → PHP → Versión → 8.3.x**: solo PHP se reinicia y `phpinfo()` muestra 8.3.
+- [ ] **Base de datos** abre Adminer; entra con `root` sin contraseña.
+- [ ] **Nuevo sitio → WordPress** y **→ Laravel** funcionan igual que en Windows.
+- [ ] **Terminal** abre Terminal.app en `www/` con `php -v` (versión activa), `composer -V` y `mariadb -u root -e 'select 1'` funcionando; en una Terminal normal, `php` es el de tu sistema o no existe.
+- [ ] **Preferencias → HTTPS**: macOS pide tu contraseña para confiar en «LARABEST Local CA»; `https://blog.test` abre en Safari y Chrome con candado.
+- [ ] Cerrar la ventana la oculta; el clic en el ícono del Dock o **Mostrar ventana** en la barra de menús la vuelve a mostrar.
+- [ ] El ícono de la barra de menús se ve en tema claro y oscuro.
+- [ ] **Menú → PHP → php.ini (ajustes propios)** abre `user.ini` en el editor de texto.
+- [ ] **Salir** (o Cmd+Q) detiene los servicios antes de cerrar. Si la app se cierra a la fuerza, al abrirla de nuevo detiene los procesos que quedaron (no aparece «puerto ocupado»).
+
+El CI de macOS ya prueba, con los programas reales de Homebrew: arranque de los tres servicios, un sitio servido por Nginx y php-fpm, la base de datos con root sin contraseña, Adminer, la creación de un sitio WordPress y uno Laravel, la Terminal, HTTPS, el cambio de versión de PHP y la limpieza de procesos huérfanos. Lo que no prueba (necesita una persona frente al Mac): los avisos de contraseña, la ventana, la barra de menús y abrir la app descargada.
+
 ## Desarrollo
 
 Requisitos: Node 22, Rust estable y, en Windows, las herramientas de compilación de Visual Studio con WebView2.
@@ -219,6 +291,16 @@ cargo clippy --all-targets -- -D warnings
 cargo test
 ```
 
-En Linux se compila y se prueba el núcleo (dominio, drivers y casos de uso) con adaptadores falsos. La app no gestiona servicios fuera de Windows. Para revisar el código de Windows desde Linux: `rustup target add x86_64-pc-windows-msvc` y `cargo clippy --target x86_64-pc-windows-msvc --all-targets`.
+En Linux se compila y se prueba el núcleo (dominio, drivers y casos de uso) con adaptadores falsos, y también los adaptadores de macOS que solo usan Unix (procesos, terminal, puertos). La app no gestiona servicios en Linux. Para revisar el código de otras plataformas desde Linux:
+
+```bash
+rustup target add x86_64-pc-windows-msvc aarch64-apple-darwin x86_64-apple-darwin
+cargo clippy --target x86_64-pc-windows-msvc --all-targets
+# objc2 compila un archivo Objective-C sin cabeceras: basta con clang
+CC_aarch64_apple_darwin=clang AR_aarch64_apple_darwin=llvm-ar \
+  cargo clippy --target aarch64-apple-darwin --all-targets
+```
+
+En un Mac con Homebrew, la prueba de punta a punta (`cargo test --lib -- --ignored --nocapture e2e_homebrew`) arranca los servicios de verdad en una carpeta temporal y usa los puertos 80, 443, 9070 y 3307.
 
 La guía de arquitectura está en `.claude/skills/servidor-local-tauri/SKILL.md`.
