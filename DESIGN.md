@@ -25,6 +25,17 @@ colors:
   dark-surface: "#1e2128"
   dark-ink: "#e9ebf0"
   dark-accent: "#8b96ff"
+  dark-accent-hover: "#a0a9ff"
+  dark-accent-ink: "#0e1233"
+  dark-sunken: "#252932"
+  dark-line: "#2f343e"
+  dark-ink-2: "#b4bac6"
+  dark-ink-3: "#9299a6"
+  dark-ok: "#4ade80"
+  dark-busy: "#f5b14c"
+  dark-bad: "#ff8a80"
+  dark-bad-ground: "#3a1d1c"
+  led-busy: "#fbbf24"
 typography:
   body:
     fontFamily: "'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif"
@@ -54,6 +65,7 @@ rounded:
   sm: "4px"
   md: "6px"
   lg: "8px"
+  pill: "999px"
 spacing:
   xs: "4px"
   sm: "6px"
@@ -112,6 +124,7 @@ Modo Operate: lo familiar es una virtud. Una sola familia tipográfica del siste
 ### Neutral
 - **Fondo frío** (`ground`, #f3f4f7) y **superficie** (`surface`, #ffffff) para la lista; `sunken` para la línea de estado y los estados hover; `line` para separadores de 1px.
 - Tinta en tres pasos (`ink`, `ink-2`, `ink-3`) para nombre, datos y estado secundario.
+- Tema oscuro: los mismos roles con prefijo `dark-`; el LED de la marca usa `dark-ok`, `led-busy` y `dark-bad` sobre la banda en ambos temas porque se leen mejor sobre fondos oscuros.
 
 ### Named Rules
 - **Dos temas, una banda.** Los neutros y los colores de estado tienen versión clara y oscura; la banda conserva sus cinco colores en ambos temas porque comunica estado, no superficie.
