@@ -4,6 +4,7 @@ pub mod binaries;
 pub mod config;
 pub mod fs;
 pub mod netstat;
+pub mod watcher;
 
 #[cfg(test)]
 pub(crate) fn temp_dir(name: &str) -> std::path::PathBuf {

@@ -3,6 +3,8 @@ pub mod domain;
 pub mod drivers;
 pub mod error;
 pub mod ports;
+pub mod supervisor;
+pub mod usecases;
 
 #[cfg(test)]
 mod testing;

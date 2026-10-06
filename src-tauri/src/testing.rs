@@ -1,5 +1,3 @@
-#![allow(dead_code)] // Se usan todos a partir del hito 4.
-
 //! Adaptadores falsos para probar el núcleo sin sistema operativo.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
@@ -442,5 +440,86 @@ impl ShellLauncher for FakeShell {
     fn open_terminal(&self, cwd: &Path, env: &HashMap<String, String>) -> Result<(), AppError> {
         self.opened.lock().unwrap().push((slash(cwd), env.clone()));
         Ok(())
+    }
+}
+
+// ---------------------------------------------------------------- arnés
+
+/// Supervisor y núcleo armados con adaptadores falsos y plazos cortos.
+pub struct Harness {
+    pub fs: std::sync::Arc<FakeFs>,
+    pub runner: std::sync::Arc<FakeRunner>,
+    pub ports: std::sync::Arc<FakePorts>,
+    pub config: std::sync::Arc<FakeConfig>,
+    pub events: std::sync::Arc<FakeEvents>,
+    pub hosts: std::sync::Arc<FakeHosts>,
+    pub shell: std::sync::Arc<FakeShell>,
+    pub supervisor: std::sync::Arc<crate::supervisor::Supervisor>,
+}
+
+pub const ROOT: &str = "C:/APP";
+
+impl Harness {
+    /// Con Nginx 1.28.0, PHP 8.3.20 y 8.4.6, MariaDB 11.4.5 instalados y
+    /// todos los puertos respondiendo.
+    pub fn new() -> Self {
+        use std::sync::Arc;
+        let fs = Arc::new(FakeFs::default());
+        let runner = Arc::new(FakeRunner::default());
+        let ports = Arc::new(FakePorts::default());
+        let binaries = Arc::new(FakeBinaries::default());
+        let config = Arc::new(FakeConfig::default());
+        let events = Arc::new(FakeEvents::default());
+
+        binaries.add(ROOT, ServiceId::Nginx, "1.28.0");
+        binaries.add(ROOT, ServiceId::Php, "8.3.20");
+        binaries.add(ROOT, ServiceId::Php, "8.4.6");
+        binaries.add(ROOT, ServiceId::Mariadb, "11.4.5");
+        let conf = format!("{ROOT}/bin/nginx/1.28.0/conf");
+        fs.write(Path::new(&format!("{conf}/mime.types")), "types {}\n")
+            .unwrap();
+        fs.write(Path::new(&format!("{conf}/fastcgi_params")), "\n")
+            .unwrap();
+        // MariaDB ya inicializada salvo que la prueba diga lo contrario.
+        fs.create_dir_all(Path::new(&format!("{ROOT}/data/mariadb/mysql")))
+            .unwrap();
+        ports.set_listening(&[80, 9000, 9001, 9002, 9003]);
+
+        let deps = crate::supervisor::Deps {
+            app_name: "APP_NAME".into(),
+            paths: crate::domain::Paths::new(ROOT),
+            fs: fs.clone(),
+            runner: runner.clone(),
+            ports: ports.clone(),
+            binaries: binaries.clone(),
+            config: config.clone(),
+            events: events.clone(),
+        };
+        let timings = crate::supervisor::Timings {
+            health_timeout: Duration::from_millis(300),
+            health_poll: Duration::from_millis(10),
+            stop_grace: Duration::from_millis(50),
+            monitor_interval: Duration::from_millis(10),
+        };
+        let supervisor = crate::supervisor::Supervisor::new(deps, timings);
+        Harness {
+            fs,
+            runner,
+            ports,
+            config,
+            events,
+            hosts: Arc::new(FakeHosts::default()),
+            shell: Arc::new(FakeShell::default()),
+            supervisor,
+        }
+    }
+
+    pub fn core(&self) -> crate::usecases::Core {
+        crate::usecases::Core::new(
+            self.supervisor.clone(),
+            self.hosts.clone(),
+            self.shell.clone(),
+            "C:\\Windows".into(),
+        )
     }
 }
