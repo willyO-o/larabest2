@@ -39,8 +39,30 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* Oscuro elegido a mano. Mismos valores que el bloque de abajo. */
+:root[data-theme='dark'] {
+  --ground: #16181d;
+  --surface: #1e2128;
+  --sunken: #252932;
+  --line: #2f343e;
+  --ink: #e9ebf0;
+  --ink-2: #b4bac6;
+  --ink-3: #9299a6;
+  --accent: #8b96ff;
+  --accent-ink: #0e1233;
+  --accent-hover: #a0a9ff;
+  --ok: #4ade80;
+  --busy: #f5b14c;
+  --bad: #ff8a80;
+  --bad-ground: #3a1d1c;
+  --warn: #f5b14c;
+  --focus: #8b96ff;
+  color-scheme: dark;
+}
+
+/* Oscuro heredado de Windows (tema "Sistema" o antes de cargar). */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme='light']) {
     --ground: #16181d;
     --surface: #1e2128;
     --sunken: #252932;
@@ -212,6 +234,48 @@ button:disabled {
 
 .band-menu:focus-visible {
   outline-color: #ffffff;
+}
+
+/* Selector de tema: tres botones dentro de la banda, mismo material que Menú. */
+.theme-switch {
+  display: inline-flex;
+  gap: 2px;
+  margin-left: 10px;
+  padding: 2px;
+  border-radius: var(--radius);
+  background: rgb(255 255 255 / 0.12);
+}
+
+.theme-option {
+  display: inline-grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 4px;
+  color: rgb(255 255 255 / 0.72);
+  transition:
+    background-color 140ms ease,
+    color 140ms ease,
+    transform 140ms var(--ease-out);
+}
+
+.theme-option .icon {
+  width: 15px;
+  height: 15px;
+}
+
+.theme-option[aria-checked='true'] {
+  background: rgb(255 255 255 / 0.26);
+  color: #ffffff;
+}
+
+.theme-option:active {
+  transform: scale(0.94);
+}
+
+.theme-option:focus-visible {
+  outline-color: #ffffff;
+  outline-offset: 1px;
 }
 
 .band-chev {
@@ -479,6 +543,10 @@ button:disabled {
 /* ---------------------------------------------------------------- hover */
 
 @media (hover: hover) and (pointer: fine) {
+  .theme-option:hover:not([aria-checked='true']) {
+    background: rgb(255 255 255 / 0.14);
+    color: #ffffff;
+  }
   .band-menu:hover {
     background: rgb(255 255 255 / 0.2);
   }
@@ -508,6 +576,7 @@ button:disabled {
   }
   .row-btn:active:not(:disabled),
   .action:active:not(:disabled),
+  .theme-option:active,
   .band-menu:active {
     transform: none;
   }

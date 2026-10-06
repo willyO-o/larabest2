@@ -29,6 +29,16 @@ impl ActiveVersions {
     }
 }
 
+/// Tema de la interfaz. `System` sigue al de Windows.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ThemePreference {
+    #[default]
+    System,
+    Light,
+    Dark,
+}
+
 /// Extensiones que piden Laravel y WordPress; activas por defecto.
 pub const DEFAULT_PHP_EXTENSIONS: [&str; 10] = [
     "curl",
@@ -58,6 +68,7 @@ pub struct AppConfig {
     pub php_extensions: Option<Vec<String>>,
     /// Iniciar todos los servicios al abrir la app.
     pub auto_start: bool,
+    pub theme: ThemePreference,
 }
 
 impl Default for AppConfig {
@@ -71,6 +82,7 @@ impl Default for AppConfig {
             tld: "test".into(),
             php_extensions: None,
             auto_start: false,
+            theme: ThemePreference::System,
         }
     }
 }
@@ -112,6 +124,7 @@ mod tests {
         assert_eq!(cfg.php_ports(), vec![9000, 9001, 9002, 9003]);
         assert_eq!(cfg.php_extensions().len(), 10);
         assert!(!cfg.auto_start);
+        assert_eq!(cfg.theme, ThemePreference::System);
     }
 
     #[test]
@@ -119,5 +132,6 @@ mod tests {
         let json = serde_json::to_value(AppConfig::default()).unwrap();
         assert_eq!(json["httpPort"], 80);
         assert_eq!(json["phpBasePort"], 9000);
+        assert_eq!(json["theme"], "system");
     }
 }

@@ -8,7 +8,9 @@ use std::sync::Arc;
 
 use minijinja::context;
 
-use crate::domain::{slash, HostEntry, InstalledVersion, ServiceId, ServiceState, Site};
+use crate::domain::{
+    slash, HostEntry, InstalledVersion, ServiceId, ServiceState, Site, ThemePreference,
+};
 use crate::drivers::{nginx, templates};
 use crate::error::AppError;
 use crate::ports::{write_if_changed, HostsManager, ShellLauncher};
@@ -205,6 +207,22 @@ impl Core {
         let deps = self.supervisor.deps();
         let mut cfg = deps.config.load()?;
         cfg.auto_start = enabled;
+        deps.config.save(&cfg)
+    }
+
+    pub fn theme(&self) -> ThemePreference {
+        self.supervisor
+            .deps()
+            .config
+            .load()
+            .map(|c| c.theme)
+            .unwrap_or_default()
+    }
+
+    pub fn set_theme(&self, theme: ThemePreference) -> Result<(), AppError> {
+        let deps = self.supervisor.deps();
+        let mut cfg = deps.config.load()?;
+        cfg.theme = theme;
         deps.config.save(&cfg)
     }
 

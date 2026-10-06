@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use tauri::{AppHandle, State};
 use tauri_plugin_opener::OpenerExt;
 
-use crate::domain::{slash, InstalledVersion, ServiceId, ServiceStatus, Site};
+use crate::domain::{slash, InstalledVersion, ServiceId, ServiceStatus, Site, ThemePreference};
 use crate::error::AppError;
 use crate::{menu, settings, tray, AppState};
 
@@ -124,6 +124,7 @@ pub struct Settings {
     pub app_name: String,
     pub root: String,
     pub default_root: String,
+    pub theme: ThemePreference,
 }
 
 #[tauri::command]
@@ -135,7 +136,29 @@ pub async fn settings_get(
         app_name: state.core.supervisor.deps().app_name.clone(),
         root: slash(&state.core.root()),
         default_root: slash(&settings::default_root(&settings::app_name(&app))),
+        theme: state.core.theme(),
     })
+}
+
+/// Guarda el tema y lo aplica. La interfaz se entera por `settings:theme`.
+#[tauri::command]
+pub async fn settings_set_theme(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    theme: ThemePreference,
+) -> Result<(), AppError> {
+    state.core.set_theme(theme)?;
+    settings::apply_theme(&app, theme);
+    tray::rebuild(&app);
+    Ok(())
+}
+
+/// La interfaz ya pintó su primer cuadro: se muestra la ventana (se crea
+/// oculta para no parpadear con el tema equivocado).
+#[tauri::command]
+pub async fn app_ready(app: AppHandle) -> Result<(), AppError> {
+    tray::show_main(&app);
+    Ok(())
 }
 
 /// Elige otra carpeta raíz. Se aplica al reiniciar la app. Devuelve la

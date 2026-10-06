@@ -244,3 +244,14 @@ async fn auto_start_is_persisted() {
     core.set_auto_start(true).unwrap();
     assert!(core.auto_start());
 }
+
+#[tokio::test]
+async fn theme_is_persisted() {
+    use crate::domain::ThemePreference;
+    let h = Harness::new();
+    let core = h.core();
+    assert_eq!(core.theme(), ThemePreference::System);
+    core.set_theme(ThemePreference::Dark).unwrap();
+    assert_eq!(h.config.get().theme, ThemePreference::Dark);
+    assert_eq!(core.theme(), ThemePreference::Dark);
+}

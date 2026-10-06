@@ -114,6 +114,7 @@ Modo Operate: lo familiar es una virtud. Una sola familia tipográfica del siste
 - Tinta en tres pasos (`ink`, `ink-2`, `ink-3`) para nombre, datos y estado secundario.
 
 ### Named Rules
+- **Dos temas, una banda.** Los neutros y los colores de estado tienen versión clara y oscura; la banda conserva sus cinco colores en ambos temas porque comunica estado, no superficie.
 - **La banda es el semáforo.** La banda superior usa un color por estado de la pila: grafito detenido, ámbar iniciando o deteniendo, azul petróleo con parte en marcha, verde todo en marcha y rojo con un fallo. El texto siempre es blanco. No se usa para nada más.
 - **El estado nunca va solo en color.** Cada punto va acompañado de su palabra (en marcha, detenido, error) y la banda de su resumen ("Todo en marcha", "PHP con error").
 - **El rojo explica.** El fondo `bad-ground` solo aparece con el detalle de un fallo o el error de una acción, y siempre lleva la causa y cómo resolverla.
@@ -152,7 +153,10 @@ Radios pequeños y constantes: 6px en botones de fila y detalles, 8px en los bot
 - **Menú contextual nativo** en árbol: el mismo menú en clic derecho, botón Menú y bandeja (www, Nginx, PHP, MariaDB, Logs, Herramientas, Preferencias). Usa los controles del sistema: marcas de verificación para la versión activa, las extensiones y las preferencias.
 
 ### Banda de estado (componente propio)
-Marca, nombre, versión, resumen del estado alineado a la derecha y botón Menú translúcido. El LED de la marca repite el color del estado.
+Marca, nombre, versión, resumen del estado alineado a la derecha, selector de tema y botón Menú translúcido. El LED de la marca repite el color del estado.
+
+### Selector de tema
+Grupo de radio de tres botones de 26px con ícono (monitor, sol, luna) sobre el mismo material translúcido que Menú (`rgb(255 255 255 / 0.12)`); la opción activa sube a 0.26 con ícono blanco pleno. Las flechas izquierda/derecha cambian de opción. "Sistema" sigue a Windows; Claro y Oscuro fijan el tema de la página y de la barra de título. También está en Menú → Preferencias → Tema.
 
 ## Do's and Don'ts
 

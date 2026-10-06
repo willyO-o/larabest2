@@ -3,9 +3,9 @@
 
 use std::path::{Path, PathBuf};
 
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 
-use crate::domain::slash;
+use crate::domain::{slash, ThemePreference};
 use crate::error::AppError;
 
 const ROOT_FILE: &str = "root.txt";
@@ -49,6 +49,20 @@ pub fn load_root(app: &AppHandle) -> PathBuf {
         .filter(|s| !s.is_empty())
         .map(PathBuf::from)
         .unwrap_or_else(|| default_root(&app_name(app)))
+}
+
+/// Aplica el tema a todas las ventanas (barra de título de Windows y
+/// `prefers-color-scheme` del WebView) y avisa a la interfaz.
+pub fn apply_theme(app: &AppHandle, theme: ThemePreference) {
+    let native = match theme {
+        ThemePreference::System => None,
+        ThemePreference::Light => Some(tauri::Theme::Light),
+        ThemePreference::Dark => Some(tauri::Theme::Dark),
+    };
+    for window in app.webview_windows().values() {
+        let _ = window.set_theme(native);
+    }
+    let _ = app.emit("settings:theme", theme);
 }
 
 /// Abre el selector de carpeta y guarda la elegida. Devuelve `None` si se

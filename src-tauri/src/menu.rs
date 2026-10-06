@@ -8,7 +8,7 @@ use tauri::menu::{
 use tauri::{AppHandle, Manager, Wry};
 
 use crate::commands::{open_path, open_url};
-use crate::domain::{ServiceId, ServiceState};
+use crate::domain::{ServiceId, ServiceState, ThemePreference};
 use crate::error::AppError;
 use crate::usecases::ConfigTarget;
 use crate::{settings, tray, AppState};
@@ -207,7 +207,19 @@ pub fn build(app: &AppHandle, from_tray: bool) -> tauri::Result<Menu<Wry>> {
         text(app, "root", "Carpeta raíz")?,
     ];
 
+    let theme = core.theme();
+    let themes = vec![
+        check(
+            app,
+            "theme:system",
+            "Sistema",
+            theme == ThemePreference::System,
+        )?,
+        check(app, "theme:light", "Claro", theme == ThemePreference::Light)?,
+        check(app, "theme:dark", "Oscuro", theme == ThemePreference::Dark)?,
+    ];
     let prefs = vec![
+        Box::new(submenu(app, "Tema", themes)?) as Item,
         check(
             app,
             "auto_start",
@@ -292,6 +304,14 @@ async fn run(app: &AppHandle, id: &str) -> Result<(), AppError> {
             return Ok(());
         }
         _ => {}
+    }
+    if let Some(theme) = id.strip_prefix("theme:") {
+        let theme: ThemePreference =
+            serde_json::from_value(serde_json::Value::String(theme.into()))
+                .map_err(|_| AppError::InvalidInput(id.into()))?;
+        core.set_theme(theme)?;
+        settings::apply_theme(app, theme);
+        return Ok(());
     }
     if let Some(target) = id.strip_prefix("open:") {
         let target: ConfigTarget = serde_json::from_value(serde_json::Value::String(target.into()))

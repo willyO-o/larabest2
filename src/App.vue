@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { computed, onMounted } from 'vue'
+import { computed, onMounted, watchEffect } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import ActionBar from './components/ActionBar.vue'
 import AppIcon from './components/AppIcon.vue'
 import BrandMark from './components/BrandMark.vue'
 import ServiceRow from './components/ServiceRow.vue'
+import ThemeSwitch from './components/ThemeSwitch.vue'
 import { attempt, lastError } from './lib/errors'
 import { SERVICE_LABEL, useServicesStore } from './stores/services'
 import { useSettingsStore } from './stores/settings'
@@ -16,6 +17,14 @@ const settings = useSettingsStore()
 
 onMounted(async () => {
   await Promise.all([services.init(), sites.init(), settings.init()])
+  // La ventana se crea oculta: se muestra cuando ya está pintada con su tema.
+  requestAnimationFrame(() => attempt(() => invoke('app_ready')))
+})
+
+// El núcleo también cambia el tema nativo (barra de título y
+// prefers-color-scheme); el atributo asegura el mismo resultado en la página.
+watchEffect(() => {
+  document.documentElement.dataset.theme = settings.theme
 })
 
 /** Estado de toda la pila: colorea la banda superior. */
@@ -71,6 +80,7 @@ function openMenu(e?: MouseEvent) {
       <span class="band-name">{{ settings.settings?.appName ?? 'LARABEST' }}</span>
       <span v-if="settings.appVersion" class="band-version">{{ settings.appVersion }}</span>
       <span class="band-summary" role="status">{{ summary }}</span>
+      <ThemeSwitch />
       <button class="band-menu" aria-haspopup="menu" @click="openMenu($event)">
         Menú <AppIcon name="chevron" class="band-chev" />
       </button>

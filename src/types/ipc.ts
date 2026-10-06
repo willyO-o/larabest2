@@ -31,10 +31,13 @@ export interface InstalledVersion {
   path: string
 }
 
+export type ThemePreference = 'system' | 'light' | 'dark'
+
 export interface Settings {
   appName: string
   root: string
   defaultRoot: string
+  theme: ThemePreference
 }
 
 export type AppErrorKind =
@@ -60,4 +63,5 @@ export interface AppError {
 export const EVENTS = {
   serviceState: 'service:state',
   sitesChanged: 'sites:changed',
+  settingsTheme: 'settings:theme',
 } as const

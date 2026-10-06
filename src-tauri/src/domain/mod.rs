@@ -7,7 +7,7 @@ mod service;
 mod site;
 mod version;
 
-pub use config::{ActiveVersions, AppConfig, DEFAULT_PHP_EXTENSIONS};
+pub use config::{ActiveVersions, AppConfig, ThemePreference, DEFAULT_PHP_EXTENSIONS};
 pub use hosts::{decode_request, encode_request, merge_block, parse_block, HostEntry};
 pub use paths::{slash, Paths};
 pub use service::{

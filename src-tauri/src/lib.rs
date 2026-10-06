@@ -138,6 +138,20 @@ fn setup(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
         watcher: Mutex::new(None),
     });
     tray::create(app)?;
+    settings::apply_theme(app, core.theme());
+    // La ventana se crea oculta y la muestra la interfaz al pintar
+    // (`app_ready`). Por si la interfaz no llega a avisar, se muestra igual.
+    {
+        let app = app.clone();
+        tauri::async_runtime::spawn(async move {
+            tokio::time::sleep(Duration::from_secs(3)).await;
+            if let Some(window) = app.get_webview_window("main") {
+                if !window.is_visible().unwrap_or(true) {
+                    tray::show_main(&app);
+                }
+            }
+        });
+    }
 
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
@@ -211,6 +225,8 @@ pub fn run() {
             commands::settings_get,
             commands::settings_choose_root,
             commands::menu_popup,
+            commands::settings_set_theme,
+            commands::app_ready,
         ])
         .build(tauri::generate_context!())
         .expect("error al iniciar la aplicación");
