@@ -6,6 +6,8 @@ La interfaz sigue la estructura de Laragon (ventana compacta, una fila por servi
 
 **Fase 1:** iniciar y detener todos los servicios o uno a la vez, cambiar la versión de PHP, crear un sitio `.test` por carpeta, vivir en la bandeja del sistema, y los botones Web, Base de datos, Terminal y Raíz.
 
+**Fase 2:** crear un sitio en blanco, WordPress o Laravel con un clic, HTTPS opcional con una autoridad certificadora local, acceso a configuraciones y logs desde el menú, y tema Sistema/Claro/Oscuro.
+
 ## Menú contextual
 
 Clic derecho en cualquier parte de la ventana, el botón **Menú** o el ícono de la bandeja abren el mismo menú:
@@ -13,13 +15,13 @@ Clic derecho en cualquier parte de la ventana, el botón **Menú** o el ícono d
 | Menú | Contenido |
 | --- | --- |
 | Iniciar todo / Detener todo | según el estado |
-| www | un sitio por carpeta (abre `http://<carpeta>.test`), abrir la carpeta www, actualizar sitios y archivo hosts |
+| www | un sitio por carpeta (abre `http://<carpeta>.test`), **Crear sitio** (en blanco, WordPress, Laravel), abrir la carpeta www, actualizar sitios y archivo hosts |
 | Nginx | versión, recargar configuración, carpeta de configuración propia por sitio (`etc\nginx\custom\<sitio>.conf`), `nginx.conf` generado, logs |
 | PHP | versión, `php.ini` de ajustes propios, extensiones (marcar o desmarcar), `php.ini` generado, log de errores |
 | MariaDB | versión, `my.cnf` de ajustes propios, Adminer, `my.cnf` generado, carpeta de datos, log de errores |
 | Logs | errores y accesos de Nginx, errores de PHP y de MariaDB, carpeta de logs |
 | Herramientas | Web, Base de datos, Terminal, carpeta raíz |
-| Preferencias | iniciar todo al abrir, cambiar la carpeta raíz, abrir `app.json` |
+| Preferencias | tema (Sistema, Claro, Oscuro), iniciar todo al abrir, HTTPS para los sitios `.test`, carpeta de certificados, cambiar la carpeta raíz, abrir `app.json` |
 
 Lo generado (`etc\nginx\nginx.conf`, `etc\php\php.ini`, `etc\mariadb\my.cnf`) se regenera en cada inicio: ábrelo solo para consultarlo. Tus ajustes van en archivos que nunca se regeneran:
 
@@ -28,6 +30,28 @@ Lo generado (`etc\nginx\nginx.conf`, `etc\php\php.ini`, `etc\mariadb\my.cnf`) se
 - Nginx: `etc\nginx\custom\<sitio>.conf` (incluido dentro del `server` de ese sitio).
 
 Las extensiones marcadas en el menú se guardan en `app.json` y PHP se reinicia solo si estaba en marcha. Al cambiar de versión, se reinicia solo ese servicio.
+
+## Crear un sitio
+
+Botón **Nuevo sitio** en la línea de estado, o **Menú → www → Crear sitio**. Escribe el nombre de la carpeta (letras, números y guiones) y elige la plantilla:
+
+| Plantilla | Qué hace |
+| --- | --- |
+| En blanco | Crea `www\<nombre>\index.php` con una página de bienvenida. |
+| WordPress | Crea la base de datos `<nombre>` (con `-` cambiado por `_`), descarga WordPress en español desde `es.wordpress.org` la primera vez (queda en `tmp\downloads\` para los siguientes sitios), lo extrae y escribe `wp-config.php` con claves únicas. Al abrir el sitio aparece el instalador de WordPress en español. |
+| Laravel | Crea la base de datos, descarga `composer.phar` en `bin\composer\` si falta, ejecuta `composer create-project laravel/laravel <nombre>` con el PHP activo, configura `.env` para MariaDB (root sin contraseña) y ejecuta `php artisan migrate`. |
+
+MariaDB se inicia sola si hace falta. Si algo falla antes de terminar, la carpeta creada a medias se borra para poder reintentar; si solo fallan las migraciones de Laravel, el proyecto se conserva y se avisa. WordPress y Laravel necesitan internet (la primera descarga de WordPress y cada `composer create-project`).
+
+## HTTPS
+
+**Menú → Preferencias → HTTPS para los sitios .test**. La primera vez:
+
+1. La app crea una autoridad certificadora local (ECDSA P-256). Su clave privada se guarda en la carpeta de datos de tu usuario (`%LOCALAPPDATA%\com.soglotec.larabest\ca\`), no en `C:\LARABEST`, para que otros usuarios del equipo no puedan leerla.
+2. Windows muestra un aviso de seguridad para instalar el certificado raíz «LARABEST Local CA» solo para tu usuario (no hace falta ser administrador). Acéptalo; si lo cancelas, HTTPS no se activa.
+3. Cada sitio recibe su certificado en `etc\ssl\<sitio>.test.crt` y Nginx escucha también en el puerto 443. Los sitios siguen respondiendo por http.
+
+Chrome y Edge usan el almacén de Windows. Firefox lo usa si `security.enterprise_roots.enabled` está activo (lo está por defecto en Windows en versiones recientes). Desactivar HTTPS no desinstala el certificado raíz: se quita desde `certmgr.msc` → Entidades de certificación raíz de confianza.
 
 ## Carpeta de datos
 
@@ -60,7 +84,7 @@ En la fase 1 los binarios se descargan y copian a mano. Cada versión va en su p
 | PHP 8.4 | <https://windows.php.net/download/> | PHP 8.4 → **VS17 x64 Non Thread Safe** (zip) | `bin\php\8.4.x\` | `php-cgi.exe` |
 | MariaDB 11.4 | <https://mariadb.org/download/> | MariaDB Server 11.4 (LTS), *MS Windows (64-bit)*, tipo **ZIP file** | `bin\mariadb\11.4.x\` | `bin\mariadbd.exe` |
 | Adminer | <https://www.adminer.org/#download> | *Adminer for MySQL* (`adminer-x.y.z-mysql.php`) | `bin\adminer\` renombrado a **`adminer.php`** | `adminer.php` |
-| Composer (opcional) | <https://getcomposer.org/download/> | `composer.phar` | `bin\composer\composer.phar` | `composer.phar` |
+| Composer (opcional: se descarga solo al crear un sitio Laravel) | <https://getcomposer.org/download/> | `composer.phar` | `bin\composer\composer.phar` | `composer.phar` |
 
 Pasos:
 
@@ -151,6 +175,30 @@ Prepara `bin\` como se describe arriba y crea `www\blog\index.php` con `<?php ph
 - [ ] **Logs → PHP: errores** abre el log aunque esté vacío.
 - [ ] **Preferencias → Iniciar todo al abrir**: al cerrar y abrir la app, los servicios arrancan solos.
 - [ ] Con los servicios detenidos, la banda es gris; al iniciar pasa a ámbar y luego a verde; con un fallo, a rojo con el nombre del servicio.
+
+**Fase 2: crear sitios**
+
+- [ ] **Nuevo sitio → En blanco** con el nombre `demo`: aparece `www\demo\index.php`, el paso a paso termina en «Sitio listo» y **Abrir sitio** muestra la página de bienvenida.
+- [ ] Un nombre con espacios (`mi sitio`) o repetido se marca en rojo y **Crear sitio** queda deshabilitado.
+- [ ] **WordPress** con el nombre `blog-wp` y MariaDB detenido: MariaDB arranca solo, se crea la base `blog_wp` (verla en Adminer), se descarga WordPress y `http://blog-wp.test` abre el instalador en español sin pedir datos de la base.
+- [ ] Un segundo sitio WordPress no vuelve a descargar (paso «Usando la copia descargada de WordPress»).
+- [ ] **Laravel** con el nombre `tienda`: se descarga Composer si faltaba, `composer create-project` termina, `www\tienda\.env` tiene `DB_CONNECTION=mariadb` y `DB_DATABASE=tienda`, la base tiene las tablas de Laravel y `http://tienda.test` muestra la página de Laravel.
+- [ ] Sin internet, WordPress falla con un mensaje claro y no queda la carpeta a medias.
+- [ ] En la **Terminal**, `php -m` lista las mismas extensiones que `phpinfo()` (curl, openssl, pdo_mysql…) y `composer -V` funciona.
+
+**Fase 2: HTTPS**
+
+- [ ] **Preferencias → HTTPS**: Windows pide confirmar el certificado «LARABEST Local CA»; al aceptar, la línea de estado muestra «HTTPS» y `https://demo.test` abre en Chrome/Edge con candado y sin advertencias.
+- [ ] Si se cancela el aviso, aparece el error «HTTPS sigue desactivado…» y los sitios siguen en http.
+- [ ] Con HTTPS activo, un sitio nuevo abre directamente en `https://` y Adminer en `https://adminer.test`.
+- [ ] Con el puerto 443 ocupado (por ejemplo por IIS o Skype), Nginx queda en *Error* con «El puerto 443 está ocupado por …».
+- [ ] Al desactivar HTTPS, los vhosts dejan de escuchar en 443 y los sitios vuelven a http.
+
+**Tema**
+
+- [ ] Los botones monitor/sol/luna de la banda cambian entre Sistema, Claro y Oscuro, también la barra de título de Windows, y se mantienen al reiniciar la app.
+- [ ] Con «Sistema», al cambiar el tema de Windows (Configuración → Personalización → Colores) la app cambia sola.
+- [ ] Al abrir la app no hay un destello blanco antes de pintar en tema oscuro.
 
 **Salida**
 
