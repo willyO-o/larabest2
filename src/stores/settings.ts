@@ -13,14 +13,22 @@ export const useSettingsStore = defineStore('settings', () => {
 
   /** Tema elegido. Cambia solo cuando el núcleo lo confirma (`settings:theme`). */
   const theme = ref<ThemePreference>('system')
+  /** HTTPS activo para los sitios. Cambia con `settings:ssl`. */
+  const ssl = ref(false)
 
   async function init() {
     await listen<ThemePreference>(EVENTS.settingsTheme, (e) => {
       theme.value = e.payload
     })
+    await listen<boolean>(EVENTS.settingsSsl, (e) => {
+      ssl.value = e.payload
+    })
     appVersion.value = (await attempt(() => getVersion())) ?? ''
     settings.value = (await attempt(() => invoke<Settings>('settings_get'))) ?? null
-    if (settings.value) theme.value = settings.value.theme
+    if (settings.value) {
+      theme.value = settings.value.theme
+      ssl.value = settings.value.ssl
+    }
     await loadPhpVersions()
   }
 
@@ -43,6 +51,7 @@ export const useSettingsStore = defineStore('settings', () => {
     appVersion,
     phpVersions,
     theme,
+    ssl,
     init,
     setTheme,
     loadPhpVersions,

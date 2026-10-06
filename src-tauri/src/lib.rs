@@ -245,6 +245,8 @@ pub fn run() {
             commands::php_switch_version,
             commands::sites_list,
             commands::sites_sync,
+            commands::sites_create,
+            commands::settings_set_ssl,
             commands::shell_open_terminal,
             commands::shell_open_root,
             commands::shell_open_web,

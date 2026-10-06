@@ -55,6 +55,12 @@ typography:
     fontWeight: 700
     lineHeight: 1.35
     letterSpacing: "0.06em"
+  title:
+    fontFamily: "'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif"
+    fontSize: "15px"
+    fontWeight: 700
+    lineHeight: 1.35
+    letterSpacing: "normal"
   status:
     fontFamily: "'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif"
     fontSize: "12px"
@@ -137,6 +143,7 @@ Modo Operate: lo familiar es una virtud. Una sola familia tipográfica del siste
 Segoe UI Variable (la del sistema en Windows 10/11) en todos los textos; cifras tabulares globales para versiones y puertos.
 
 ### Hierarchy
+- Título de hoja (Nuevo sitio): 15px, 700.
 - Marca: 14px, 700, espaciado 0.06em.
 - Nombre de servicio: 14px, 600.
 - Texto base, datos y botones: 13px, 400 o 500.
@@ -167,6 +174,12 @@ Radios pequeños y constantes: 6px en botones de fila y detalles, 8px en los bot
 
 ### Banda de estado (componente propio)
 Marca, nombre, versión, resumen del estado alineado a la derecha, selector de tema y botón Menú translúcido. El LED de la marca repite el color del estado.
+
+### Hoja "Nuevo sitio"
+Se abre bajo la banda (la banda sigue visible y viva) como `<dialog>` nativo: Esc cierra salvo mientras se crea el sitio. Formulario: campo con vista previa de la URL (`www/<nombre> → https://<nombre>.test`) que pasa a rojo con el motivo si el nombre no sirve; control segmentado de tres plantillas con una línea que explica la elegida; Cancelar y Crear sitio abajo a la derecha. Durante la creación: lista de pasos con marca (punto ámbar que late = en curso, check verde = hecho, cruz roja = falló), aviso ámbar si terminó con advertencias y alerta roja con la causa si falló.
+
+### Control segmentado
+Pista `sunken` con 2px de relleno; la opción elegida es superficie con borde `line` de 1px, sin sombra. Flechas izquierda/derecha cambian de opción.
 
 ### Selector de tema
 Grupo de radio de tres botones de 26px con ícono (monitor, sol, luna) sobre el mismo material translúcido que Menú (`rgb(255 255 255 / 0.12)`); la opción activa sube a 0.26 con ícono blanco pleno. Las flechas izquierda/derecha cambian de opción. "Sistema" sigue a Windows; Claro y Oscuro fijan el tema de la página y de la barra de título. También está en Menú → Preferencias → Tema.

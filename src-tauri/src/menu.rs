@@ -5,7 +5,7 @@ use tauri::menu::{
     CheckMenuItem, IsMenuItem, Menu, MenuBuilder, MenuItem, PredefinedMenuItem, Submenu,
     SubmenuBuilder,
 };
-use tauri::{AppHandle, Manager, Wry};
+use tauri::{AppHandle, Emitter, Manager, Wry};
 
 use crate::commands::{open_path, open_url};
 use crate::domain::{ServiceId, ServiceState, ThemePreference};
@@ -114,6 +114,15 @@ pub fn build(app: &AppHandle, from_tray: bool) -> tauri::Result<Menu<Wry>> {
         www.push(text(app, &format!("site:{}", site.name), &site.domain)?);
     }
     www.push(sep(app)?);
+    www.push(Box::new(submenu(
+        app,
+        "Crear sitio",
+        vec![
+            text(app, "create:blank", "En blanco…")?,
+            text(app, "create:wordpress", "WordPress…")?,
+            text(app, "create:laravel", "Laravel…")?,
+        ],
+    )?));
     www.push(open(app, "www", "Abrir carpeta www")?);
     www.push(text(
         app,
@@ -226,6 +235,14 @@ pub fn build(app: &AppHandle, from_tray: bool) -> tauri::Result<Menu<Wry>> {
             "Iniciar todo al abrir",
             core.auto_start(),
         )?,
+        check(
+            app,
+            "ssl_toggle",
+            "HTTPS para los sitios .test",
+            core.ssl_enabled(),
+        )?,
+        open(app, "ssl", "Carpeta de certificados")?,
+        sep(app)?,
         text(app, "choose_root", "Cambiar carpeta raíz…")?,
         open(app, "appJson", "Abrir app.json")?,
     ];
@@ -294,6 +311,12 @@ async fn run(app: &AppHandle, id: &str) -> Result<(), AppError> {
         "nginx_reload" => return core.reload(ServiceId::Nginx).await,
         "hosts_sync" => return core.sync_sites().await.map(|_| ()),
         "auto_start" => return core.set_auto_start(!core.auto_start()),
+        "ssl_toggle" => {
+            let enabled = !core.ssl_enabled();
+            core.set_ssl(enabled).await?;
+            let _ = app.emit("settings:ssl", enabled);
+            return Ok(());
+        }
         "choose_root" => {
             if let Some(path) = settings::choose_root(app).await? {
                 tray::show_info(
@@ -304,6 +327,12 @@ async fn run(app: &AppHandle, id: &str) -> Result<(), AppError> {
             return Ok(());
         }
         _ => {}
+    }
+    if let Some(preset) = id.strip_prefix("create:") {
+        // El formulario vive en la ventana: se muestra y se le avisa.
+        tray::show_main(app);
+        let _ = app.emit("ui:create-site", preset);
+        return Ok(());
     }
     if let Some(theme) = id.strip_prefix("theme:") {
         let theme: ThemePreference =

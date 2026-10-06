@@ -25,6 +25,19 @@ export interface Site {
   inHosts: boolean
 }
 
+export type SitePreset = 'blank' | 'wordpress' | 'laravel'
+
+export type ProgressState = 'running' | 'done' | 'failed'
+
+/** Carga de `sites:progress` mientras se crea un sitio. */
+export interface SiteProgress {
+  name: string
+  preset: SitePreset
+  step: string
+  state: ProgressState
+  detail?: string
+}
+
 export interface InstalledVersion {
   service: ServiceId
   version: string
@@ -38,6 +51,7 @@ export interface Settings {
   root: string
   defaultRoot: string
   theme: ThemePreference
+  ssl: boolean
 }
 
 export type AppErrorKind =
@@ -64,4 +78,8 @@ export const EVENTS = {
   serviceState: 'service:state',
   sitesChanged: 'sites:changed',
   settingsTheme: 'settings:theme',
+  settingsSsl: 'settings:ssl',
+  sitesProgress: 'sites:progress',
+  /** El menú contextual pide abrir el formulario de sitio nuevo. */
+  uiCreateSite: 'ui:create-site',
 } as const

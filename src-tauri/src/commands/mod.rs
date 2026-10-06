@@ -3,10 +3,12 @@
 
 use std::path::PathBuf;
 
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Emitter, State};
 use tauri_plugin_opener::OpenerExt;
 
-use crate::domain::{slash, InstalledVersion, ServiceId, ServiceStatus, Site, ThemePreference};
+use crate::domain::{
+    slash, InstalledVersion, ServiceId, ServiceStatus, Site, SitePreset, ThemePreference,
+};
 use crate::error::AppError;
 use crate::{menu, settings, tray, AppState};
 
@@ -71,6 +73,16 @@ pub async fn sites_sync(state: State<'_, AppState>) -> Result<Vec<Site>, AppErro
     state.core.sync_sites().await
 }
 
+/// Crea un sitio con una plantilla. El progreso llega por `sites:progress`.
+#[tauri::command]
+pub async fn sites_create(
+    state: State<'_, AppState>,
+    name: String,
+    preset: SitePreset,
+) -> Result<Site, AppError> {
+    state.core.create_site(&name, preset).await
+}
+
 #[tauri::command]
 pub async fn shell_open_terminal(
     state: State<'_, AppState>,
@@ -125,6 +137,7 @@ pub struct Settings {
     pub root: String,
     pub default_root: String,
     pub theme: ThemePreference,
+    pub ssl: bool,
 }
 
 #[tauri::command]
@@ -137,7 +150,21 @@ pub async fn settings_get(
         root: slash(&state.core.root()),
         default_root: slash(&settings::default_root(&settings::app_name(&app))),
         theme: state.core.theme(),
+        ssl: state.core.ssl_enabled(),
     })
+}
+
+/// Activa o desactiva HTTPS. La interfaz se entera por `settings:ssl`.
+#[tauri::command]
+pub async fn settings_set_ssl(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    enabled: bool,
+) -> Result<(), AppError> {
+    state.core.set_ssl(enabled).await?;
+    let _ = app.emit("settings:ssl", enabled);
+    tray::rebuild(&app);
+    Ok(())
 }
 
 /// Guarda el tema y lo aplica. La interfaz se entera por `settings:theme`.

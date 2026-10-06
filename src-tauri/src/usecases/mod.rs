@@ -43,6 +43,7 @@ pub enum ConfigTarget {
     MariadbUserCnf,
     MariadbData,
     MariadbErrorLog,
+    Ssl,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
@@ -328,6 +329,10 @@ impl Core {
                 })
             }
             ConfigTarget::MariadbErrorLog => log("mariadb-error.log"),
+            ConfigTarget::Ssl => {
+                fs.create_dir_all(&paths.etc_ssl())?;
+                Ok(paths.etc_ssl())
+            }
         }
     }
 

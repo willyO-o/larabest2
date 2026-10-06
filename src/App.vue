@@ -4,6 +4,7 @@ import { invoke } from '@tauri-apps/api/core'
 import ActionBar from './components/ActionBar.vue'
 import AppIcon from './components/AppIcon.vue'
 import BrandMark from './components/BrandMark.vue'
+import CreateSitePanel from './components/CreateSitePanel.vue'
 import ServiceRow from './components/ServiceRow.vue'
 import ThemeSwitch from './components/ThemeSwitch.vue'
 import { attempt, lastError } from './lib/errors'
@@ -104,13 +105,22 @@ function openMenu(e?: MouseEvent) {
       <span class="statusline-root" :title="settings.settings?.root">{{ settings.settings?.root }}</span>
       <span class="statusline-sep" aria-hidden="true">·</span>
       <span>{{ sitesLabel }} en www</span>
+      <template v-if="settings.ssl">
+        <span class="statusline-sep" aria-hidden="true">·</span>
+        <span class="statusline-https"><AppIcon name="lock" />HTTPS</span>
+      </template>
       <template v-if="sites.missingHosts.length">
         <span class="statusline-sep" aria-hidden="true">·</span>
         <button class="statusline-warn" :disabled="sites.syncing" @click="sites.sync()">
           {{ sites.missingHosts.length }} sin archivo hosts, reintentar
         </button>
       </template>
-      <span class="statusline-hint">Clic derecho: más opciones</span>
+      <button class="statusline-new" @click="sites.openCreate()">
+        <AppIcon name="plus" />Nuevo sitio
+      </button>
+      <span v-if="!sites.missingHosts.length" class="statusline-hint">Clic derecho: menú</span>
     </footer>
+
+    <CreateSitePanel />
   </div>
 </template>
