@@ -155,6 +155,9 @@ impl ServiceDriver for NginxDriver {
                 app_name => ctx.app_name,
                 http_port => ctx.config.http_port,
                 php_ports => ctx.php_ports(),
+                // En Unix Nginx se va a segundo plano si no se le dice lo
+                // contrario; en Windows siempre queda en primer plano.
+                foreground => ctx.layout == BinaryLayout::Homebrew,
                 tmp => slash(&ctx.paths.tmp()),
                 logs => slash(&ctx.paths.logs()),
                 www => slash(&ctx.paths.www()),
@@ -246,6 +249,7 @@ mod tests {
         assert!(conf.contains("server 127.0.0.1:9003;\n    }"));
         assert!(conf.contains(r#"include "C:/APP/etc/nginx/sites/*.conf";"#));
         assert!(!conf.contains(r"C:\"));
+        assert!(!conf.contains("daemon"));
         assert!(f.fs.exists(Path::new("C:/APP/tmp/nginx/fastcgi")));
     }
 
@@ -277,6 +281,7 @@ mod tests {
         NginxDriver.render_config(&f.ctx).await.unwrap();
         let conf = f.fs.read("/Users/ana/LARABEST/etc/nginx/nginx.conf");
         assert!(conf.contains("upstream php_upstream {\n        server 127.0.0.1:9000;\n    }"));
+        assert!(conf.contains("\ndaemon off;\n"));
         let spec = &NginxDriver.start_specs(&f.ctx)[0];
         assert_eq!(
             slash(&spec.program),
