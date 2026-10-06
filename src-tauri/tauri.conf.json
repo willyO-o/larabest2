@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "APP_NAME",
+  "productName": "LARABEST",
   "version": "0.1.0",
-  "identifier": "com.soglotec.appname",
+  "identifier": "com.soglotec.larabest",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -13,9 +13,9 @@
     "windows": [
       {
         "label": "main",
-        "title": "APP_NAME",
-        "width": 440,
-        "height": 600,
+        "title": "LARABEST",
+        "width": 640,
+        "height": 380,
         "resizable": false,
         "maximizable": false,
         "center": true

@@ -71,12 +71,31 @@ impl Paths {
         self.etc_php().join("php.ini")
     }
 
+    /// Archivos `.ini` propios del usuario; PHP los carga con
+    /// `PHP_INI_SCAN_DIR` y nunca se regeneran.
+    pub fn php_custom(&self) -> PathBuf {
+        self.etc_php().join("custom")
+    }
+
+    pub fn php_user_ini(&self) -> PathBuf {
+        self.php_custom().join("user.ini")
+    }
+
     pub fn etc_mariadb(&self) -> PathBuf {
         self.etc().join("mariadb")
     }
 
     pub fn mariadb_cnf(&self) -> PathBuf {
         self.etc_mariadb().join("my.cnf")
+    }
+
+    /// Archivos `.cnf` propios del usuario (`!includedir`), nunca se regeneran.
+    pub fn mariadb_custom(&self) -> PathBuf {
+        self.etc_mariadb().join("custom")
+    }
+
+    pub fn mariadb_user_cnf(&self) -> PathBuf {
+        self.mariadb_custom().join("user.cnf")
     }
 
     /// Envoltorio generado que carga Adminer sin pedir contraseña.
@@ -125,8 +144,8 @@ impl Paths {
             self.www(),
             self.nginx_sites(),
             self.nginx_custom(),
-            self.etc_php(),
-            self.etc_mariadb(),
+            self.php_custom(),
+            self.mariadb_custom(),
             self.etc_ssl(),
             self.root.join("data"),
             self.logs(),

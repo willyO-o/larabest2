@@ -15,6 +15,34 @@ use crate::ports::{write_if_changed, HostsManager, ShellLauncher};
 use crate::supervisor::Supervisor;
 use sites::scan_sites;
 
+/// Configuraciones, carpetas y logs que se abren desde el menú.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ConfigTarget {
+    Root,
+    Www,
+    Logs,
+    AppJson,
+    NginxConf,
+    NginxCustom,
+    NginxErrorLog,
+    NginxAccessLog,
+    PhpIni,
+    PhpUserIni,
+    PhpErrorLog,
+    MariadbCnf,
+    MariadbUserCnf,
+    MariadbData,
+    MariadbErrorLog,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PhpExtension {
+    pub name: String,
+    pub enabled: bool,
+}
+
 pub struct Core {
     pub supervisor: Arc<Supervisor>,
     hosts: Arc<dyn HostsManager>,
@@ -72,35 +100,187 @@ impl Core {
     }
 
     pub fn php_versions(&self) -> Result<Vec<InstalledVersion>, AppError> {
-        self.supervisor
-            .deps()
-            .binaries
-            .list_installed(ServiceId::Php)
+        self.versions(ServiceId::Php)
+    }
+
+    pub fn versions(&self, id: ServiceId) -> Result<Vec<InstalledVersion>, AppError> {
+        self.supervisor.deps().binaries.list_installed(id)
     }
 
     /// Guarda la versión en `app.json`, regenera `php.ini` y reinicia solo
     /// PHP. Nginx no cambia: el upstream apunta siempre a los mismos puertos.
     pub async fn switch_php(&self, version: &str) -> Result<(), AppError> {
+        self.switch_version(ServiceId::Php, version).await
+    }
+
+    /// Cambia la versión activa de un servicio y reinicia solo ese servicio
+    /// si estaba en marcha.
+    pub async fn switch_version(&self, id: ServiceId, version: &str) -> Result<(), AppError> {
         let deps = self.supervisor.deps();
-        if !self.php_versions()?.iter().any(|v| v.version == version) {
+        if !self.versions(id)?.iter().any(|v| v.version == version) {
             return Err(AppError::NotFound(format!(
-                "La versión {version} de PHP no está en {}",
-                slash(&deps.paths.bin_service(ServiceId::Php))
+                "La versión {version} de {} no está en {}",
+                id.label(),
+                slash(&deps.paths.bin_service(id))
             )));
         }
         let mut cfg = deps.config.load()?;
-        cfg.versions.php = Some(version.to_string());
+        cfg.versions.set(id, Some(version.to_string()));
         deps.config.save(&cfg)?;
+        self.apply_config_change(id).await
+    }
 
-        if self.supervisor.state(ServiceId::Php) == ServiceState::Running {
-            self.supervisor.restart(ServiceId::Php).await?;
+    /// Tras cambiar `app.json`: reinicia el servicio si está en marcha o
+    /// solo regenera su configuración, y avisa a la interfaz.
+    async fn apply_config_change(&self, id: ServiceId) -> Result<(), AppError> {
+        if self.supervisor.state(id) == ServiceState::Running {
+            self.supervisor.restart(id).await?;
         } else {
-            self.supervisor.render(ServiceId::Php).await?;
+            match self.supervisor.render(id).await {
+                // Sin binarios todavía: la configuración se generará al instalarlos.
+                Ok(()) | Err(AppError::BinaryMissing { .. }) => {}
+                Err(e) => return Err(e),
+            }
             // Solo para que la fila muestre la versión nueva.
             self.supervisor.context()?;
-            self.supervisor.emit(ServiceId::Php);
+            self.supervisor.emit(id);
         }
         Ok(())
+    }
+
+    /// Extensiones disponibles en `ext/` de la versión activa de PHP, con
+    /// las activas marcadas. Incluye las activas que no se encuentren.
+    pub fn php_extensions(&self) -> Result<Vec<PhpExtension>, AppError> {
+        let deps = self.supervisor.deps();
+        let ctx = self.supervisor.context()?;
+        let enabled: BTreeSet<String> = ctx.config.php_extensions().into_iter().collect();
+        let mut names: BTreeSet<String> = enabled.clone();
+        if let Some(php) = ctx.versions.get(&ServiceId::Php) {
+            let ext_dir = PathBuf::from(&php.path).join("ext");
+            for file in deps.fs.list_files(&ext_dir).unwrap_or_default() {
+                let lower = file.to_ascii_lowercase();
+                if let Some(name) = lower
+                    .strip_prefix("php_")
+                    .and_then(|n| n.strip_suffix(".dll"))
+                {
+                    names.insert(name.to_string());
+                }
+            }
+        }
+        Ok(names
+            .into_iter()
+            .map(|name| PhpExtension {
+                enabled: enabled.contains(&name),
+                name,
+            })
+            .collect())
+    }
+
+    /// Activa o desactiva una extensión: se guarda en `app.json`, se
+    /// regenera `php.ini` y se reinicia PHP si está en marcha.
+    pub async fn set_php_extension(&self, name: &str, enabled: bool) -> Result<(), AppError> {
+        let deps = self.supervisor.deps();
+        let mut cfg = deps.config.load()?;
+        let mut list = cfg.php_extensions();
+        list.retain(|e| e != name);
+        if enabled {
+            list.push(name.to_string());
+            list.sort();
+        }
+        cfg.php_extensions = Some(list);
+        deps.config.save(&cfg)?;
+        self.apply_config_change(ServiceId::Php).await
+    }
+
+    pub fn auto_start(&self) -> bool {
+        self.supervisor
+            .deps()
+            .config
+            .load()
+            .map(|c| c.auto_start)
+            .unwrap_or(false)
+    }
+
+    pub fn set_auto_start(&self, enabled: bool) -> Result<(), AppError> {
+        let deps = self.supervisor.deps();
+        let mut cfg = deps.config.load()?;
+        cfg.auto_start = enabled;
+        deps.config.save(&cfg)
+    }
+
+    /// Ruta de una configuración, carpeta o log para abrirla desde el menú.
+    /// Los archivos propios del usuario se crean si no existen; los
+    /// generados se abren tal cual (se regeneran al iniciar).
+    pub fn config_target(&self, target: ConfigTarget) -> Result<PathBuf, AppError> {
+        let deps = self.supervisor.deps();
+        let paths = &deps.paths;
+        let fs = deps.fs.as_ref();
+        let generated = |path: PathBuf, id: ServiceId| {
+            if fs.exists(&path) {
+                Ok(path)
+            } else {
+                Err(AppError::NotFound(format!(
+                    "{} todavía no existe: se genera al iniciar {}.",
+                    slash(&path),
+                    id.label()
+                )))
+            }
+        };
+        let log = |name: &str| -> Result<PathBuf, AppError> {
+            let path = paths.logs().join(name);
+            if !fs.exists(&path) {
+                fs.write(&path, "")?;
+            }
+            Ok(path)
+        };
+        match target {
+            ConfigTarget::Root => Ok(paths.root().to_path_buf()),
+            ConfigTarget::Www => Ok(paths.www()),
+            ConfigTarget::Logs => Ok(paths.logs()),
+            ConfigTarget::AppJson => {
+                if !fs.exists(&paths.app_json()) {
+                    deps.config.save(&deps.config.load()?)?;
+                }
+                Ok(paths.app_json())
+            }
+            ConfigTarget::NginxConf => generated(paths.nginx_conf(), ServiceId::Nginx),
+            ConfigTarget::NginxCustom => {
+                fs.create_dir_all(&paths.nginx_custom())?;
+                Ok(paths.nginx_custom())
+            }
+            ConfigTarget::NginxErrorLog => log("nginx-error.log"),
+            ConfigTarget::NginxAccessLog => log("nginx-access.log"),
+            ConfigTarget::PhpIni => generated(paths.php_ini(), ServiceId::Php),
+            ConfigTarget::PhpUserIni => {
+                templates::ensure_user_file(
+                    fs,
+                    &paths.php_user_ini(),
+                    templates::USER_INI,
+                    &deps.app_name,
+                )?;
+                Ok(paths.php_user_ini())
+            }
+            ConfigTarget::PhpErrorLog => log("php-error.log"),
+            ConfigTarget::MariadbCnf => generated(paths.mariadb_cnf(), ServiceId::Mariadb),
+            ConfigTarget::MariadbUserCnf => {
+                templates::ensure_user_file(
+                    fs,
+                    &paths.mariadb_user_cnf(),
+                    templates::USER_CNF,
+                    &deps.app_name,
+                )?;
+                Ok(paths.mariadb_user_cnf())
+            }
+            ConfigTarget::MariadbData => {
+                let data = paths.data_mariadb();
+                Ok(if fs.exists(&data) {
+                    data
+                } else {
+                    paths.root().join("data")
+                })
+            }
+            ConfigTarget::MariadbErrorLog => log("mariadb-error.log"),
+        }
     }
 
     /// Sitios actuales con la marca de si ya están en el archivo hosts.

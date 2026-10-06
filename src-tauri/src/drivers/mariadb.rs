@@ -57,6 +57,12 @@ impl ServiceDriver for MariadbDriver {
         let install = ctx.install(ServiceId::Mariadb)?;
         let fs = ctx.fs.as_ref();
         fs.create_dir_all(&ctx.paths.logs())?;
+        templates::ensure_user_file(
+            fs,
+            &ctx.paths.mariadb_user_cnf(),
+            templates::USER_CNF,
+            &ctx.app_name,
+        )?;
         let cnf = templates::render(
             templates::MY_CNF,
             context! {
@@ -67,6 +73,7 @@ impl ServiceDriver for MariadbDriver {
                 port => ctx.config.mariadb_port,
                 logs => slash(&ctx.paths.logs()),
                 tmp => slash(&ctx.paths.tmp()),
+                custom_dir => slash(&ctx.paths.mariadb_custom()),
             },
         )?;
         write_if_changed(fs, &ctx.paths.mariadb_cnf(), &cnf)?;
@@ -161,6 +168,8 @@ mod tests {
         assert!(cnf.contains(r#"datadir = "C:/APP/data/mariadb""#));
         assert!(cnf.contains(r#"basedir = "C:/APP/bin/mariadb/11.4.5""#));
         assert!(cnf.contains("port = 3306\n"));
+        assert!(cnf.contains("!includedir C:/APP/etc/mariadb/custom\n"));
+        assert!(f.fs.exists(Path::new("C:/APP/etc/mariadb/custom/user.cnf")));
     }
 
     #[tokio::test]

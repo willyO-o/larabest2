@@ -8,20 +8,6 @@ use crate::domain::{slash, Health, ServiceId};
 use crate::error::AppError;
 use crate::ports::{write_if_changed, ProcessRunner, ProcessSpec};
 
-/// Extensiones que piden Laravel y WordPress.
-pub const EXTENSIONS: [&str; 10] = [
-    "curl",
-    "fileinfo",
-    "gd",
-    "intl",
-    "mbstring",
-    "openssl",
-    "pdo_mysql",
-    "mysqli",
-    "zip",
-    "exif",
-];
-
 pub struct PhpDriver;
 
 fn log_for_port(ctx: &RenderContext, port: u16) -> PathBuf {
@@ -51,6 +37,8 @@ fn cgi_specs(ctx: &RenderContext) -> Result<Vec<ProcessSpec>, AppError> {
                 .arg("-c")
                 .arg(&ini)
                 .env("PHP_FCGI_MAX_REQUESTS", "0")
+                // Carga además los .ini propios del usuario (no se regeneran).
+                .env("PHP_INI_SCAN_DIR", slash(&ctx.paths.php_custom()))
                 .log_to(log_for_port(ctx, port))
         })
         .collect())
@@ -90,6 +78,12 @@ impl ServiceDriver for PhpDriver {
         let fs = ctx.fs.as_ref();
         fs.create_dir_all(&ctx.paths.tmp().join("php").join("sessions"))?;
         fs.create_dir_all(&ctx.paths.logs())?;
+        templates::ensure_user_file(
+            fs,
+            &ctx.paths.php_user_ini(),
+            templates::USER_INI,
+            &ctx.app_name,
+        )?;
         let ini = templates::render(
             templates::PHP_INI,
             context! {
@@ -97,7 +91,7 @@ impl ServiceDriver for PhpDriver {
                 version => install.version,
                 logs => slash(&ctx.paths.logs()),
                 tmp => slash(&ctx.paths.tmp()),
-                extensions => EXTENSIONS,
+                extensions => ctx.config.php_extensions(),
             },
         )?;
         write_if_changed(fs, &ctx.paths.php_ini(), &ini)?;
@@ -151,11 +145,34 @@ mod tests {
         let ini = f.fs.read("C:/APP/etc/php/php.ini");
         assert!(ini.contains("PHP 8.4.6"));
         assert!(ini.contains("extension_dir = \"ext\"\n"));
-        for ext in EXTENSIONS {
+        for ext in crate::domain::DEFAULT_PHP_EXTENSIONS {
             assert!(ini.contains(&format!("\nextension={ext}\n")), "{ext}");
         }
         assert!(ini.contains(r#"session.save_path = "C:/APP/tmp/php/sessions""#));
         assert!(f.fs.exists(Path::new("C:/APP/tmp/php/sessions")));
+        assert!(f
+            .fs
+            .read("C:/APP/etc/php/custom/user.ini")
+            .contains("NO se regenera"));
+    }
+
+    #[tokio::test]
+    async fn user_ini_is_never_overwritten_and_extensions_follow_config() {
+        let mut f = fixture();
+        f.fs.write(
+            Path::new("C:/APP/etc/php/custom/user.ini"),
+            "memory_limit = 1G\n",
+        )
+        .unwrap();
+        f.ctx.config.php_extensions = Some(vec!["curl".into(), "sodium".into()]);
+        PhpDriver.render_config(&f.ctx).await.unwrap();
+        assert_eq!(
+            f.fs.read("C:/APP/etc/php/custom/user.ini"),
+            "memory_limit = 1G\n"
+        );
+        let ini = f.fs.read("C:/APP/etc/php/php.ini");
+        assert!(ini.contains("\nextension=sodium\n"));
+        assert!(!ini.contains("extension=gd"));
     }
 
     #[test]
@@ -175,7 +192,13 @@ mod tests {
         );
         assert_eq!(
             first.env,
-            vec![("PHP_FCGI_MAX_REQUESTS".to_string(), "0".to_string())]
+            vec![
+                ("PHP_FCGI_MAX_REQUESTS".to_string(), "0".to_string()),
+                (
+                    "PHP_INI_SCAN_DIR".to_string(),
+                    "C:/APP/etc/php/custom".to_string()
+                ),
+            ]
         );
         assert_eq!(specs[3].args[1], "127.0.0.1:9003");
         assert_eq!(

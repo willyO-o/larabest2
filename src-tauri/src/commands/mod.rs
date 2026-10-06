@@ -4,12 +4,11 @@
 use std::path::PathBuf;
 
 use tauri::{AppHandle, State};
-use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_opener::OpenerExt;
 
 use crate::domain::{slash, InstalledVersion, ServiceId, ServiceStatus, Site};
 use crate::error::AppError;
-use crate::{settings, tray, AppState};
+use crate::{menu, settings, tray, AppState};
 
 #[tauri::command]
 pub async fn services_start_all(state: State<'_, AppState>) -> Result<(), AppError> {
@@ -143,21 +142,24 @@ pub async fn settings_get(
 /// carpeta elegida, o `None` si se canceló.
 #[tauri::command]
 pub async fn settings_choose_root(app: AppHandle) -> Result<Option<String>, AppError> {
-    let (tx, rx) = tokio::sync::oneshot::channel();
-    app.dialog()
-        .file()
-        .set_title("Carpeta raíz")
-        .pick_folder(move |folder| {
-            let _ = tx.send(folder);
-        });
-    let Some(folder) = rx.await.ok().flatten() else {
-        return Ok(None);
+    settings::choose_root(&app).await
+}
+
+/// Abre el menú contextual nativo en la posición del cursor o, si se pasa,
+/// en `x`, `y` (píxeles lógicos de la ventana).
+#[tauri::command]
+pub async fn menu_popup(
+    app: AppHandle,
+    window: tauri::Window,
+    x: Option<f64>,
+    y: Option<f64>,
+) -> Result<(), AppError> {
+    let menu = menu::build(&app, false).map_err(|e| AppError::Process(e.to_string()))?;
+    let result = match (x, y) {
+        (Some(x), Some(y)) => window.popup_menu_at(&menu, tauri::LogicalPosition::new(x, y)),
+        _ => window.popup_menu(&menu),
     };
-    let path = folder
-        .into_path()
-        .map_err(|e| AppError::InvalidInput(e.to_string()))?;
-    settings::save_root(&app, &path)?;
-    Ok(Some(slash(&path)))
+    result.map_err(|e| AppError::Process(e.to_string()))
 }
 
 async fn find_site(state: &State<'_, AppState>, name: &str) -> Result<Site, AppError> {

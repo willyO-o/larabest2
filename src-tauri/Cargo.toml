@@ -1,5 +1,5 @@
 [package]
-name = "app-name"
+name = "larabest"
 version = "0.1.0"
 description = "Servidor local con Nginx, PHP y MariaDB"
 authors = ["SOGLOTEC"]

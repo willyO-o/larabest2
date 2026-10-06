@@ -1,0 +1,6 @@
+# Ajustes propios de MariaDB para {{ app_name }}.
+# Este archivo NO se regenera. Reinicia MariaDB para aplicar los cambios.
+#
+# [mysqld]
+# max_allowed_packet = 256M
+# innodb_buffer_pool_size = 512M

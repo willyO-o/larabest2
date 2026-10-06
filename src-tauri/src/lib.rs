@@ -3,6 +3,7 @@ pub mod commands;
 pub mod domain;
 pub mod drivers;
 pub mod error;
+pub mod menu;
 pub mod ports;
 pub mod settings;
 pub mod supervisor;
@@ -162,6 +163,9 @@ fn setup(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
             Err(e) => tray::show_error(&app, &e.to_string()),
         }
         tray::rebuild(&app);
+        if core.auto_start() {
+            let _ = core.start_all().await;
+        }
     });
     Ok(())
 }
@@ -178,6 +182,8 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| setup(app.handle()))
+        // Clics del menú contextual y de la bandeja.
+        .on_menu_event(|app, event| menu::handle(app, event.id().as_ref()))
         // Cerrar la ventana no es salir: se oculta en la bandeja.
         .on_window_event(|window, event| {
             if let WindowEvent::CloseRequested { api, .. } = event {
@@ -204,6 +210,7 @@ pub fn run() {
             commands::shell_open_site_folder,
             commands::settings_get,
             commands::settings_choose_root,
+            commands::menu_popup,
         ])
         .build(tauri::generate_context!())
         .expect("error al iniciar la aplicación");

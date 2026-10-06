@@ -29,6 +29,20 @@ impl ActiveVersions {
     }
 }
 
+/// Extensiones que piden Laravel y WordPress; activas por defecto.
+pub const DEFAULT_PHP_EXTENSIONS: [&str; 10] = [
+    "curl",
+    "fileinfo",
+    "gd",
+    "intl",
+    "mbstring",
+    "openssl",
+    "pdo_mysql",
+    "mysqli",
+    "zip",
+    "exif",
+];
+
 /// Contenido de `app.json`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -40,6 +54,10 @@ pub struct AppConfig {
     pub php_base_port: u16,
     pub php_processes: u16,
     pub tld: String,
+    /// Extensiones de PHP activas. `None` usa las que piden Laravel y WordPress.
+    pub php_extensions: Option<Vec<String>>,
+    /// Iniciar todos los servicios al abrir la app.
+    pub auto_start: bool,
 }
 
 impl Default for AppConfig {
@@ -51,6 +69,8 @@ impl Default for AppConfig {
             php_base_port: 9000,
             php_processes: 4,
             tld: "test".into(),
+            php_extensions: None,
+            auto_start: false,
         }
     }
 }
@@ -59,6 +79,16 @@ impl AppConfig {
     pub fn php_ports(&self) -> Vec<u16> {
         let count = self.php_processes.max(1);
         (0..count).map(|i| self.php_base_port + i).collect()
+    }
+
+    pub fn php_extensions(&self) -> Vec<String> {
+        match &self.php_extensions {
+            Some(list) => list.clone(),
+            None => DEFAULT_PHP_EXTENSIONS
+                .iter()
+                .map(|e| e.to_string())
+                .collect(),
+        }
     }
 
     pub fn port_of(&self, id: ServiceId) -> u16 {
@@ -80,6 +110,8 @@ mod tests {
         assert_eq!(cfg.versions.php.as_deref(), Some("8.3.20"));
         assert_eq!(cfg.http_port, 80);
         assert_eq!(cfg.php_ports(), vec![9000, 9001, 9002, 9003]);
+        assert_eq!(cfg.php_extensions().len(), 10);
+        assert!(!cfg.auto_start);
     }
 
     #[test]

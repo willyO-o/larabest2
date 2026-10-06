@@ -14,7 +14,7 @@ pub fn app_name(app: &AppHandle) -> String {
     app.config()
         .product_name
         .clone()
-        .unwrap_or_else(|| "APP_NAME".into())
+        .unwrap_or_else(|| "LARABEST".into())
 }
 
 /// `C:\<nombre de la app>` sin espacios ni símbolos.
@@ -24,7 +24,7 @@ pub fn default_root(app_name: &str) -> PathBuf {
         .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
         .collect();
     let folder = if folder.is_empty() {
-        "APP_NAME".into()
+        "LARABEST".into()
     } else {
         folder
     };
@@ -49,6 +49,27 @@ pub fn load_root(app: &AppHandle) -> PathBuf {
         .filter(|s| !s.is_empty())
         .map(PathBuf::from)
         .unwrap_or_else(|| default_root(&app_name(app)))
+}
+
+/// Abre el selector de carpeta y guarda la elegida. Devuelve `None` si se
+/// canceló.
+pub async fn choose_root(app: &AppHandle) -> Result<Option<String>, AppError> {
+    use tauri_plugin_dialog::DialogExt;
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.dialog()
+        .file()
+        .set_title("Carpeta raíz")
+        .pick_folder(move |folder| {
+            let _ = tx.send(folder);
+        });
+    let Some(folder) = rx.await.ok().flatten() else {
+        return Ok(None);
+    };
+    let path = folder
+        .into_path()
+        .map_err(|e| AppError::InvalidInput(e.to_string()))?;
+    save_root(app, &path)?;
+    Ok(Some(slash(&path)))
 }
 
 pub fn validate_root(path: &Path) -> Result<(), AppError> {
