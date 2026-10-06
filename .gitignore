@@ -1,0 +1,37 @@
+# Dependencias y builds de la interfaz
+node_modules/
+dist/
+dist-ssr/
+*.local
+*.tsbuildinfo
+
+# Rust / Tauri
+src-tauri/target/
+src-tauri/gen/schemas/
+
+# Carpeta de datos de la app si se prueba dentro del repo (bin/, www/, etc/, data/, logs/, tmp/, app.json)
+/bin/
+/www/
+/etc/
+/data/
+/logs/
+/tmp/
+/app.json
+
+# Logs y temporales
+*.log
+npm-debug.log*
+*.pid
+
+# Variables de entorno
+.env
+.env.*
+
+# Editores y sistema operativo
+.vscode/*
+!.vscode/extensions.json
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
