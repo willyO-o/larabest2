@@ -2,9 +2,13 @@
 //! programa. No tocan el sistema operativo: escriben por `FileStore` y
 //! devuelven `ProcessSpec` que lanza el supervisor.
 
+pub mod mailpit;
 pub mod mariadb;
+pub mod mongodb;
 pub mod nginx;
 pub mod php;
+pub mod postgresql;
+pub mod redis;
 pub mod templates;
 
 use std::collections::HashMap;
@@ -58,6 +62,15 @@ impl RenderContext {
             .join(program_subpath(self.layout, id, name)))
     }
 
+    /// `true` si el servicio forma parte de la pila: la base siempre; los
+    /// opcionales según Preferencias o, si no se eligió, si están instalados.
+    pub fn is_enabled(&self, id: ServiceId) -> bool {
+        self.config
+            .services
+            .get(id)
+            .unwrap_or_else(|| self.versions.contains_key(&id))
+    }
+
     /// Puertos FastCGI de PHP: uno por cada `php-cgi` en Windows; `php-fpm`
     /// reparte entre sus propios procesos y escucha en uno solo.
     pub fn php_ports(&self) -> Vec<u16> {
@@ -73,10 +86,14 @@ impl RenderContext {
 /// Homebrew todo va en `bin/`, salvo `php-fpm`, que va en `sbin/`.
 pub fn program_subpath(layout: BinaryLayout, id: ServiceId, name: &str) -> PathBuf {
     let dir = match (layout, id) {
-        (_, ServiceId::Mariadb) => Some("bin"),
-        (BinaryLayout::Portable, _) => None,
         (BinaryLayout::Homebrew, ServiceId::Php) if name == "php-fpm" => Some("sbin"),
         (BinaryLayout::Homebrew, _) => Some("bin"),
+        // Los zip de MariaDB, PostgreSQL y MongoDB traen todo en bin\.
+        (
+            BinaryLayout::Portable,
+            ServiceId::Mariadb | ServiceId::Postgresql | ServiceId::Mongodb,
+        ) => Some("bin"),
+        (BinaryLayout::Portable, _) => None,
     };
     // Homebrew solo existe en macOS: nunca lleva ".exe", aunque las pruebas
     // corran en Windows.
@@ -97,6 +114,10 @@ pub fn server_program(layout: BinaryLayout, id: ServiceId) -> &'static str {
         (ServiceId::Php, BinaryLayout::Portable) => "php-cgi",
         (ServiceId::Php, BinaryLayout::Homebrew) => "php-fpm",
         (ServiceId::Mariadb, _) => "mariadbd",
+        (ServiceId::Postgresql, _) => "postgres",
+        (ServiceId::Redis, _) => "redis-server",
+        (ServiceId::Mongodb, _) => "mongod",
+        (ServiceId::Mailpit, _) => "mailpit",
     }
 }
 
@@ -126,12 +147,16 @@ pub trait ServiceDriver: Send + Sync {
     }
 }
 
-/// Los tres drivers de la fase 1.
+/// Un driver por servicio.
 pub fn all() -> Vec<Arc<dyn ServiceDriver>> {
     vec![
         Arc::new(nginx::NginxDriver),
         Arc::new(php::PhpDriver),
         Arc::new(mariadb::MariadbDriver),
+        Arc::new(postgresql::PostgresqlDriver),
+        Arc::new(redis::RedisDriver),
+        Arc::new(mongodb::MongodbDriver),
+        Arc::new(mailpit::MailpitDriver),
     ]
 }
 

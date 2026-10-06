@@ -5,12 +5,24 @@ import { listen } from '@tauri-apps/api/event'
 import { attempt } from '../lib/errors'
 import { EVENTS, type ServiceId, type ServiceStatus } from '../types/ipc'
 
-export const SERVICE_ORDER: ServiceId[] = ['nginx', 'php', 'mariadb']
+export const SERVICE_ORDER: ServiceId[] = [
+  'nginx',
+  'php',
+  'mariadb',
+  'postgresql',
+  'redis',
+  'mongodb',
+  'mailpit',
+]
 
 export const SERVICE_LABEL: Record<ServiceId, string> = {
   nginx: 'Nginx',
   php: 'PHP',
   mariadb: 'MariaDB',
+  postgresql: 'PostgreSQL',
+  redis: 'Redis',
+  mongodb: 'MongoDB',
+  mailpit: 'Mailpit',
 }
 
 /**
@@ -30,8 +42,11 @@ export const useServicesStore = defineStore('services', () => {
     for (const s of snapshot ?? []) byId.value[s.id] = s
   }
 
+  /** Las filas: la pila activa y, por si acaso, cualquiera que siga en marcha. */
   const list = computed(() =>
-    SERVICE_ORDER.map((id) => byId.value[id]).filter((s): s is ServiceStatus => !!s),
+    SERVICE_ORDER.map((id) => byId.value[id]).filter(
+      (s): s is ServiceStatus => !!s && (s.enabled || s.state !== 'stopped'),
+    ),
   )
 
   const anyActive = computed(() =>

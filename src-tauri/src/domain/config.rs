@@ -9,22 +9,71 @@ pub struct ActiveVersions {
     pub nginx: Option<String>,
     pub php: Option<String>,
     pub mariadb: Option<String>,
+    pub postgresql: Option<String>,
+    pub redis: Option<String>,
+    pub mongodb: Option<String>,
+    pub mailpit: Option<String>,
 }
 
 impl ActiveVersions {
+    fn slot(&mut self, id: ServiceId) -> &mut Option<String> {
+        match id {
+            ServiceId::Nginx => &mut self.nginx,
+            ServiceId::Php => &mut self.php,
+            ServiceId::Mariadb => &mut self.mariadb,
+            ServiceId::Postgresql => &mut self.postgresql,
+            ServiceId::Redis => &mut self.redis,
+            ServiceId::Mongodb => &mut self.mongodb,
+            ServiceId::Mailpit => &mut self.mailpit,
+        }
+    }
+
     pub fn get(&self, id: ServiceId) -> Option<&str> {
         match id {
             ServiceId::Nginx => self.nginx.as_deref(),
             ServiceId::Php => self.php.as_deref(),
             ServiceId::Mariadb => self.mariadb.as_deref(),
+            ServiceId::Postgresql => self.postgresql.as_deref(),
+            ServiceId::Redis => self.redis.as_deref(),
+            ServiceId::Mongodb => self.mongodb.as_deref(),
+            ServiceId::Mailpit => self.mailpit.as_deref(),
         }
     }
 
     pub fn set(&mut self, id: ServiceId, version: Option<String>) {
+        *self.slot(id) = version;
+    }
+}
+
+/// Servicios opcionales elegidos en Preferencias. `None`: activo si está
+/// instalado, así lo recién instalado aparece solo.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct OptionalServices {
+    pub postgresql: Option<bool>,
+    pub redis: Option<bool>,
+    pub mongodb: Option<bool>,
+    pub mailpit: Option<bool>,
+}
+
+impl OptionalServices {
+    pub fn get(&self, id: ServiceId) -> Option<bool> {
         match id {
-            ServiceId::Nginx => self.nginx = version,
-            ServiceId::Php => self.php = version,
-            ServiceId::Mariadb => self.mariadb = version,
+            ServiceId::Postgresql => self.postgresql,
+            ServiceId::Redis => self.redis,
+            ServiceId::Mongodb => self.mongodb,
+            ServiceId::Mailpit => self.mailpit,
+            _ => Some(true),
+        }
+    }
+
+    pub fn set(&mut self, id: ServiceId, enabled: bool) {
+        match id {
+            ServiceId::Postgresql => self.postgresql = Some(enabled),
+            ServiceId::Redis => self.redis = Some(enabled),
+            ServiceId::Mongodb => self.mongodb = Some(enabled),
+            ServiceId::Mailpit => self.mailpit = Some(enabled),
+            _ => {}
         }
     }
 }
@@ -75,6 +124,14 @@ pub struct AppConfig {
     /// Servir los sitios también por HTTPS con la CA local.
     pub ssl: bool,
     pub https_port: u16,
+    pub services: OptionalServices,
+    pub postgresql_port: u16,
+    pub redis_port: u16,
+    pub mongodb_port: u16,
+    /// Mailpit recibe el correo por SMTP en este puerto...
+    pub mailpit_smtp_port: u16,
+    /// ...y lo muestra en la web en este.
+    pub mailpit_http_port: u16,
 }
 
 impl Default for AppConfig {
@@ -91,6 +148,12 @@ impl Default for AppConfig {
             theme: ThemePreference::System,
             ssl: false,
             https_port: 443,
+            services: OptionalServices::default(),
+            postgresql_port: 5432,
+            redis_port: 6379,
+            mongodb_port: 27017,
+            mailpit_smtp_port: 1025,
+            mailpit_http_port: 8025,
         }
     }
 }
@@ -116,6 +179,10 @@ impl AppConfig {
             ServiceId::Nginx => self.http_port,
             ServiceId::Php => self.php_base_port,
             ServiceId::Mariadb => self.mariadb_port,
+            ServiceId::Postgresql => self.postgresql_port,
+            ServiceId::Redis => self.redis_port,
+            ServiceId::Mongodb => self.mongodb_port,
+            ServiceId::Mailpit => self.mailpit_smtp_port,
         }
     }
 }
@@ -135,6 +202,22 @@ mod tests {
         assert_eq!(cfg.https_port, 443);
         assert!(!cfg.auto_start);
         assert_eq!(cfg.theme, ThemePreference::System);
+        assert_eq!(cfg.redis_port, 6379);
+        assert_eq!(cfg.services.get(ServiceId::Redis), None);
+        assert_eq!(cfg.services.get(ServiceId::Php), Some(true));
+    }
+
+    #[test]
+    fn optional_services_remember_the_choice() {
+        let mut cfg = AppConfig::default();
+        cfg.services.set(ServiceId::Mongodb, false);
+        cfg.versions.set(ServiceId::Mailpit, Some("1.27.0".into()));
+        let json = serde_json::to_value(&cfg).unwrap();
+        assert_eq!(json["services"]["mongodb"], false);
+        assert_eq!(json["versions"]["mailpit"], "1.27.0");
+        assert_eq!(json["mailpitHttpPort"], 8025);
+        let back: AppConfig = serde_json::from_value(json).unwrap();
+        assert_eq!(back.services.get(ServiceId::Mongodb), Some(false));
     }
 
     #[test]

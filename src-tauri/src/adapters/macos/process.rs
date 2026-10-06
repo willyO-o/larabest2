@@ -188,6 +188,14 @@ impl ProcessRunner for UnixProcessRunner {
         }
     }
 
+    fn interrupt(&self, pid: u32) -> bool {
+        if !self.is_alive(pid) {
+            return false;
+        }
+        signal_tree(pid, libc::SIGTERM);
+        true
+    }
+
     fn is_alive(&self, pid: u32) -> bool {
         if let Some(child) = self.children.lock().unwrap().get_mut(&pid) {
             return matches!(child.try_wait(), Ok(None));

@@ -6,10 +6,36 @@ pub enum ServiceId {
     Nginx,
     Php,
     Mariadb,
+    Postgresql,
+    Redis,
+    Mongodb,
+    Mailpit,
 }
 
 impl ServiceId {
-    pub const ALL: [ServiceId; 3] = [ServiceId::Nginx, ServiceId::Php, ServiceId::Mariadb];
+    /// En el orden en que se muestran.
+    pub const ALL: [ServiceId; 7] = [
+        ServiceId::Nginx,
+        ServiceId::Php,
+        ServiceId::Mariadb,
+        ServiceId::Postgresql,
+        ServiceId::Redis,
+        ServiceId::Mongodb,
+        ServiceId::Mailpit,
+    ];
+
+    /// Los que se pueden activar o no. Los demás forman la pila base y
+    /// siempre están activos.
+    pub const OPTIONAL: [ServiceId; 4] = [
+        ServiceId::Postgresql,
+        ServiceId::Redis,
+        ServiceId::Mongodb,
+        ServiceId::Mailpit,
+    ];
+
+    pub fn is_optional(self) -> bool {
+        Self::OPTIONAL.contains(&self)
+    }
 
     /// Nombre de la carpeta dentro de `bin/` y de los archivos en `tmp/`.
     pub fn key(self) -> &'static str {
@@ -17,6 +43,10 @@ impl ServiceId {
             ServiceId::Nginx => "nginx",
             ServiceId::Php => "php",
             ServiceId::Mariadb => "mariadb",
+            ServiceId::Postgresql => "postgresql",
+            ServiceId::Redis => "redis",
+            ServiceId::Mongodb => "mongodb",
+            ServiceId::Mailpit => "mailpit",
         }
     }
 
@@ -26,6 +56,10 @@ impl ServiceId {
             ServiceId::Nginx => "Nginx",
             ServiceId::Php => "PHP",
             ServiceId::Mariadb => "MariaDB",
+            ServiceId::Postgresql => "PostgreSQL",
+            ServiceId::Redis => "Redis",
+            ServiceId::Mongodb => "MongoDB",
+            ServiceId::Mailpit => "Mailpit",
         }
     }
 }
@@ -60,7 +94,13 @@ pub struct ServiceStatus {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
     pub version: Option<String>,
+    /// Puerto principal.
     pub port: u16,
+    /// Todos los puertos que usa (PHP en Windows usa varios; Mailpit, SMTP
+    /// y web).
+    pub ports: Vec<u16>,
+    /// Forma parte de la pila: se muestra y "Iniciar todo" lo arranca.
+    pub enabled: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -101,6 +141,8 @@ mod tests {
             detail: None,
             version: Some("11.4.5".into()),
             port: 3306,
+            ports: vec![3306],
+            enabled: true,
         };
         let json = serde_json::to_value(&status).unwrap();
         assert_eq!(json["id"], "mariadb");

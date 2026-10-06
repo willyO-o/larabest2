@@ -673,7 +673,7 @@ async fn homebrew_has_no_extension_toggles_and_explains_missing_versions() {
 async fn homebrew_start_all_runs_fpm_once() {
     let h = Harness::homebrew();
     h.core().start_all().await.unwrap();
-    for id in ServiceId::ALL {
+    for id in [ServiceId::Nginx, ServiceId::Php, ServiceId::Mariadb] {
         assert_eq!(h.supervisor.state(id), ServiceState::Running, "{id:?}");
     }
     let spawned = h.runner.spawned();
@@ -686,4 +686,116 @@ async fn homebrew_start_all_runs_fpm_once() {
         .fs
         .read(&format!("{MAC_ROOT}/etc/nginx/nginx.conf"))
         .contains("server 127.0.0.1:9000;\n    }"));
+}
+
+// ---------------------------------------------------------------- servicios opcionales
+
+#[tokio::test]
+async fn disabling_a_running_optional_service_stops_it() {
+    let h = Harness::new();
+    h.binaries.add(ROOT, ServiceId::Mongodb, "8.0.13");
+    h.ports.set_listening(&[80, 9000, 9001, 9002, 9003, 27017]);
+    let core = h.core();
+    assert!(
+        core.service_enabled(ServiceId::Mongodb),
+        "instalado: activo"
+    );
+    assert!(!core.service_enabled(ServiceId::Redis), "sin instalar");
+    core.start(ServiceId::Mongodb).await.unwrap();
+    assert_eq!(
+        h.supervisor.state(ServiceId::Mongodb),
+        ServiceState::Running
+    );
+
+    core.set_service_enabled(ServiceId::Mongodb, false)
+        .await
+        .unwrap();
+    assert_eq!(
+        h.supervisor.state(ServiceId::Mongodb),
+        ServiceState::Stopped
+    );
+    assert!(!core.service_enabled(ServiceId::Mongodb));
+    let last = h.events.last_of(ServiceId::Mongodb).unwrap();
+    assert!(!last.enabled);
+    assert_eq!(h.config.get().services.mongodb, Some(false));
+
+    let err = core
+        .set_service_enabled(ServiceId::Php, false)
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("siempre forma parte"));
+}
+
+#[tokio::test]
+async fn adminer_opens_mariadb_or_postgresql_without_password() {
+    let h = Harness::new();
+    h.fs.write(
+        Path::new(&format!("{ROOT}/bin/adminer/adminer.php")),
+        "<?php",
+    )
+    .unwrap();
+    let core = h.core();
+    core.start(ServiceId::Nginx).await.unwrap();
+    assert_eq!(
+        core.adminer_url(ServiceId::Postgresql).unwrap(),
+        "http://adminer.test/?pgsql=127.0.0.1:5432&username=postgres"
+    );
+    assert_eq!(
+        core.database_url().unwrap(),
+        "http://adminer.test/?server=127.0.0.1:3306&username=root"
+    );
+}
+
+#[tokio::test]
+async fn mailpit_url_needs_it_running() {
+    let h = Harness::new();
+    h.binaries.add(ROOT, ServiceId::Mailpit, "1.27.7");
+    h.ports.set_listening(&[1025, 8025]);
+    let core = h.core();
+    assert!(core.mailpit_url().is_err());
+    core.start(ServiceId::Mailpit).await.unwrap();
+    assert_eq!(core.mailpit_url().unwrap(), "http://127.0.0.1:8025/");
+}
+
+#[tokio::test]
+async fn laravel_sends_mail_to_mailpit_and_uses_local_redis() {
+    let h = Harness::new();
+    h.binaries.add(ROOT, ServiceId::Mailpit, "1.27.7");
+    h.binaries.add(ROOT, ServiceId::Redis, "7.4.2");
+    fake_laravel(&h, true);
+    h.core()
+        .create_site("tienda", SitePreset::Laravel)
+        .await
+        .unwrap();
+    let env = h.fs.read(&format!("{ROOT}/www/tienda/.env"));
+    for line in [
+        "MAIL_MAILER=smtp",
+        "MAIL_HOST=127.0.0.1",
+        "MAIL_PORT=1025",
+        "REDIS_PORT=6379",
+    ] {
+        assert!(env.contains(line), "{line}\n{env}");
+    }
+}
+
+#[tokio::test]
+async fn optional_service_files_open_from_the_menu() {
+    use crate::usecases::ConfigTarget;
+    let h = Harness::new();
+    let core = h.core();
+    let path = core.config_target(ConfigTarget::RedisUserConf).unwrap();
+    assert!(h
+        .fs
+        .read(&crate::domain::slash(&path))
+        .contains("NO se regenera"));
+    assert!(core.config_target(ConfigTarget::RedisConf).is_err());
+    let err = core
+        .config_target(ConfigTarget::PostgresqlConf)
+        .unwrap_err();
+    assert!(err.to_string().contains("al iniciar PostgreSQL"));
+    assert_eq!(
+        crate::domain::slash(&core.config_target(ConfigTarget::MongodbData).unwrap()),
+        format!("{ROOT}/data")
+    );
+    assert!(core.config_target(ConfigTarget::MailpitLog).is_ok());
 }

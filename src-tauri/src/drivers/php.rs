@@ -127,6 +127,16 @@ impl ServiceDriver for PhpDriver {
         )?;
         // Homebrew compila las extensiones dentro de PHP: no hay `ext/`.
         let portable = ctx.layout == BinaryLayout::Portable;
+        // mail(): en Windows va por SMTP al puerto de Mailpit; en macOS por
+        // el `sendmail` de Mailpit, si está instalado.
+        let mailpit = ctx
+            .is_enabled(ServiceId::Mailpit)
+            .then(|| ctx.program(ServiceId::Mailpit, "mailpit").ok())
+            .flatten();
+        let smtp_port = ctx.config.mailpit_smtp_port;
+        let sendmail = (!portable)
+            .then(|| mailpit.map(|m| format!("{} sendmail -S 127.0.0.1:{smtp_port}", slash(&m))))
+            .flatten();
         let ini = templates::render(
             templates::PHP_INI,
             context! {
@@ -138,6 +148,8 @@ impl ServiceDriver for PhpDriver {
                 logs => slash(&ctx.paths.logs()),
                 tmp => slash(&ctx.paths.tmp()),
                 extensions => ctx.config.php_extensions(),
+                sendmail => sendmail,
+                smtp_port => portable.then_some(smtp_port),
             },
         )?;
         write_if_changed(fs, &ctx.paths.php_ini(), &ini)?;
@@ -306,9 +318,9 @@ mod tests {
             !ini.contains("extension=") && !ini.contains("extension_dir"),
             "{ini}"
         );
-        assert!(
-            ini.contains("; Las extensiones vienen compiladas en el PHP de Homebrew.\n\n[Session]")
-        );
+        assert!(ini.contains(
+            "; Las extensiones vienen compiladas en el PHP de Homebrew.\n\n[mail function]"
+        ));
         let fpm = f.fs.read("/Users/ana/LARABEST/etc/php/php-fpm.conf");
         assert!(fpm.contains("PHP 8.4.13"));
         assert!(fpm.contains("listen = 127.0.0.1:9000\n"));
@@ -316,6 +328,35 @@ mod tests {
         assert!(fpm.contains(r#"pid = "/Users/ana/LARABEST/tmp/php-fpm.pid""#));
         assert!(fpm.contains(r#"error_log = "/Users/ana/LARABEST/logs/php-fpm.log""#));
         assert!(!fpm.contains("user ="), "sin root no se cambia de usuario");
+    }
+
+    #[tokio::test]
+    async fn mail_goes_to_mailpit() {
+        let f = fixture();
+        PhpDriver.render_config(&f.ctx).await.unwrap();
+        let ini = f.fs.read("C:/APP/etc/php/php.ini");
+        assert!(ini.contains("[mail function]\n; El correo de mail() va a Mailpit (Windows envía por SMTP).\nSMTP = 127.0.0.1\nsmtp_port = 1025\n"));
+
+        let mut f = homebrew_fixture();
+        PhpDriver.render_config(&f.ctx).await.unwrap();
+        let ini = f.fs.read("/Users/ana/LARABEST/etc/php/php.ini");
+        assert!(
+            ini.contains("[mail function]\n\n[Session]"),
+            "sin Mailpit, el sendmail del sistema"
+        );
+        f.ctx.versions.insert(
+            ServiceId::Mailpit,
+            crate::domain::InstalledVersion {
+                service: ServiceId::Mailpit,
+                version: "1.27.7".into(),
+                path: "/opt/homebrew/Cellar/mailpit/1.27.7".into(),
+            },
+        );
+        PhpDriver.render_config(&f.ctx).await.unwrap();
+        let ini = f.fs.read("/Users/ana/LARABEST/etc/php/php.ini");
+        assert!(ini.contains(
+            "sendmail_path = \"/opt/homebrew/Cellar/mailpit/1.27.7/bin/mailpit sendmail -S 127.0.0.1:1025\"\n"
+        ));
     }
 
     #[test]

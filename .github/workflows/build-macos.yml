@@ -29,8 +29,9 @@ jobs:
           name: instalador-macos
           path: src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
 
-  # Nginx, PHP-FPM y MariaDB reales de Homebrew: arranque, sitios, WordPress,
-  # Laravel, Adminer, HTTPS, cambio de PHP y limpieza de huérfanos.
+  # Los servicios reales de Homebrew: arranque, sitios, WordPress, Laravel,
+  # Adminer, PostgreSQL, correo a Mailpit, HTTPS, cambio de PHP y limpieza de
+  # huérfanos.
   servicios:
     runs-on: macos-latest
     env:
@@ -43,7 +44,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
-      - run: brew install nginx php@8.3 php@8.4 mariadb@11.4
+      - run: >-
+          brew install nginx php@8.3 php@8.4 mariadb@11.4 postgresql@17 redis
+          mailpit mongodb/brew/mongodb-community
       - run: cargo test --manifest-path src-tauri/Cargo.toml --lib -- --ignored --nocapture e2e_homebrew
         env:
           LARABEST_E2E_ROOT: ${{ runner.temp }}/larabest-e2e

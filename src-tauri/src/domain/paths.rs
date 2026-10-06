@@ -141,7 +141,42 @@ impl Paths {
     }
 
     pub fn data_mariadb(&self) -> PathBuf {
-        self.root.join("data").join("mariadb")
+        self.data(ServiceId::Mariadb)
+    }
+
+    /// Datos de un servicio: `data/<servicio>`.
+    pub fn data(&self, id: ServiceId) -> PathBuf {
+        self.root.join("data").join(id.key())
+    }
+
+    /// Configuración generada de un servicio: `etc/<servicio>`.
+    pub fn etc_service(&self, id: ServiceId) -> PathBuf {
+        self.etc().join(id.key())
+    }
+
+    pub fn redis_conf(&self) -> PathBuf {
+        self.etc_service(ServiceId::Redis).join("redis.conf")
+    }
+
+    /// Ajustes propios de Redis (incluidos al final de `redis.conf`).
+    pub fn redis_user_conf(&self) -> PathBuf {
+        self.etc_service(ServiceId::Redis)
+            .join("custom")
+            .join("user.conf")
+    }
+
+    pub fn mongodb_conf(&self) -> PathBuf {
+        self.etc_service(ServiceId::Mongodb).join("mongod.conf")
+    }
+
+    /// `postgresql.conf` lo crea `initdb` en los datos y es del usuario: la
+    /// app solo fija puerto y direcciones por línea de comandos.
+    pub fn postgresql_conf(&self) -> PathBuf {
+        self.data(ServiceId::Postgresql).join("postgresql.conf")
+    }
+
+    pub fn postgresql_hba(&self) -> PathBuf {
+        self.data(ServiceId::Postgresql).join("pg_hba.conf")
     }
 
     pub fn logs(&self) -> PathBuf {
@@ -163,10 +198,11 @@ impl Paths {
     /// Carpetas que deben existir siempre. `data/mariadb` no está: la crea
     /// `mariadb-install-db`, que exige que no exista o esté vacía.
     pub fn layout_dirs(&self) -> Vec<PathBuf> {
-        let mut dirs = vec![
-            self.bin_service(ServiceId::Nginx),
-            self.bin_service(ServiceId::Php),
-            self.bin_service(ServiceId::Mariadb),
+        let mut dirs: Vec<PathBuf> = ServiceId::ALL
+            .iter()
+            .map(|&id| self.bin_service(id))
+            .collect();
+        dirs.extend([
             self.bin_adminer(),
             self.bin_composer(),
             self.www(),
@@ -174,11 +210,15 @@ impl Paths {
             self.nginx_custom(),
             self.php_custom(),
             self.mariadb_custom(),
+            self.redis_user_conf()
+                .parent()
+                .expect("custom/")
+                .to_path_buf(),
             self.etc_ssl(),
             self.root.join("data"),
             self.logs(),
             self.tmp(),
-        ];
+        ]);
         dirs.sort();
         dirs
     }

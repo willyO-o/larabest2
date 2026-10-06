@@ -22,9 +22,17 @@ const busy = computed(
     props.status.state === 'stopping',
 )
 const isUp = computed(() => props.status.state === 'running')
-const port = computed(() =>
-  props.status.id === 'php' ? `${props.status.port}–${props.status.port + 3}` : `${props.status.port}`,
-)
+
+/** "puertos 9000–9003" si son seguidos (php-cgi), "puertos 1025/8025" si no. */
+const port = computed(() => {
+  const ports = [...(props.status.ports.length ? props.status.ports : [props.status.port])].sort(
+    (a, b) => a - b,
+  )
+  const word = ports.length > 1 ? 'puertos' : 'puerto'
+  const consecutive = ports.every((p, i) => i === 0 || p === ports[i - 1] + 1)
+  if (ports.length > 2 && consecutive) return `${word} ${ports[0]}–${ports[ports.length - 1]}`
+  return `${word} ${ports.join('/')}`
+})
 
 function toggle() {
   if (isUp.value) services.stop(props.status.id)
@@ -37,7 +45,7 @@ function toggle() {
     <span class="dot" aria-hidden="true" />
     <span class="service-name">{{ SERVICE_LABEL[status.id] }}</span>
     <span class="service-version">{{ status.version ?? 'sin instalar' }}</span>
-    <span class="service-port">puerto {{ port }}</span>
+    <span class="service-port" :title="port">{{ port }}</span>
     <span class="service-state">{{ STATE_LABEL[status.state] }}</span>
     <span class="service-actions">
       <button

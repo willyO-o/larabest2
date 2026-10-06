@@ -299,6 +299,7 @@ pub fn run() {
             commands::menu_popup,
             commands::settings_set_theme,
             commands::app_ready,
+            commands::window_fit,
         ])
         .build(tauri::generate_context!())
         .expect("error al iniciar la aplicación");

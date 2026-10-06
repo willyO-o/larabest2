@@ -13,6 +13,10 @@ use std::time::Duration;
 use async_trait::async_trait;
 use win32job::{ExtendedLimitInfo, Job};
 use windows_sys::Win32::Foundation::{CloseHandle, STILL_ACTIVE};
+use windows_sys::Win32::System::Console::{
+    AttachConsole, FreeConsole, GenerateConsoleCtrlEvent, SetConsoleCtrlHandler,
+    ATTACH_PARENT_PROCESS, CTRL_C_EVENT,
+};
 use windows_sys::Win32::System::Threading::{
     GetExitCodeProcess, OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
     PROCESS_QUERY_LIMITED_INFORMATION,
@@ -101,6 +105,36 @@ fn with_process<T>(pid: u32, f: impl FnOnce(*mut core::ffi::c_void) -> T) -> Opt
     Some(out)
 }
 
+/// Solo una consola a la vez: la app se conecta a la del proceso al que
+/// le manda Ctrl+C. También se toma al lanzar procesos, para que ninguno
+/// herede el "ignorar Ctrl+C" que la app activa un instante.
+static CONSOLE: Mutex<()> = Mutex::new(());
+
+/// Ctrl+C a un proceso de consola sin ventana: la app se conecta a su
+/// consola oculta, manda el evento a esa consola (la app lo ignora) y se
+/// desconecta. MongoDB, Redis y Mailpit lo atienden y cierran en orden.
+fn send_ctrl_c(pid: u32) -> bool {
+    let _guard = CONSOLE.lock().unwrap_or_else(|e| e.into_inner());
+    // SAFETY: llamadas de consola sin punteros. Al final la app vuelve a la
+    // consola de su padre si la tenía (solo en desarrollo y en pruebas).
+    unsafe {
+        FreeConsole();
+        if AttachConsole(pid) == 0 {
+            AttachConsole(ATTACH_PARENT_PROCESS);
+            return false;
+        }
+        SetConsoleCtrlHandler(None, 1);
+        let sent = GenerateConsoleCtrlEvent(CTRL_C_EVENT, 0) != 0;
+        // El evento llega en un hilo del proceso destino: se le da un
+        // momento antes de soltar su consola.
+        std::thread::sleep(Duration::from_millis(100));
+        FreeConsole();
+        SetConsoleCtrlHandler(None, 0);
+        AttachConsole(ATTACH_PARENT_PROCESS);
+        sent
+    }
+}
+
 fn os_is_alive(pid: u32) -> bool {
     with_process(pid, |h| {
         let mut code = 0u32;
@@ -151,7 +185,10 @@ impl ProcessRunner for WindowsProcessRunner {
                 cmd.stdout(Stdio::null()).stderr(Stdio::null());
             }
         }
-        let child = cmd.spawn().map_err(|e| spawn_error(spec, e))?;
+        let child = {
+            let _console = CONSOLE.lock().unwrap_or_else(|e| e.into_inner());
+            cmd.spawn().map_err(|e| spawn_error(spec, e))?
+        };
         if let Some(job) = &self.job {
             // Si falla, el proceso sigue funcionando; solo se pierde el
             // cierre automático si la app muere de golpe.
@@ -223,6 +260,10 @@ impl ProcessRunner for WindowsProcessRunner {
         }
     }
 
+    fn interrupt(&self, pid: u32) -> bool {
+        self.is_alive(pid) && send_ctrl_c(pid)
+    }
+
     fn is_alive(&self, pid: u32) -> bool {
         if let Some(child) = self.children.lock().unwrap().get_mut(&pid) {
             return matches!(child.try_wait(), Ok(None));
@@ -244,5 +285,31 @@ impl ProcessRunner for WindowsProcessRunner {
             return None;
         }
         os_image_name(pid)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `ping` sin ventana atiende Ctrl+C: imprime sus estadísticas y sale.
+    #[tokio::test]
+    async fn interrupt_reaches_windowless_console_processes() {
+        let dir = std::env::temp_dir().join(format!("app-ctrlc-{}", std::process::id()));
+        let log = dir.join("ping.log");
+        let runner = WindowsProcessRunner::new();
+        let spec = ProcessSpec::new(system32().join("PING.EXE"), system32())
+            .arg("-n")
+            .arg("60")
+            .arg("127.0.0.1")
+            .log_to(&log);
+        let pid = runner.spawn(&spec).await.unwrap().pid;
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        assert!(runner.interrupt(pid), "no se pudo mandar Ctrl+C");
+        assert!(
+            wait_for_exit(&runner, &[pid], Duration::from_secs(10)).await,
+            "ping siguió vivo tras Ctrl+C"
+        );
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

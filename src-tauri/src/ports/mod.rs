@@ -93,6 +93,10 @@ pub trait ProcessRunner: Send + Sync {
     /// Detiene el árbol de procesos: primero de forma ordenada y, si vence
     /// el plazo, a la fuerza.
     async fn stop_tree(&self, pid: u32, grace: Duration) -> Result<(), AppError>;
+    /// Pide al proceso que termine de forma ordenada, sin esperar: SIGTERM
+    /// en Unix y Ctrl+C a su consola oculta en Windows. `false` si no se
+    /// pudo pedir.
+    fn interrupt(&self, pid: u32) -> bool;
     fn is_alive(&self, pid: u32) -> bool;
     /// Código de salida si el proceso ya terminó y fue lanzado por este runner.
     fn exit_code(&self, pid: u32) -> Option<i32>;

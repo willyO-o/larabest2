@@ -23,6 +23,11 @@ impl BinaryLayout {
             ServiceId::Nginx => &["nginx"],
             ServiceId::Php => &["php@8.3", "php@8.4"],
             ServiceId::Mariadb => &["mariadb@11.4"],
+            ServiceId::Postgresql => &["postgresql@17"],
+            ServiceId::Redis => &["redis"],
+            // No está en homebrew-core: el nombre completo agrega el tap.
+            ServiceId::Mongodb => &["mongodb/brew/mongodb-community"],
+            ServiceId::Mailpit => &["mailpit"],
         }
     }
 

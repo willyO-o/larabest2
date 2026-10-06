@@ -7,6 +7,9 @@ use crate::testing::{Harness, ROOT};
 
 use ServiceState::*;
 
+/// La pila base: siempre activa.
+const BASE: [ServiceId; 3] = [ServiceId::Nginx, ServiceId::Php, ServiceId::Mariadb];
+
 fn spawned_exes(h: &Harness) -> Vec<String> {
     h.runner.spawned().iter().map(|s| s.exe_name()).collect()
 }
@@ -16,9 +19,14 @@ async fn start_all_runs_everything_and_nginx_last() {
     let h = Harness::new();
     h.supervisor.start_all().await.unwrap();
 
-    for id in ServiceId::ALL {
+    for id in BASE {
         assert_eq!(h.supervisor.state(id), Running, "{id:?}");
         assert_eq!(h.events.states_of(id), vec![Starting, Running], "{id:?}");
+    }
+    // Los opcionales sin instalar no se tocan.
+    for id in ServiceId::OPTIONAL {
+        assert_eq!(h.supervisor.state(id), Stopped, "{id:?}");
+        assert!(h.events.states_of(id).is_empty(), "{id:?}");
     }
     let exes = spawned_exes(&h);
     assert_eq!(exes.len(), 6, "4 php-cgi + mariadbd + nginx");
@@ -268,4 +276,41 @@ fn keeps_the_branch_when_the_saved_version_is_gone() {
     assert_eq!(pick(Some("8.2.10")).as_deref(), Some("8.5.1"));
     assert_eq!(pick(None).as_deref(), Some("8.5.1"));
     assert_eq!(super::pick_version(&[], Some("8.4.1")), None);
+}
+
+#[tokio::test]
+async fn optional_services_follow_installation_and_preferences() {
+    let h = Harness::new();
+    h.binaries.add(ROOT, ServiceId::Redis, "7.4.2");
+    h.binaries.add(ROOT, ServiceId::Mailpit, "1.27.7");
+    h.ports
+        .set_listening(&[80, 9000, 9001, 9002, 9003, 1025, 8025]);
+    h.runner.set_run_output(crate::ports::CommandOutput {
+        code: Some(0),
+        stdout: "PONG".into(),
+        stderr: String::new(),
+    });
+    // Mailpit instalado pero apagado en Preferencias.
+    let mut cfg = h.config.get();
+    cfg.services.set(ServiceId::Mailpit, false);
+    crate::ports::ConfigStore::save(h.config.as_ref(), &cfg).unwrap();
+
+    h.supervisor.start_all().await.unwrap();
+    assert_eq!(h.supervisor.state(ServiceId::Redis), Running);
+    assert_eq!(h.supervisor.state(ServiceId::Mailpit), Stopped);
+    assert_eq!(h.supervisor.state(ServiceId::Mongodb), Stopped);
+
+    let snapshot = h.supervisor.snapshot();
+    let status = |id| snapshot.iter().find(|s| s.id == id).unwrap().clone();
+    assert!(status(ServiceId::Redis).enabled);
+    assert_eq!(status(ServiceId::Redis).version.as_deref(), Some("7.4.2"));
+    assert!(!status(ServiceId::Mailpit).enabled);
+    assert_eq!(status(ServiceId::Mailpit).ports, vec![1025, 8025]);
+    assert!(!status(ServiceId::Mongodb).enabled, "sin instalar");
+    assert_eq!(status(ServiceId::Php).ports, vec![9000, 9001, 9002, 9003]);
+
+    h.supervisor.stop_all().await.unwrap();
+    for id in ServiceId::ALL {
+        assert_eq!(h.supervisor.state(id), Stopped, "{id:?}");
+    }
 }

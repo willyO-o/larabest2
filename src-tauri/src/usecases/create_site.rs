@@ -274,15 +274,30 @@ impl Core {
             &format!("{}.{}", name.to_ascii_lowercase(), ctx.config.tld),
         );
         let port = ctx.config.mariadb_port.to_string();
-        for (key, value) in [
-            ("APP_URL", url.trim_end_matches('/')),
-            ("DB_CONNECTION", "mariadb"),
-            ("DB_HOST", "127.0.0.1"),
-            ("DB_PORT", port.as_str()),
-            ("DB_DATABASE", db.as_str()),
-            ("DB_USERNAME", "root"),
-            ("DB_PASSWORD", ""),
-        ] {
+        let mut values: Vec<(&str, String)> = vec![
+            ("APP_URL", url.trim_end_matches('/').to_string()),
+            ("DB_CONNECTION", "mariadb".into()),
+            ("DB_HOST", "127.0.0.1".into()),
+            ("DB_PORT", port),
+            ("DB_DATABASE", db.clone()),
+            ("DB_USERNAME", "root".into()),
+            ("DB_PASSWORD", String::new()),
+        ];
+        // Con Mailpit, el correo de Laravel se ve en su bandeja.
+        if ctx.is_enabled(ServiceId::Mailpit) {
+            values.extend([
+                ("MAIL_MAILER", "smtp".to_string()),
+                ("MAIL_HOST", "127.0.0.1".into()),
+                ("MAIL_PORT", ctx.config.mailpit_smtp_port.to_string()),
+            ]);
+        }
+        if ctx.is_enabled(ServiceId::Redis) {
+            values.extend([
+                ("REDIS_HOST", "127.0.0.1".to_string()),
+                ("REDIS_PORT", ctx.config.redis_port.to_string()),
+            ]);
+        }
+        for (key, value) in &values {
             env = set_env(&env, key, value);
         }
         deps.fs.write(&env_path, &env)?;

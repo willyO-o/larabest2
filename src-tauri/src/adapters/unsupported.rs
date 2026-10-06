@@ -36,6 +36,10 @@ impl ProcessRunner for UnsupportedRunner {
         Err(unsupported())
     }
 
+    fn interrupt(&self, _pid: u32) -> bool {
+        false
+    }
+
     fn is_alive(&self, _pid: u32) -> bool {
         false
     }

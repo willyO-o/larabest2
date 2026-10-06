@@ -202,21 +202,92 @@ pub fn build(app: &AppHandle, from_tray: bool) -> tauri::Result<Menu<Wry>> {
         open(app, "mariadbErrorLog", "Log de errores")?,
     ];
 
-    let logs = vec![
+    // Servicios opcionales que forman parte de la pila.
+    let enabled: Vec<ServiceId> = ServiceId::OPTIONAL
+        .into_iter()
+        .filter(|&id| core.service_enabled(id))
+        .collect();
+    let mut optional = Vec::new();
+    for &id in &enabled {
+        let version = versions(app, &state, id, active(id).as_deref())?;
+        let items = match id {
+            ServiceId::Postgresql => vec![
+                version,
+                open(app, "postgresqlConf", "postgresql.conf (ajustes propios)")?,
+                open(app, "postgresqlHba", "pg_hba.conf (accesos)")?,
+                text(app, "adminer:postgresql", "Abrir Adminer")?,
+                sep(app)?,
+                open(app, "postgresqlData", "Carpeta de datos")?,
+                open(app, "postgresqlLog", "Log")?,
+            ],
+            ServiceId::Redis => vec![
+                version,
+                open(app, "redisUserConf", "redis.conf (ajustes propios)")?,
+                sep(app)?,
+                open(app, "redisConf", "redis.conf generado (solo lectura)")?,
+                open(app, "redisLog", "Log")?,
+            ],
+            ServiceId::Mongodb => vec![
+                version,
+                sep(app)?,
+                open(app, "mongodbConf", "mongod.conf generado (solo lectura)")?,
+                open(app, "mongodbData", "Carpeta de datos")?,
+                open(app, "mongodbLog", "Log")?,
+            ],
+            _ => vec![
+                version,
+                text(app, "mailpit", "Abrir el correo recibido")?,
+                sep(app)?,
+                open(app, "mailpitLog", "Log")?,
+            ],
+        };
+        optional.push(submenu(app, id.label(), items)?);
+    }
+
+    let mut logs = vec![
         open(app, "nginxErrorLog", "Nginx: errores")?,
         open(app, "nginxAccessLog", "Nginx: accesos")?,
         open(app, "phpErrorLog", "PHP: errores")?,
         open(app, "mariadbErrorLog", "MariaDB: errores")?,
-        sep(app)?,
-        open(app, "logs", "Abrir carpeta de logs")?,
     ];
+    for &id in &enabled {
+        let target = match id {
+            ServiceId::Postgresql => "postgresqlLog",
+            ServiceId::Redis => "redisLog",
+            ServiceId::Mongodb => "mongodbLog",
+            _ => "mailpitLog",
+        };
+        logs.push(open(app, target, id.label())?);
+    }
+    logs.push(sep(app)?);
+    logs.push(open(app, "logs", "Abrir carpeta de logs")?);
 
-    let tools = vec![
+    let mut tools = vec![
         text(app, "web", "Web (localhost)")?,
         text(app, "database", "Base de datos (Adminer)")?,
-        text(app, "terminal", "Terminal")?,
-        text(app, "root", "Carpeta raíz")?,
     ];
+    if enabled.contains(&ServiceId::Mailpit) {
+        tools.push(text(app, "mailpit", "Correo (Mailpit)")?);
+    }
+    tools.push(text(app, "terminal", "Terminal")?);
+    tools.push(text(app, "root", "Carpeta raíz")?);
+
+    // Preferencias → Servicios: qué opcionales forman parte de la pila.
+    let mut services = Vec::new();
+    for id in ServiceId::OPTIONAL {
+        let installed = !core.versions(id).unwrap_or_default().is_empty();
+        let label = if installed {
+            id.label().to_string()
+        } else {
+            format!("{} (sin instalar)", id.label())
+        };
+        services.push(check(
+            app,
+            &format!("svc:{}", id.key()),
+            &label,
+            core.service_enabled(id),
+        )?);
+    }
 
     let theme = core.theme();
     let themes = vec![
@@ -231,6 +302,7 @@ pub fn build(app: &AppHandle, from_tray: bool) -> tauri::Result<Menu<Wry>> {
     ];
     let prefs = vec![
         Box::new(submenu(app, "Tema", themes)?) as Item,
+        Box::new(submenu(app, "Servicios", services)?) as Item,
         check(
             app,
             "auto_start",
@@ -268,7 +340,11 @@ pub fn build(app: &AppHandle, from_tray: bool) -> tauri::Result<Menu<Wry>> {
         .item(&submenu(app, "www", www)?)
         .item(&submenu(app, "Nginx", nginx)?)
         .item(&submenu(app, "PHP", php)?)
-        .item(&submenu(app, "MariaDB", mariadb)?)
+        .item(&submenu(app, "MariaDB", mariadb)?);
+    for menu in &optional {
+        builder = builder.item(menu);
+    }
+    builder = builder
         .item(&submenu(app, "Logs", logs)?)
         .item(&submenu(app, "Herramientas", tools)?)
         .separator()
@@ -308,6 +384,8 @@ async fn run(app: &AppHandle, id: &str) -> Result<(), AppError> {
         "stop_all" => return core.stop_all().await,
         "web" => return open_url(app, &core.web_url()?),
         "database" => return open_url(app, &core.database_url()?),
+        "adminer:postgresql" => return open_url(app, &core.adminer_url(ServiceId::Postgresql)?),
+        "mailpit" => return open_url(app, &core.mailpit_url()?),
         "terminal" => return core.open_terminal(None),
         "root" => return open_path(app, core.root()),
         "nginx_reload" => return core.reload(ServiceId::Nginx).await,
@@ -354,6 +432,12 @@ async fn run(app: &AppHandle, id: &str) -> Result<(), AppError> {
         } else {
             core.open_in_editor(&path)
         };
+    }
+    if let Some(key) = id.strip_prefix("svc:") {
+        let service: ServiceId = serde_json::from_value(serde_json::Value::String(key.into()))
+            .map_err(|_| AppError::InvalidInput(id.into()))?;
+        let enabled = core.service_enabled(service);
+        return core.set_service_enabled(service, !enabled).await;
     }
     if let Some(name) = id.strip_prefix("ext:") {
         let enabled = core

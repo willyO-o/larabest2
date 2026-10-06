@@ -10,6 +10,8 @@ La interfaz sigue la estructura de Laragon (ventana compacta, una fila por servi
 
 **Fase 3:** la misma app en macOS, con Nginx, PHP (`php-fpm`) y MariaDB instalados con Homebrew. Ver [macOS](#macos).
 
+**Servicios opcionales:** PostgreSQL, Redis, MongoDB y Mailpit, en Windows y macOS. Ver [Servicios opcionales](#servicios-opcionales).
+
 ## Menú contextual
 
 Clic derecho en cualquier parte de la ventana, el botón **Menú** o el ícono de la bandeja abren el mismo menú:
@@ -32,6 +34,24 @@ Lo generado (`etc\nginx\nginx.conf`, `etc\php\php.ini`, `etc\mariadb\my.cnf`) se
 - Nginx: `etc\nginx\custom\<sitio>.conf` (incluido dentro del `server` de ese sitio).
 
 Las extensiones marcadas en el menú se guardan en `app.json` y PHP se reinicia solo si estaba en marcha. Al cambiar de versión, se reinicia solo ese servicio.
+
+## Servicios opcionales
+
+Además de la pila base (Nginx, PHP y MariaDB), la app gestiona cuatro servicios opcionales. Cada uno aparece como una fila más (la ventana crece) y arranca con **Iniciar todo** en cuanto está instalado; en **Menú → Preferencias → Servicios** se puede quitar o volver a poner en la pila. Al quitarlo, si estaba en marcha, se detiene.
+
+| Servicio | Puerto | Para qué | Windows (en `bin\<servicio>\<versión>\`) | macOS |
+| --- | --- | --- | --- | --- |
+| PostgreSQL | 5432 | otra base de datos (Laravel puede usarla) | zip de binarios de <https://www.enterprisedb.com/download-postgresql-binaries>: la carpeta `pgsql` pasa a ser `bin\postgresql\17.6\` (la app busca `bin\postgres.exe`) | `brew install postgresql@17` |
+| Redis | 6379 | caché, sesiones y colas | no hay versión oficial; la de <https://github.com/redis-windows/redis-windows/releases> (`redis-server.exe` en la raíz de la carpeta) | `brew install redis` |
+| MongoDB | 27017 | base de datos de documentos | zip de <https://www.mongodb.com/try/download/community> (Windows x64, *zip*): `bin\mongodb\8.0.x\bin\mongod.exe` | `brew install mongodb/brew/mongodb-community` |
+| Mailpit | 1025 (SMTP) y 8025 (web) | atrapa el correo que envían los sitios | `mailpit-windows-amd64.zip` de <https://github.com/axllent/mailpit/releases>: `bin\mailpit\1.27.x\mailpit.exe` | `brew install mailpit` |
+
+- **PostgreSQL**: la primera vez se crea el clúster en `data\postgresql` con `initdb` (UTF-8, usuario `postgres` sin contraseña, solo en 127.0.0.1). Sus ajustes propios van en `data\postgresql\postgresql.conf` (**Menú → PostgreSQL**); la app solo fija el puerto y las direcciones. **Menú → PostgreSQL → Abrir Adminer** entra como `postgres`. En Windows PHP necesita la extensión `pdo_pgsql` (márcala en **Menú → PHP → Extensiones**); el PHP de Homebrew ya la trae.
+- **Redis**: ajustes propios en `etc\redis\custom\user.conf`. Guarda los datos en `data\redis` al detenerse.
+- **MongoDB**: datos en `data\mongodb`. Para usarlo desde PHP hace falta la extensión `mongodb` (en Windows, `php_mongodb.dll` de <https://pecl.php.net/package/mongodb> en `ext\`; en macOS `pecl install mongodb`).
+- **Mailpit**: con Mailpit en la pila, `mail()` de PHP (WordPress) y los sitios Laravel nuevos (`MAIL_MAILER=smtp`, `MAIL_PORT=1025`) envían todo a Mailpit, y el correo se ve en **Menú → Mailpit → Abrir el correo recibido** (`http://127.0.0.1:8025`). Nada sale a internet.
+
+Al detener, MariaDB, PostgreSQL y Redis cierran de forma ordenada con sus propias herramientas; MongoDB y Mailpit reciben la señal de cierre (Ctrl+C en Windows) y solo se fuerzan si no terminan en 10 s.
 
 ## Crear un sitio
 
@@ -206,6 +226,14 @@ Prepara `bin\` como se describe arriba y crea `www\blog\index.php` con `<?php ph
 
 - [ ] **Salir** desde la bandeja detiene los servicios (MariaDB de forma ordenada) y cierra la app.
 - [ ] Si la app se cierra a la fuerza (Administrador de tareas → Finalizar tarea), Nginx, PHP y MariaDB también se cierran.
+
+**Servicios opcionales**
+
+- [ ] Copia Redis en `bin\redis\<versión>\`: al reabrir el menú (o la app) aparece la fila Redis y la ventana crece. **Iniciar todo** lo arranca.
+- [ ] **Menú → Preferencias → Servicios → Redis** lo quita de la pila: se detiene y su fila desaparece. Volver a marcarlo la trae de vuelta.
+- [ ] Con PostgreSQL en `bin\postgresql\17.x\`: la primera vez crea `data\postgresql`; **Menú → PostgreSQL → Abrir Adminer** entra como `postgres` (con `pdo_pgsql` marcada en PHP).
+- [ ] Con MongoDB: arranca, y **Detener** lo cierra sin forzarlo (el log `logs\mongodb.log` muestra un cierre normal, sin «unclean shutdown» al volver a iniciarlo).
+- [ ] Con Mailpit: un sitio WordPress nuevo envía el correo de «¿Olvidaste tu contraseña?» y aparece en **Menú → Mailpit → Abrir el correo recibido**.
 
 ## macOS
 

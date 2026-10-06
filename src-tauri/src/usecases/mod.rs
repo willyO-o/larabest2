@@ -16,7 +16,7 @@ use crate::domain::{
     slash, BinaryLayout, HostEntry, InstalledVersion, ServiceId, ServiceState, Site,
     ThemePreference,
 };
-use crate::drivers::{nginx, templates};
+use crate::drivers::{mailpit, nginx, postgresql, templates};
 use crate::error::AppError;
 use crate::ports::{
     write_if_changed, ArchiveExtractor, CertificateAuthority, Downloader, HostsManager,
@@ -45,6 +45,17 @@ pub enum ConfigTarget {
     MariadbData,
     MariadbErrorLog,
     Ssl,
+    PostgresqlConf,
+    PostgresqlHba,
+    PostgresqlData,
+    PostgresqlLog,
+    RedisConf,
+    RedisUserConf,
+    RedisLog,
+    MongodbConf,
+    MongodbData,
+    MongodbLog,
+    MailpitLog,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
@@ -296,6 +307,25 @@ impl Core {
             }
             Ok(path)
         };
+        // Archivos que crea PostgreSQL al iniciarlo la primera vez.
+        let first_run = |path: PathBuf| {
+            if fs.exists(&path) {
+                Ok(path)
+            } else {
+                Err(AppError::NotFound(format!(
+                    "{} todavía no existe: se crea al iniciar PostgreSQL por primera vez.",
+                    slash(&path)
+                )))
+            }
+        };
+        let data_or_parent = |id: ServiceId| {
+            let data = paths.data(id);
+            if fs.exists(&data) {
+                data
+            } else {
+                paths.root().join("data")
+            }
+        };
         match target {
             ConfigTarget::Root => Ok(paths.root().to_path_buf()),
             ConfigTarget::Www => Ok(paths.www()),
@@ -347,6 +377,25 @@ impl Core {
                 fs.create_dir_all(&paths.etc_ssl())?;
                 Ok(paths.etc_ssl())
             }
+            ConfigTarget::PostgresqlConf => first_run(paths.postgresql_conf()),
+            ConfigTarget::PostgresqlHba => first_run(paths.postgresql_hba()),
+            ConfigTarget::PostgresqlData => Ok(data_or_parent(ServiceId::Postgresql)),
+            ConfigTarget::PostgresqlLog => log("postgresql.log"),
+            ConfigTarget::RedisConf => generated(paths.redis_conf(), ServiceId::Redis),
+            ConfigTarget::RedisUserConf => {
+                templates::ensure_user_file(
+                    fs,
+                    &paths.redis_user_conf(),
+                    templates::USER_REDIS_CONF,
+                    &deps.app_name,
+                )?;
+                Ok(paths.redis_user_conf())
+            }
+            ConfigTarget::RedisLog => log("redis.log"),
+            ConfigTarget::MongodbConf => generated(paths.mongodb_conf(), ServiceId::Mongodb),
+            ConfigTarget::MongodbData => Ok(data_or_parent(ServiceId::Mongodb)),
+            ConfigTarget::MongodbLog => log("mongodb.log"),
+            ConfigTarget::MailpitLog => log("mailpit.log"),
         }
     }
 
@@ -424,8 +473,14 @@ impl Core {
         })
     }
 
-    /// Adminer servido como sitio local en `adminer.<tld>`.
+    /// Adminer servido como sitio local en `adminer.<tld>`, con MariaDB.
     pub fn database_url(&self) -> Result<String, AppError> {
+        self.adminer_url(ServiceId::Mariadb)
+    }
+
+    /// Adminer con MariaDB (root) o con PostgreSQL (postgres), ambos sin
+    /// contraseña porque solo escuchan en 127.0.0.1.
+    pub fn adminer_url(&self, engine: ServiceId) -> Result<String, AppError> {
         let deps = self.supervisor.deps();
         let cfg = deps.config.load()?;
         let own_project = deps.paths.www().join(nginx::ADMINER_SITE);
@@ -441,10 +496,54 @@ impl Core {
             ));
         }
         let url = sites::site_url(&cfg, &format!("{}.{}", nginx::ADMINER_SITE, cfg.tld));
-        Ok(format!(
-            "{url}?server=127.0.0.1:{}&username=root",
-            cfg.mariadb_port
-        ))
+        Ok(match engine {
+            ServiceId::Postgresql => format!(
+                "{url}?pgsql=127.0.0.1:{}&username={}",
+                cfg.postgresql_port,
+                postgresql::SUPERUSER
+            ),
+            _ => format!("{url}?server=127.0.0.1:{}&username=root", cfg.mariadb_port),
+        })
+    }
+
+    /// `true` si el servicio forma parte de la pila (Preferencias o, si no
+    /// se eligió, instalado).
+    pub fn service_enabled(&self, id: ServiceId) -> bool {
+        self.supervisor
+            .context()
+            .map(|ctx| ctx.is_enabled(id))
+            .unwrap_or(!id.is_optional())
+    }
+
+    /// Activa o desactiva un servicio opcional en Preferencias. Si se
+    /// desactiva mientras corre, se detiene.
+    pub async fn set_service_enabled(&self, id: ServiceId, enabled: bool) -> Result<(), AppError> {
+        if !id.is_optional() {
+            return Err(AppError::InvalidInput(format!(
+                "{} siempre forma parte de la pila.",
+                id.label()
+            )));
+        }
+        let deps = self.supervisor.deps();
+        let mut cfg = deps.config.load()?;
+        cfg.services.set(id, enabled);
+        deps.config.save(&cfg)?;
+        if !enabled && self.supervisor.state(id).is_active() {
+            self.supervisor.stop(id).await?;
+        }
+        self.supervisor.emit_all();
+        Ok(())
+    }
+
+    /// Bandeja de Mailpit con el correo que enviaron los sitios.
+    pub fn mailpit_url(&self) -> Result<String, AppError> {
+        let cfg = self.supervisor.deps().config.load()?;
+        if self.supervisor.state(ServiceId::Mailpit) != ServiceState::Running {
+            return Err(AppError::InvalidInput(
+                "Inicia Mailpit para ver el correo.".into(),
+            ));
+        }
+        Ok(mailpit::web_url(cfg.mailpit_http_port))
     }
 
     /// Entorno de la terminal: PHP activo, MariaDB, Nginx y Composer

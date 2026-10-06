@@ -33,6 +33,10 @@ fn formula_base(service: ServiceId) -> &'static str {
         ServiceId::Nginx => "nginx",
         ServiceId::Php => "php",
         ServiceId::Mariadb => "mariadb",
+        ServiceId::Postgresql => "postgresql",
+        ServiceId::Redis => "redis",
+        ServiceId::Mongodb => "mongodb-community",
+        ServiceId::Mailpit => "mailpit",
     }
 }
 

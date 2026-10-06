@@ -153,6 +153,9 @@ struct RunnerState {
     /// Ejecutables que mueren apenas se lanzan, con su código de salida.
     die_on_spawn: HashMap<String, i32>,
     spawn_errors: HashSet<String>,
+    interrupted: Vec<u32>,
+    /// Procesos que no hacen caso a `interrupt`.
+    deaf: HashSet<u32>,
 }
 
 /// Respuesta programada para `run` según el comando (por ejemplo, simular
@@ -222,6 +225,15 @@ impl FakeRunner {
         self.state.lock().unwrap().stopped.clone()
     }
 
+    pub fn interrupted(&self) -> Vec<u32> {
+        self.state.lock().unwrap().interrupted.clone()
+    }
+
+    /// Este PID ignora `interrupt` (hay que forzarlo).
+    pub fn deaf(&self, pid: u32) {
+        self.state.lock().unwrap().deaf.insert(pid);
+    }
+
     pub fn alive_pids(&self) -> Vec<u32> {
         let s = self.state.lock().unwrap();
         let mut pids: Vec<u32> = s
@@ -286,6 +298,15 @@ impl ProcessRunner for FakeRunner {
         s.stopped.push((pid, grace));
         s.alive.insert(pid, false);
         Ok(())
+    }
+
+    fn interrupt(&self, pid: u32) -> bool {
+        let mut s = self.state.lock().unwrap();
+        s.interrupted.push(pid);
+        if !s.deaf.contains(&pid) {
+            s.alive.insert(pid, false);
+        }
+        true
     }
 
     fn is_alive(&self, pid: u32) -> bool {
@@ -505,6 +526,7 @@ impl ShellLauncher for FakeShell {
 /// Supervisor y núcleo armados con adaptadores falsos y plazos cortos.
 pub struct Harness {
     pub fs: std::sync::Arc<FakeFs>,
+    pub binaries: std::sync::Arc<FakeBinaries>,
     pub runner: std::sync::Arc<FakeRunner>,
     pub ports: std::sync::Arc<FakePorts>,
     pub config: std::sync::Arc<FakeConfig>,
@@ -598,6 +620,7 @@ impl Harness {
             archive: Arc::new(FakeArchive::new(fs.clone())),
             ca: Arc::new(FakeCa::new(fs.clone())),
             fs,
+            binaries,
             runner,
             ports,
             config,

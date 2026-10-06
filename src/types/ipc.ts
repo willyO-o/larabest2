@@ -1,7 +1,14 @@
 // Espejo manual de los tipos de Rust (src-tauri/src/domain, error.rs y
 // commands). Al cambiar uno, cambiar el otro en el mismo commit.
 
-export type ServiceId = 'nginx' | 'php' | 'mariadb'
+export type ServiceId =
+  | 'nginx'
+  | 'php'
+  | 'mariadb'
+  | 'postgresql'
+  | 'redis'
+  | 'mongodb'
+  | 'mailpit'
 
 export type ServiceState = 'stopped' | 'starting' | 'running' | 'stopping' | 'failed'
 
@@ -11,7 +18,12 @@ export interface ServiceStatus {
   state: ServiceState
   detail?: string
   version: string | null
+  /** Puerto principal. */
   port: number
+  /** Todos los puertos que usa (PHP en Windows usa varios; Mailpit, SMTP y web). */
+  ports: number[]
+  /** Forma parte de la pila: se muestra y «Iniciar todo» lo arranca. */
+  enabled: boolean
 }
 
 /** Carga de `sites:changed` y resultado de `sites_list`. */

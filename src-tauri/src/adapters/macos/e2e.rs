@@ -1,6 +1,7 @@
 //! Prueba de punta a punta en macOS con los programas reales de Homebrew
-//! (`brew install nginx php@8.3 php@8.4 mariadb@11.4`). Necesita internet
-//! para WordPress, Composer y Adminer. La corre el CI (`build-macos`):
+//! (`brew install nginx php@8.3 php@8.4 mariadb@11.4 postgresql@17 redis
+//! mongodb/brew/mongodb-community mailpit`). Necesita internet para
+//! WordPress, Composer y Adminer. La corre el CI (`build-macos`):
 //!
 //! ```sh
 //! cargo test --lib -- --ignored --nocapture e2e_homebrew
@@ -34,6 +35,13 @@ const HTTP: u16 = 80;
 const HTTPS: u16 = 443;
 const PHP: u16 = 9070;
 const MARIADB: u16 = 3307;
+// Los opcionales, en puertos distintos de los de un PostgreSQL o un Redis
+// que el runner pudiera tener ya en marcha.
+const POSTGRESQL: u16 = 5433;
+const REDIS: u16 = 6380;
+const MONGODB: u16 = 27018;
+const SMTP: u16 = 1026;
+const MAIL_WEB: u16 = 8026;
 
 /// Confía en todo: en el CI no hay quien escriba la contraseña del llavero.
 #[derive(Default)]
@@ -75,6 +83,11 @@ fn world() -> World {
             https_port: HTTPS,
             php_base_port: PHP,
             mariadb_port: MARIADB,
+            postgresql_port: POSTGRESQL,
+            redis_port: REDIS,
+            mongodb_port: MONGODB,
+            mailpit_smtp_port: SMTP,
+            mailpit_http_port: MAIL_WEB,
             ..AppConfig::default()
         })
         .unwrap();
@@ -220,13 +233,64 @@ async fn e2e_homebrew() {
     .unwrap();
     w.core.sync_sites().await.unwrap();
     w.core.start_all().await.unwrap();
-    check(&w, running(&w), "los tres servicios deben quedar en marcha");
+    check(
+        &w,
+        running(&w),
+        "los siete servicios deben quedar en marcha",
+    );
     let page = get("hola.test", HTTP, "/", false).await;
     check(
         &w,
         page.contains("200 OK") && page.contains("hola 8.") && page.contains(" pdo"),
         &page,
     );
+
+    // PostgreSQL con postgres sin contraseña.
+    let psql = w
+        .core
+        .supervisor
+        .context()
+        .unwrap()
+        .program(ServiceId::Postgresql, "psql")
+        .unwrap();
+    let out = tokio::process::Command::new(psql)
+        .args([
+            "-h",
+            "127.0.0.1",
+            "-p",
+            &POSTGRESQL.to_string(),
+            "-U",
+            "postgres",
+        ])
+        .args(["-tAc", "select 40 + 2"])
+        .output()
+        .await
+        .unwrap();
+    let answer = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    check(
+        &w,
+        answer == "42",
+        &format!("psql: {answer} {}", String::from_utf8_lossy(&out.stderr)),
+    );
+
+    // El correo de mail() llega a la bandeja de Mailpit.
+    std::fs::write(
+        w.root.join("www/hola/correo.php"),
+        "<?php var_dump(mail('ana@example.com', 'Prueba e2e', 'Hola', 'From: php@localhost'));",
+    )
+    .unwrap();
+    let sent = get("hola.test", HTTP, "/correo.php", false).await;
+    check(&w, sent.contains("bool(true)"), &sent);
+    let inbox = tokio::process::Command::new("/usr/bin/curl")
+        .args([
+            "-s",
+            &format!("http://127.0.0.1:{MAIL_WEB}/api/v1/messages"),
+        ])
+        .output()
+        .await
+        .unwrap();
+    let inbox = String::from_utf8_lossy(&inbox.stdout).into_owned();
+    check(&w, inbox.contains("Prueba e2e"), &inbox);
 
     // MariaDB con root sin contraseña por TCP (como Adminer y Laravel).
     let ctx = w.core.supervisor.context().unwrap();
@@ -267,6 +331,12 @@ async fn e2e_homebrew() {
         &w,
         home.contains("200 OK") && home.contains("Laravel"),
         &home,
+    );
+    let env = std::fs::read_to_string(w.root.join("www/tienda/.env")).unwrap();
+    check(
+        &w,
+        env.contains(&format!("MAIL_PORT={SMTP}")) && env.contains(&format!("REDIS_PORT={REDIS}")),
+        &env,
     );
 
     // La terminal usa el PHP y el Composer de la app.
@@ -311,9 +381,11 @@ async fn e2e_homebrew() {
     let ports = MacPortChecker;
     let closed = (0..100).any(|_| {
         std::thread::sleep(Duration::from_millis(100));
-        [HTTP, HTTPS, PHP, MARIADB]
-            .iter()
-            .all(|&p| !ports.is_listening(p))
+        [
+            HTTP, HTTPS, PHP, MARIADB, POSTGRESQL, REDIS, MONGODB, SMTP, MAIL_WEB,
+        ]
+        .iter()
+        .all(|&p| !ports.is_listening(p))
     });
     check(&w, closed, "los huérfanos deben quedar detenidos");
     let _ = std::fs::remove_dir_all(&w.root);

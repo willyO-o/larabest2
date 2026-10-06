@@ -59,6 +59,8 @@ struct Entry {
     pids: Vec<u32>,
     version: Option<String>,
     port: u16,
+    ports: Vec<u16>,
+    enabled: bool,
     /// Cambia en cada arranque para que un monitor viejo no actúe.
     generation: u64,
 }
@@ -89,6 +91,8 @@ impl Supervisor {
                         pids: Vec::new(),
                         version: None,
                         port: cfg.port_of(id),
+                        ports: vec![cfg.port_of(id)],
+                        enabled: !id.is_optional(),
                         generation: 0,
                     },
                 )
@@ -143,13 +147,16 @@ impl Supervisor {
         Ok(ctx)
     }
 
-    /// Actualiza versión y puerto que se muestran, sin emitir eventos.
+    /// Actualiza versión, puertos y si está activo en la pila, sin emitir
+    /// eventos.
     fn refresh_info(&self, ctx: &RenderContext) {
         let mut entries = self.entries.lock().unwrap();
         for id in ServiceId::ALL {
             let e = entries.get_mut(&id).expect("todos los servicios");
             e.version = ctx.versions.get(&id).map(|v| v.version.clone());
             e.port = ctx.config.port_of(id);
+            e.ports = self.drivers[&id].ports(ctx);
+            e.enabled = ctx.is_enabled(id);
         }
     }
 
@@ -160,6 +167,8 @@ impl Supervisor {
             detail: e.detail.clone(),
             version: e.version.clone(),
             port: e.port,
+            ports: e.ports.clone(),
+            enabled: e.enabled,
         }
     }
 
@@ -185,6 +194,16 @@ impl Supervisor {
         self.deps.events.service_changed(&status);
     }
 
+    /// Vuelve a emitir todos (por ejemplo, al activar un servicio opcional).
+    pub fn emit_all(&self) {
+        if let Ok(ctx) = self.context() {
+            self.refresh_info(&ctx);
+        }
+        for id in ServiceId::ALL {
+            self.emit(id);
+        }
+    }
+
     fn set(&self, id: ServiceId, state: ServiceState, detail: Option<String>) {
         let status = {
             let mut entries = self.entries.lock().unwrap();
@@ -205,13 +224,14 @@ impl Supervisor {
 
     // ------------------------------------------------------------ arranque
 
-    /// Iniciar todo: regenerar configuración, comprobar puertos, lanzar
-    /// MariaDB y PHP en paralelo y Nginx al final, esperando salud.
+    /// Iniciar todo: regenerar configuración, comprobar puertos, lanzar en
+    /// paralelo los servicios sin dependencias y Nginx al final, esperando
+    /// salud. Solo los que forman parte de la pila (`is_enabled`).
     pub async fn start_all(self: &Arc<Self>) -> Result<(), AppError> {
         let ctx = self.context()?;
         let mut ready = Vec::new();
         for id in ServiceId::ALL {
-            if self.state(id).is_active() {
+            if self.state(id).is_active() || !ctx.is_enabled(id) {
                 continue;
             }
             match self.driver(id).render_config(&ctx).await {
@@ -425,12 +445,25 @@ impl Supervisor {
         }
     }
 
-    /// Nginx primero; luego PHP y MariaDB en paralelo.
+    /// Nginx primero (deja de recibir visitas); luego el resto en paralelo.
     pub async fn stop_all(self: &Arc<Self>) -> Result<(), AppError> {
         let nginx = self.stop(ServiceId::Nginx).await;
-        let (a, b) = (self.clone(), self.clone());
-        let (php, mariadb) = tokio::join!(a.stop(ServiceId::Php), b.stop(ServiceId::Mariadb));
-        nginx.and(php).and(mariadb)
+        let others: Vec<_> = ServiceId::ALL
+            .into_iter()
+            .filter(|&id| id != ServiceId::Nginx)
+            .map(|id| {
+                let this = self.clone();
+                tokio::spawn(async move { this.stop(id).await })
+            })
+            .collect();
+        let mut result = nginx;
+        for handle in others {
+            let stopped = handle
+                .await
+                .unwrap_or_else(|e| Err(AppError::Process(e.to_string())));
+            result = result.and(stopped);
+        }
+        result
     }
 
     pub async fn restart(self: &Arc<Self>, id: ServiceId) -> Result<(), AppError> {

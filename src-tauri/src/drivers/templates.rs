@@ -14,6 +14,9 @@ pub const COMPOSER_SH: &str = "composer.sh";
 pub const PHP_FPM_CONF: &str = "php-fpm.conf";
 pub const MIME_TYPES: &str = "mime.types";
 pub const FASTCGI_PARAMS: &str = "fastcgi_params";
+pub const REDIS_CONF: &str = "redis.conf";
+pub const USER_REDIS_CONF: &str = "user-redis.conf";
+pub const MONGOD_CONF: &str = "mongod.conf";
 pub const USER_INI: &str = "user.ini";
 pub const USER_CNF: &str = "user.cnf";
 pub const WP_CONFIG: &str = "wp-config.php";
@@ -36,6 +39,12 @@ fn environment() -> Environment<'static> {
             FASTCGI_PARAMS,
             include_str!("../../templates/fastcgi_params"),
         ),
+        (REDIS_CONF, include_str!("../../templates/redis.conf")),
+        (
+            USER_REDIS_CONF,
+            include_str!("../../templates/user-redis.conf"),
+        ),
+        (MONGOD_CONF, include_str!("../../templates/mongod.conf")),
         (USER_INI, include_str!("../../templates/user.ini")),
         (USER_CNF, include_str!("../../templates/user.cnf")),
         (WP_CONFIG, include_str!("../../templates/wp-config.php")),
@@ -93,6 +102,9 @@ mod tests {
             PHP_FPM_CONF,
             MIME_TYPES,
             FASTCGI_PARAMS,
+            REDIS_CONF,
+            USER_REDIS_CONF,
+            MONGOD_CONF,
             USER_INI,
             USER_CNF,
             WP_CONFIG,

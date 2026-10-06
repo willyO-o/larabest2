@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, watchEffect } from 'vue'
+import { computed, onMounted, watch, watchEffect } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import ActionBar from './components/ActionBar.vue'
 import AppIcon from './components/AppIcon.vue'
@@ -21,6 +21,22 @@ onMounted(async () => {
   // La ventana se crea oculta: se muestra cuando ya está pintada con su tema.
   requestAnimationFrame(() => attempt(() => invoke('app_ready')))
 })
+
+/** Alto de una fila de servicio (`.service` en styles.css). */
+const ROW_HEIGHT = 46
+/** Alto de la ventana con las tres filas de la pila base. */
+const BASE_HEIGHT = 380
+
+// Cada servicio opcional activo suma una fila: la ventana crece con ellas.
+watch(
+  () => services.list.length,
+  (rows) => {
+    if (!rows) return
+    const height = BASE_HEIGHT + Math.max(0, rows - 3) * ROW_HEIGHT
+    attempt(() => invoke('window_fit', { height }))
+  },
+  { immediate: true },
+)
 
 // El núcleo también cambia el tema nativo (barra de título y
 // prefers-color-scheme); el atributo asegura el mismo resultado en la página.

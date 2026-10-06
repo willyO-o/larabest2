@@ -212,6 +212,22 @@ pub async fn menu_popup(
     result.map_err(|e| AppError::Process(e.to_string()))
 }
 
+/// Ajusta el alto de la ventana a las filas de servicios que se ven (cada
+/// servicio opcional activo suma una). El ancho no cambia.
+#[tauri::command]
+pub async fn window_fit(window: tauri::WebviewWindow, height: f64) -> Result<(), AppError> {
+    let fail = |e: tauri::Error| AppError::Process(e.to_string());
+    let height = height.clamp(380.0, 760.0);
+    let scale = window.scale_factor().map_err(fail)?;
+    let current = window.inner_size().map_err(fail)?.to_logical::<f64>(scale);
+    if (current.height - height).abs() < 1.0 {
+        return Ok(());
+    }
+    window
+        .set_size(tauri::LogicalSize::new(current.width, height))
+        .map_err(fail)
+}
+
 async fn find_site(state: &State<'_, AppState>, name: &str) -> Result<Site, AppError> {
     state
         .core
