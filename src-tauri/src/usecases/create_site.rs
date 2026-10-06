@@ -49,20 +49,6 @@ fn tail(text: &str) -> String {
     lines[lines.len().saturating_sub(OUTPUT_TAIL)..].join("\n")
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn tail_strips_colors_and_keeps_last_lines() {
-        let text = "a\n\n\u{1b}[32mok\u{1b}[39m\n\u{1b}[1;31mError\u{1b}[0m: falló\n";
-        assert_eq!(tail(text), "a\nok\nError: falló");
-        let many: String = (0..20).map(|i| format!("l{i}\n")).collect();
-        assert_eq!(tail(&many).lines().count(), OUTPUT_TAIL);
-        assert!(tail(&many).ends_with("l19"));
-    }
-}
-
 /// Avisa a la interfaz de cada paso de la creación.
 struct Progress<'a> {
     core: &'a Core,
@@ -347,5 +333,19 @@ impl Core {
         let ctx = self.supervisor.context()?;
         mariadb::create_database(&ctx, db).await?;
         Ok(ctx)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tail_strips_colors_and_keeps_last_lines() {
+        let text = "a\n\n\u{1b}[32mok\u{1b}[39m\n\u{1b}[1;31mError\u{1b}[0m: falló\n";
+        assert_eq!(tail(text), "a\nok\nError: falló");
+        let many: String = (0..20).map(|i| format!("l{i}\n")).collect();
+        assert_eq!(tail(&many).lines().count(), OUTPUT_TAIL);
+        assert!(tail(&many).ends_with("l19"));
     }
 }
