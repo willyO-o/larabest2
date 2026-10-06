@@ -56,6 +56,17 @@ impl FileStore for StdFileStore {
         names(path, false)
     }
 
+    fn remove_dir_all(&self, path: &Path) -> Result<(), AppError> {
+        match std::fs::remove_dir_all(path) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(AppError::io(
+                format!("No se pudo borrar {}", slash(path)),
+                e,
+            )),
+        }
+    }
+
     fn remove_file(&self, path: &Path) -> Result<(), AppError> {
         match std::fs::remove_file(path) {
             Ok(()) => Ok(()),
@@ -86,6 +97,9 @@ mod tests {
         fs.remove_file(&dir.join("a/b/c.txt")).unwrap();
         fs.remove_file(&dir.join("a/b/c.txt")).unwrap();
         assert!(!fs.exists(&dir.join("a/b/c.txt")));
+        fs.remove_dir_all(&dir.join("a")).unwrap();
+        fs.remove_dir_all(&dir.join("a")).unwrap();
+        assert!(!fs.exists(&dir.join("a")));
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

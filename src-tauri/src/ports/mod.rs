@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 
-use crate::domain::{HostEntry, InstalledVersion, ServiceId, ServiceStatus, Site};
+use crate::domain::{HostEntry, InstalledVersion, ServiceId, ServiceStatus, Site, SiteProgress};
 use crate::error::AppError;
 
 /// Qué ejecutar. Lo arman los drivers; lo lanza el `ProcessRunner`.
@@ -141,6 +141,8 @@ pub trait FileStore: Send + Sync {
     /// Nombres de los archivos directos.
     fn list_files(&self, path: &Path) -> Result<Vec<String>, AppError>;
     fn remove_file(&self, path: &Path) -> Result<(), AppError>;
+    /// Borra una carpeta con todo su contenido (no falla si no existe).
+    fn remove_dir_all(&self, path: &Path) -> Result<(), AppError>;
 }
 
 /// Escribe solo si el contenido cambió. Devuelve `true` si escribió.
@@ -166,4 +168,41 @@ pub fn tail_lines(fs: &dyn FileStore, path: &Path, n: usize) -> Option<String> {
 pub trait EventSink: Send + Sync {
     fn service_changed(&self, status: &ServiceStatus);
     fn sites_changed(&self, sites: &[Site]);
+    fn site_progress(&self, progress: &SiteProgress);
+}
+
+#[async_trait]
+pub trait Downloader: Send + Sync {
+    /// Descarga `url` en `dest`, reemplazándolo. Crea la carpeta si falta.
+    async fn download(&self, url: &str, dest: &Path) -> Result<(), AppError>;
+}
+
+pub trait ArchiveExtractor: Send + Sync {
+    /// Extrae un `.zip` en `dest`. Con `strip_top`, si todo cuelga de una
+    /// sola carpeta (como `wordpress/`), se extrae solo su contenido.
+    fn extract_zip(&self, archive: &Path, dest: &Path, strip_top: bool) -> Result<(), AppError>;
+}
+
+/// Certificado y clave de un sitio, en PEM.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SiteCert {
+    pub cert: PathBuf,
+    pub key: PathBuf,
+}
+
+#[async_trait]
+pub trait CertificateAuthority: Send + Sync {
+    /// Crea la CA local si no existe. Nunca la reemplaza.
+    fn ensure_ca(&self) -> Result<(), AppError>;
+    /// Certificado del dominio firmado por la CA; se crea si falta.
+    fn ensure_cert(&self, domain: &str) -> Result<SiteCert, AppError>;
+    /// `true` si el sistema ya confía en la CA.
+    async fn is_trusted(&self) -> bool;
+    /// Instala la CA en el almacén del usuario (Windows pide confirmar).
+    async fn trust(&self) -> Result<(), AppError>;
+}
+
+pub trait SecretSource: Send + Sync {
+    /// Texto aleatorio para claves (por ejemplo las de `wp-config.php`).
+    fn random_string(&self, len: usize) -> String;
 }

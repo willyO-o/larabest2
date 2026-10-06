@@ -40,16 +40,31 @@ pub fn adminer_enabled(ctx: &RenderContext, sites: &[Site]) -> bool {
             .any(|s| s.name.eq_ignore_ascii_case(ADMINER_SITE))
 }
 
+/// HTTPS solo si está activado y el certificado del dominio ya existe: un
+/// certificado que falta nunca debe impedir que Nginx arranque.
+fn ssl_for(ctx: &RenderContext, domain: &str) -> Option<(String, String)> {
+    if !ctx.config.ssl {
+        return None;
+    }
+    let (cert, key) = (ctx.paths.site_cert(domain), ctx.paths.site_key(domain));
+    (ctx.fs.exists(&cert) && ctx.fs.exists(&key)).then(|| (slash(&cert), slash(&key)))
+}
+
 fn vhost(ctx: &RenderContext, name: &str, domain: &str, root: &str) -> Result<String, AppError> {
+    let ssl = ssl_for(ctx, domain);
     templates::render(
         templates::VHOST_CONF,
         context! {
             app_name => ctx.app_name,
             http_port => ctx.config.http_port,
+            https_port => ctx.config.https_port,
             name => name,
             domain => domain,
             root => root,
             custom_dir => slash(&ctx.paths.nginx_custom()),
+            ssl => ssl.is_some(),
+            ssl_cert => ssl.as_ref().map(|s| s.0.clone()),
+            ssl_key => ssl.as_ref().map(|s| s.1.clone()),
         },
     )
 }
@@ -111,7 +126,11 @@ impl ServiceDriver for NginxDriver {
     }
 
     fn ports(&self, ctx: &RenderContext) -> Vec<u16> {
-        vec![ctx.config.http_port]
+        if ctx.config.ssl {
+            vec![ctx.config.http_port, ctx.config.https_port]
+        } else {
+            vec![ctx.config.http_port]
+        }
     }
 
     fn log_files(&self, ctx: &RenderContext) -> Vec<PathBuf> {
@@ -285,6 +304,37 @@ mod tests {
 
         // Sin cambios no reescribe nada.
         assert!(!render_sites(&f.ctx, &sites).unwrap());
+    }
+
+    #[test]
+    fn https_only_when_enabled_and_cert_exists() {
+        let mut f = fixture();
+        let sites = vec![
+            site("blog", "C:/APP/www/blog"),
+            site("shop", "C:/APP/www/shop"),
+        ];
+        render_sites(&f.ctx, &sites).unwrap();
+        assert!(!f
+            .fs
+            .read("C:/APP/etc/nginx/sites/blog.conf")
+            .contains("ssl"));
+
+        f.ctx.config.ssl = true;
+        f.fs.write(Path::new("C:/APP/etc/ssl/blog.test.crt"), "c")
+            .unwrap();
+        f.fs.write(Path::new("C:/APP/etc/ssl/blog.test.key"), "k")
+            .unwrap();
+        render_sites(&f.ctx, &sites).unwrap();
+        let blog = f.fs.read("C:/APP/etc/nginx/sites/blog.conf");
+        assert!(blog.contains("    listen 80;\n    listen 443 ssl;\n"));
+        assert!(blog.contains(r#"ssl_certificate "C:/APP/etc/ssl/blog.test.crt";"#));
+        assert!(blog.contains(r#"ssl_certificate_key "C:/APP/etc/ssl/blog.test.key";"#));
+        // Sin certificado, ese sitio sigue solo por HTTP.
+        assert!(!f
+            .fs
+            .read("C:/APP/etc/nginx/sites/shop.conf")
+            .contains("ssl"));
+        assert_eq!(NginxDriver.ports(&f.ctx), vec![80, 443]);
     }
 
     #[test]

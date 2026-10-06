@@ -1,6 +1,10 @@
 //! Casos de uso. Los comandos de Tauri solo llaman a estos métodos.
 
+mod create_site;
 pub mod sites;
+mod ssl;
+
+pub use create_site::{COMPOSER_URL, WORDPRESS_URL};
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::PathBuf;
@@ -13,7 +17,10 @@ use crate::domain::{
 };
 use crate::drivers::{nginx, templates};
 use crate::error::AppError;
-use crate::ports::{write_if_changed, HostsManager, ShellLauncher};
+use crate::ports::{
+    write_if_changed, ArchiveExtractor, CertificateAuthority, Downloader, HostsManager,
+    SecretSource, ShellLauncher,
+};
 use crate::supervisor::Supervisor;
 use sites::scan_sites;
 
@@ -45,29 +52,45 @@ pub struct PhpExtension {
     pub enabled: bool,
 }
 
+/// Adaptadores que usan los casos de uso además de los del supervisor.
+pub struct CoreAdapters {
+    pub hosts: Arc<dyn HostsManager>,
+    pub shell: Arc<dyn ShellLauncher>,
+    pub downloader: Arc<dyn Downloader>,
+    pub archive: Arc<dyn ArchiveExtractor>,
+    pub ca: Arc<dyn CertificateAuthority>,
+    pub secrets: Arc<dyn SecretSource>,
+}
+
 pub struct Core {
     pub supervisor: Arc<Supervisor>,
     hosts: Arc<dyn HostsManager>,
     shell: Arc<dyn ShellLauncher>,
+    downloader: Arc<dyn Downloader>,
+    archive: Arc<dyn ArchiveExtractor>,
+    ca: Arc<dyn CertificateAuthority>,
+    secrets: Arc<dyn SecretSource>,
     /// PATH del sistema, base del PATH propio de la terminal.
     system_path: String,
     /// Evita dos sincronizaciones de sitios a la vez.
     sites_lock: tokio::sync::Mutex<()>,
+    /// Se crea un sitio a la vez.
+    create_lock: tokio::sync::Mutex<()>,
 }
 
 impl Core {
-    pub fn new(
-        supervisor: Arc<Supervisor>,
-        hosts: Arc<dyn HostsManager>,
-        shell: Arc<dyn ShellLauncher>,
-        system_path: String,
-    ) -> Self {
+    pub fn new(supervisor: Arc<Supervisor>, adapters: CoreAdapters, system_path: String) -> Self {
         Core {
             supervisor,
-            hosts,
-            shell,
+            hosts: adapters.hosts,
+            shell: adapters.shell,
+            downloader: adapters.downloader,
+            archive: adapters.archive,
+            ca: adapters.ca,
+            secrets: adapters.secrets,
             system_path,
             sites_lock: tokio::sync::Mutex::new(()),
+            create_lock: tokio::sync::Mutex::new(()),
         }
     }
 
@@ -82,6 +105,7 @@ impl Core {
     }
 
     pub async fn start_all(&self) -> Result<(), AppError> {
+        self.ensure_certs()?;
         self.supervisor.start_all().await
     }
 
@@ -90,6 +114,9 @@ impl Core {
     }
 
     pub async fn start(&self, id: ServiceId) -> Result<(), AppError> {
+        if id == ServiceId::Nginx {
+            self.ensure_certs()?;
+        }
         self.supervisor.start(id).await
     }
 
@@ -98,6 +125,9 @@ impl Core {
     }
 
     pub async fn reload(&self, id: ServiceId) -> Result<(), AppError> {
+        if id == ServiceId::Nginx {
+            self.ensure_certs()?;
+        }
         self.supervisor.reload(id).await
     }
 
@@ -328,6 +358,7 @@ impl Core {
     /// (un solo pedido de permiso) y recarga Nginx si está en marcha.
     pub async fn sync_sites(&self) -> Result<Vec<Site>, AppError> {
         let _guard = self.sites_lock.lock().await;
+        self.ensure_certs()?;
         let ctx = self.supervisor.context()?;
         let mut sites = ctx.sites.clone();
         let changed = nginx::render_sites(&ctx, &sites)?;
@@ -390,14 +421,9 @@ impl Core {
                 "Inicia Nginx para abrir la base de datos.".into(),
             ));
         }
-        let host = format!("{}.{}", nginx::ADMINER_SITE, cfg.tld);
-        let host = if cfg.http_port == 80 {
-            host
-        } else {
-            format!("{host}:{}", cfg.http_port)
-        };
+        let url = sites::site_url(&cfg, &format!("{}.{}", nginx::ADMINER_SITE, cfg.tld));
         Ok(format!(
-            "http://{host}/?server=127.0.0.1:{}&username=root",
+            "{url}?server=127.0.0.1:{}&username=root",
             cfg.mariadb_port
         ))
     }
@@ -447,6 +473,12 @@ impl Core {
         }
         let mut env = HashMap::new();
         env.insert("PATH".to_string(), joined.join(sep));
+        // `php` de la terminal usa el mismo php.ini que el servidor.
+        env.insert("PHPRC".to_string(), slash(&deps.paths.etc_php()));
+        env.insert(
+            "PHP_INI_SCAN_DIR".to_string(),
+            slash(&deps.paths.php_custom()),
+        );
         Ok(env)
     }
 

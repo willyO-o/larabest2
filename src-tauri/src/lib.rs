@@ -19,14 +19,15 @@ use std::time::Duration;
 
 use tauri::{AppHandle, Emitter, Manager, RunEvent, WindowEvent};
 
+use adapters::shared::{archive::ZipExtractor, ca::LocalCa, ca::TrustStore, secrets::OsSecrets};
 use adapters::shared::{
     binaries::DirBinaryProvider, config::JsonConfigStore, fs::StdFileStore,
     watcher::watch_first_level,
 };
-use domain::{Paths, ServiceStatus, Site};
-use ports::{EventSink, HostsManager, PortChecker, ProcessRunner, ShellLauncher};
+use domain::{Paths, ServiceStatus, Site, SiteProgress};
+use ports::{Downloader, EventSink, HostsManager, PortChecker, ProcessRunner, ShellLauncher};
 use supervisor::{Deps, Supervisor, Timings};
-use usecases::Core;
+use usecases::{Core, CoreAdapters};
 
 /// Estado compartido con los comandos.
 pub struct AppState {
@@ -48,6 +49,10 @@ impl EventSink for TauriEvents {
         let _ = self.app.emit("sites:changed", sites);
         tray::rebuild(&self.app);
     }
+
+    fn site_progress(&self, progress: &SiteProgress) {
+        let _ = self.app.emit("sites:progress", progress);
+    }
 }
 
 struct Platform {
@@ -55,6 +60,8 @@ struct Platform {
     ports: Arc<dyn PortChecker>,
     shell: Arc<dyn ShellLauncher>,
     hosts: Arc<dyn HostsManager>,
+    downloader: Arc<dyn Downloader>,
+    trust: Arc<dyn TrustStore>,
 }
 
 #[cfg(windows)]
@@ -69,6 +76,8 @@ fn platform(app_name: &str, paths: &Paths) -> Platform {
             &paths.tmp(),
             runner.clone(),
         )),
+        downloader: Arc::new(WindowsDownloader::new(runner.clone())),
+        trust: Arc::new(CertutilTrustStore::new(runner.clone())),
         runner,
         ports: Arc::new(WindowsPortChecker),
         shell: Arc::new(WindowsShellLauncher),
@@ -83,6 +92,8 @@ fn platform(_app_name: &str, _paths: &Paths) -> Platform {
         ports: Arc::new(UnsupportedPorts),
         shell: Arc::new(UnsupportedShell),
         hosts: Arc::new(UnsupportedHosts),
+        downloader: Arc::new(UnsupportedDownloader),
+        trust: Arc::new(UnsupportedTrustStore),
     }
 }
 
@@ -116,6 +127,18 @@ fn setup(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     let app_name = settings::app_name(app);
     let paths = Paths::new(settings::load_root(app));
     let platform = platform(&app_name, &paths);
+    // La clave de la CA vive en la carpeta de datos del usuario, no en la raíz.
+    let ca_dir = app
+        .path()
+        .app_local_data_dir()
+        .map(|d| d.join("ca"))
+        .unwrap_or_else(|_| paths.root().join("data").join("ca"));
+    let ca = Arc::new(LocalCa::new(
+        ca_dir,
+        paths.clone(),
+        app_name.clone(),
+        platform.trust.clone(),
+    ));
     let deps = Deps {
         app_name,
         paths: paths.clone(),
@@ -129,8 +152,14 @@ fn setup(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     let supervisor = Supervisor::new(deps, Timings::default());
     let core = Arc::new(Core::new(
         supervisor,
-        platform.hosts,
-        platform.shell,
+        CoreAdapters {
+            hosts: platform.hosts,
+            shell: platform.shell,
+            downloader: platform.downloader,
+            archive: Arc::new(ZipExtractor),
+            ca,
+            secrets: Arc::new(OsSecrets),
+        },
         std::env::var("PATH").unwrap_or_default(),
     ));
     app.manage(AppState {

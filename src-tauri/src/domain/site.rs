@@ -16,6 +16,56 @@ pub struct Site {
     pub in_hosts: bool,
 }
 
+/// Plantilla para crear un sitio nuevo.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SitePreset {
+    Blank,
+    Wordpress,
+    Laravel,
+}
+
+impl SitePreset {
+    pub fn label(self) -> &'static str {
+        match self {
+            SitePreset::Blank => "En blanco",
+            SitePreset::Wordpress => "WordPress",
+            SitePreset::Laravel => "Laravel",
+        }
+    }
+
+    /// WordPress y Laravel necesitan base de datos.
+    pub fn needs_database(self) -> bool {
+        !matches!(self, SitePreset::Blank)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ProgressState {
+    Running,
+    Done,
+    Failed,
+}
+
+/// Carga del evento `sites:progress` mientras se crea un sitio.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SiteProgress {
+    pub name: String,
+    pub preset: SitePreset,
+    /// Paso actual, en español, para mostrar tal cual.
+    pub step: String,
+    pub state: ProgressState,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+}
+
+/// Nombre de la base de datos de un sitio: minúsculas y `_` en lugar de `-`.
+pub fn database_name(site: &str) -> String {
+    site.to_ascii_lowercase().replace('-', "_")
+}
+
 /// Solo letras, números y guiones, sin guion al inicio ni al final: así el
 /// nombre sirve como dominio y como nombre de archivo.
 pub fn is_valid_site_name(name: &str) -> bool {
@@ -29,6 +79,21 @@ pub fn is_valid_site_name(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn database_names_are_safe_identifiers() {
+        assert_eq!(database_name("Mi-Blog2"), "mi_blog2");
+    }
+
+    #[test]
+    fn presets_serialize_lowercase() {
+        assert_eq!(
+            serde_json::to_value(SitePreset::Wordpress).unwrap(),
+            "wordpress"
+        );
+        assert!(SitePreset::Laravel.needs_database());
+        assert!(!SitePreset::Blank.needs_database());
+    }
 
     #[test]
     fn validates_site_names() {

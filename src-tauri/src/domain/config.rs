@@ -39,8 +39,9 @@ pub enum ThemePreference {
     Dark,
 }
 
-/// Extensiones que piden Laravel y WordPress; activas por defecto.
-pub const DEFAULT_PHP_EXTENSIONS: [&str; 10] = [
+/// Extensiones que piden Laravel y WordPress (más `pdo_sqlite`); activas
+/// por defecto.
+pub const DEFAULT_PHP_EXTENSIONS: [&str; 11] = [
     "curl",
     "fileinfo",
     "gd",
@@ -51,6 +52,8 @@ pub const DEFAULT_PHP_EXTENSIONS: [&str; 10] = [
     "mysqli",
     "zip",
     "exif",
+    // Laravel crea por defecto una base SQLite al instalarse.
+    "pdo_sqlite",
 ];
 
 /// Contenido de `app.json`.
@@ -69,6 +72,9 @@ pub struct AppConfig {
     /// Iniciar todos los servicios al abrir la app.
     pub auto_start: bool,
     pub theme: ThemePreference,
+    /// Servir los sitios también por HTTPS con la CA local.
+    pub ssl: bool,
+    pub https_port: u16,
 }
 
 impl Default for AppConfig {
@@ -83,6 +89,8 @@ impl Default for AppConfig {
             php_extensions: None,
             auto_start: false,
             theme: ThemePreference::System,
+            ssl: false,
+            https_port: 443,
         }
     }
 }
@@ -122,7 +130,9 @@ mod tests {
         assert_eq!(cfg.versions.php.as_deref(), Some("8.3.20"));
         assert_eq!(cfg.http_port, 80);
         assert_eq!(cfg.php_ports(), vec![9000, 9001, 9002, 9003]);
-        assert_eq!(cfg.php_extensions().len(), 10);
+        assert_eq!(cfg.php_extensions().len(), 11);
+        assert!(!cfg.ssl);
+        assert_eq!(cfg.https_port, 443);
         assert!(!cfg.auto_start);
         assert_eq!(cfg.theme, ThemePreference::System);
     }

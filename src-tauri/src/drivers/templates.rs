@@ -12,6 +12,8 @@ pub const ADMINER_PHP: &str = "adminer.php";
 pub const COMPOSER_BAT: &str = "composer.bat";
 pub const USER_INI: &str = "user.ini";
 pub const USER_CNF: &str = "user.cnf";
+pub const WP_CONFIG: &str = "wp-config.php";
+pub const BLANK_INDEX: &str = "blank-index.php";
 
 fn environment() -> Environment<'static> {
     let mut env = Environment::new();
@@ -25,6 +27,8 @@ fn environment() -> Environment<'static> {
         (COMPOSER_BAT, include_str!("../../templates/composer.bat")),
         (USER_INI, include_str!("../../templates/user.ini")),
         (USER_CNF, include_str!("../../templates/user.cnf")),
+        (WP_CONFIG, include_str!("../../templates/wp-config.php")),
+        (BLANK_INDEX, include_str!("../../templates/blank-index.php")),
     ];
     for (name, source) in templates {
         env.add_template(name, source)
@@ -76,6 +80,8 @@ mod tests {
             COMPOSER_BAT,
             USER_INI,
             USER_CNF,
+            WP_CONFIG,
+            BLANK_INDEX,
         ] {
             assert!(env.get_template(name).is_ok(), "{name}");
         }

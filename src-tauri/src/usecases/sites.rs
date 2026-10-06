@@ -1,6 +1,20 @@
 use crate::domain::{is_valid_site_name, slash, AppConfig, Paths, Site};
 use crate::ports::FileStore;
 
+/// URL de un dominio: `https://` si HTTPS está activado.
+pub fn site_url(cfg: &AppConfig, domain: &str) -> String {
+    match (
+        cfg.ssl,
+        cfg.ssl && cfg.https_port == 443,
+        cfg.http_port == 80,
+    ) {
+        (true, true, _) => format!("https://{domain}/"),
+        (true, false, _) => format!("https://{domain}:{}/", cfg.https_port),
+        (false, _, true) => format!("http://{domain}/"),
+        (false, _, false) => format!("http://{domain}:{}/", cfg.http_port),
+    }
+}
+
 /// Cada subcarpeta válida de `www/` es un sitio. Las que no sirven como
 /// dominio (espacios, puntos, guiones bajos) se ignoran.
 pub fn scan_sites(fs: &dyn FileStore, paths: &Paths, cfg: &AppConfig) -> Vec<Site> {
@@ -19,11 +33,7 @@ pub fn scan_sites(fs: &dyn FileStore, paths: &Paths, cfg: &AppConfig) -> Vec<Sit
                 dir.clone()
             };
             let domain = format!("{}.{}", name.to_ascii_lowercase(), cfg.tld);
-            let url = if cfg.http_port == 80 {
-                format!("http://{domain}/")
-            } else {
-                format!("http://{domain}:{}/", cfg.http_port)
-            };
+            let url = site_url(cfg, &domain);
             Site {
                 name,
                 domain,
@@ -61,6 +71,17 @@ mod tests {
         assert_eq!(sites[1].domain, "wordpress.test");
         assert_eq!(sites[1].url, "http://wordpress.test/");
         assert_eq!(sites[1].document_root, "C:/APP/www/WordPress");
+    }
+
+    #[test]
+    fn https_urls_when_ssl_is_enabled() {
+        let mut cfg = AppConfig {
+            ssl: true,
+            ..AppConfig::default()
+        };
+        assert_eq!(site_url(&cfg, "blog.test"), "https://blog.test/");
+        cfg.https_port = 8443;
+        assert_eq!(site_url(&cfg, "blog.test"), "https://blog.test:8443/");
     }
 
     #[test]

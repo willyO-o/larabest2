@@ -112,6 +112,23 @@ impl Paths {
         self.etc().join("ssl")
     }
 
+    pub fn site_cert(&self, domain: &str) -> PathBuf {
+        self.etc_ssl().join(format!("{domain}.crt"))
+    }
+
+    pub fn site_key(&self, domain: &str) -> PathBuf {
+        self.etc_ssl().join(format!("{domain}.key"))
+    }
+
+    /// Descargas reutilizables (WordPress).
+    pub fn downloads(&self) -> PathBuf {
+        self.tmp().join("downloads")
+    }
+
+    pub fn composer_phar(&self) -> PathBuf {
+        self.bin_composer().join("composer.phar")
+    }
+
     pub fn data_mariadb(&self) -> PathBuf {
         self.root.join("data").join("mariadb")
     }

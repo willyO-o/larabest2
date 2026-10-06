@@ -1,14 +1,18 @@
 //! Adaptadores de Windows 10 y 11.
 
+mod download;
 mod hosts;
 mod ports;
 mod process;
 mod shell;
+mod trust;
 
+pub use download::WindowsDownloader;
 pub use hosts::{apply_hosts_request, WindowsHostsManager};
 pub use ports::WindowsPortChecker;
 pub use process::WindowsProcessRunner;
 pub use shell::WindowsShellLauncher;
+pub use trust::CertutilTrustStore;
 
 use std::path::PathBuf;
 

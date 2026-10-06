@@ -8,11 +8,12 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 
+use crate::adapters::shared::ca::TrustStore;
 use crate::domain::HostEntry;
 use crate::error::AppError;
 use crate::ports::{
-    CommandOutput, HostsManager, PortChecker, ProcessHandle, ProcessRunner, ProcessSpec,
-    ShellLauncher,
+    CommandOutput, Downloader, HostsManager, PortChecker, ProcessHandle, ProcessRunner,
+    ProcessSpec, ShellLauncher,
 };
 
 fn unsupported() -> AppError {
@@ -81,6 +82,28 @@ impl HostsManager for UnsupportedHosts {
     }
 
     async fn sync(&self, _entries: &[HostEntry]) -> Result<(), AppError> {
+        Err(unsupported())
+    }
+}
+
+pub struct UnsupportedDownloader;
+
+#[async_trait]
+impl Downloader for UnsupportedDownloader {
+    async fn download(&self, _url: &str, _dest: &Path) -> Result<(), AppError> {
+        Err(unsupported())
+    }
+}
+
+pub struct UnsupportedTrustStore;
+
+#[async_trait]
+impl TrustStore for UnsupportedTrustStore {
+    async fn contains(&self, _thumbprint: &str) -> bool {
+        false
+    }
+
+    async fn add(&self, _cert: &Path) -> Result<(), AppError> {
         Err(unsupported())
     }
 }

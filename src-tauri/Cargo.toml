@@ -25,6 +25,12 @@ thiserror = "2"
 async-trait = "0.1.92"
 minijinja = "2"
 notify = "8"
+zip = { version = "8", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+p256 = { version = "0.13", features = ["ecdsa", "pkcs8", "pem"] }
+rand_core = { version = "0.6", features = ["getrandom"] }
+sha1 = "0.10"
+x509-cert = { version = "0.2.5", features = ["builder", "pem"] }
+sha2 = { version = "0.10.9", features = ["oid"] }
 
 [profile.release]
 opt-level = "s"

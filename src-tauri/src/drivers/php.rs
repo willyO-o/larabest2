@@ -29,8 +29,6 @@ fn cgi_specs(ctx: &RenderContext) -> Result<Vec<ProcessSpec>, AppError> {
         .php_ports()
         .into_iter()
         .map(|port| {
-            // El directorio de trabajo es el de PHP para que
-            // `extension_dir = "ext"` apunte a su carpeta `ext/`.
             ProcessSpec::new(&program, &dir)
                 .arg("-b")
                 .arg(format!("127.0.0.1:{port}"))
@@ -42,6 +40,29 @@ fn cgi_specs(ctx: &RenderContext) -> Result<Vec<ProcessSpec>, AppError> {
                 .log_to(log_for_port(ctx, port))
         })
         .collect())
+}
+
+/// `php` de línea de comandos de la versión activa, con el mismo `php.ini`
+/// y los ajustes propios que usa el servidor (por ejemplo para Composer).
+pub fn cli_spec(
+    ctx: &RenderContext,
+    args: &[String],
+    cwd: &std::path::Path,
+) -> Result<ProcessSpec, AppError> {
+    let dir = ctx.install_dir(ServiceId::Php)?;
+    let program = dir.join(super::exe("php"));
+    if !ctx.fs.exists(&program) {
+        return Err(AppError::BinaryMissing {
+            service: ServiceId::Php,
+            detail: format!("falta {}", slash(&program)),
+        });
+    }
+    let mut spec = ProcessSpec::new(program, cwd)
+        .arg("-c")
+        .arg(slash(&ctx.paths.php_ini()))
+        .env("PHP_INI_SCAN_DIR", slash(&ctx.paths.php_custom()));
+    spec.args.extend(args.iter().cloned());
+    Ok(spec)
 }
 
 #[async_trait]
@@ -89,6 +110,9 @@ impl ServiceDriver for PhpDriver {
             context! {
                 app_name => ctx.app_name,
                 version => install.version,
+                // Ruta absoluta: así sirve igual para php-cgi, la terminal y
+                // Composer, sin depender del directorio de trabajo.
+                ext_dir => format!("{}/ext", install.path),
                 logs => slash(&ctx.paths.logs()),
                 tmp => slash(&ctx.paths.tmp()),
                 extensions => ctx.config.php_extensions(),
@@ -144,7 +168,7 @@ mod tests {
         PhpDriver.render_config(&f.ctx).await.unwrap();
         let ini = f.fs.read("C:/APP/etc/php/php.ini");
         assert!(ini.contains("PHP 8.4.6"));
-        assert!(ini.contains("extension_dir = \"ext\"\n"));
+        assert!(ini.contains("extension_dir = \"C:/APP/bin/php/8.4.6/ext\"\n"));
         for ext in crate::domain::DEFAULT_PHP_EXTENSIONS {
             assert!(ini.contains(&format!("\nextension={ext}\n")), "{ext}");
         }
@@ -204,6 +228,30 @@ mod tests {
         assert_eq!(
             slash(first.log_file.as_ref().unwrap()),
             "C:/APP/logs/php-cgi-9000.log"
+        );
+    }
+
+    #[test]
+    fn cli_spec_uses_php_exe_with_generated_ini() {
+        let f = fixture();
+        let args = vec!["-v".to_string()];
+        let err = cli_spec(&f.ctx, &args, Path::new("C:/APP/www")).unwrap_err();
+        assert!(err.to_string().contains(&exe("php")));
+
+        f.fs.write(
+            Path::new(&format!("C:/APP/bin/php/8.4.6/{}", exe("php"))),
+            "",
+        )
+        .unwrap();
+        let spec = cli_spec(&f.ctx, &args, Path::new("C:/APP/www")).unwrap();
+        assert_eq!(spec.args, vec!["-c", "C:/APP/etc/php/php.ini", "-v"]);
+        assert_eq!(slash(&spec.cwd), "C:/APP/www");
+        assert_eq!(
+            spec.env,
+            vec![(
+                "PHP_INI_SCAN_DIR".to_string(),
+                "C:/APP/etc/php/custom".to_string()
+            )]
         );
     }
 

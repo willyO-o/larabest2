@@ -111,6 +111,20 @@ impl FileStore for FakeFs {
         self.files.lock().unwrap().remove(&key(path));
         Ok(())
     }
+
+    fn remove_dir_all(&self, path: &Path) -> Result<(), AppError> {
+        let k = key(path);
+        let prefix = format!("{k}/");
+        self.files
+            .lock()
+            .unwrap()
+            .retain(|f, _| f != &k && !f.starts_with(&prefix));
+        self.dirs
+            .lock()
+            .unwrap()
+            .retain(|d| d != &k && !d.starts_with(&prefix));
+        Ok(())
+    }
 }
 
 // ---------------------------------------------------------------- procesos
@@ -131,9 +145,14 @@ struct RunnerState {
     spawn_errors: HashSet<String>,
 }
 
+/// Respuesta programada para `run` según el comando (por ejemplo, simular
+/// que `composer create-project` crea archivos).
+pub type RunHook = Box<dyn Fn(&ProcessSpec) -> Option<CommandOutput> + Send + Sync>;
+
 #[derive(Default)]
 pub struct FakeRunner {
     state: Mutex<RunnerState>,
+    hook: Mutex<Option<std::sync::Arc<RunHook>>>,
 }
 
 impl FakeRunner {
@@ -175,6 +194,10 @@ impl FakeRunner {
             .unwrap()
             .spawn_errors
             .insert(exe_prefix.into());
+    }
+
+    pub fn on_run(&self, hook: RunHook) {
+        *self.hook.lock().unwrap() = Some(std::sync::Arc::new(hook));
     }
 
     pub fn spawned(&self) -> Vec<ProcessSpec> {
@@ -232,6 +255,11 @@ impl ProcessRunner for FakeRunner {
     }
 
     async fn run(&self, spec: &ProcessSpec, _timeout: Duration) -> Result<CommandOutput, AppError> {
+        let hook = self.hook.lock().unwrap().clone();
+        if let Some(out) = hook.and_then(|h| h(spec)) {
+            self.state.lock().unwrap().ran.push(spec.clone());
+            return Ok(out);
+        }
         let mut s = self.state.lock().unwrap();
         s.ran.push(spec.clone());
         for pid in std::mem::take(&mut s.kill_on_run) {
@@ -368,6 +396,7 @@ impl ConfigStore for FakeConfig {
 pub struct FakeEvents {
     pub services: Mutex<Vec<ServiceStatus>>,
     pub sites: Mutex<Vec<Vec<Site>>>,
+    pub progress: Mutex<Vec<crate::domain::SiteProgress>>,
 }
 
 impl FakeEvents {
@@ -399,6 +428,10 @@ impl EventSink for FakeEvents {
 
     fn sites_changed(&self, sites: &[Site]) {
         self.sites.lock().unwrap().push(sites.to_vec());
+    }
+
+    fn site_progress(&self, progress: &crate::domain::SiteProgress) {
+        self.progress.lock().unwrap().push(progress.clone());
     }
 }
 
@@ -454,6 +487,9 @@ pub struct Harness {
     pub events: std::sync::Arc<FakeEvents>,
     pub hosts: std::sync::Arc<FakeHosts>,
     pub shell: std::sync::Arc<FakeShell>,
+    pub downloader: std::sync::Arc<FakeDownloader>,
+    pub archive: std::sync::Arc<FakeArchive>,
+    pub ca: std::sync::Arc<FakeCa>,
     pub supervisor: std::sync::Arc<crate::supervisor::Supervisor>,
 }
 
@@ -503,6 +539,9 @@ impl Harness {
         };
         let supervisor = crate::supervisor::Supervisor::new(deps, timings);
         Harness {
+            downloader: Arc::new(FakeDownloader::new(fs.clone())),
+            archive: Arc::new(FakeArchive::new(fs.clone())),
+            ca: Arc::new(FakeCa::new(fs.clone())),
             fs,
             runner,
             ports,
@@ -517,9 +556,133 @@ impl Harness {
     pub fn core(&self) -> crate::usecases::Core {
         crate::usecases::Core::new(
             self.supervisor.clone(),
-            self.hosts.clone(),
-            self.shell.clone(),
+            crate::usecases::CoreAdapters {
+                hosts: self.hosts.clone(),
+                shell: self.shell.clone(),
+                downloader: self.downloader.clone(),
+                archive: self.archive.clone(),
+                ca: self.ca.clone(),
+                secrets: std::sync::Arc::new(FakeSecrets),
+            },
             "C:\\Windows".into(),
         )
+    }
+}
+
+// ---------------------------------------------------------------- descargas
+
+/// Escribe un contenido conocido en el destino y registra la URL.
+pub struct FakeDownloader {
+    fs: std::sync::Arc<FakeFs>,
+    pub urls: Mutex<Vec<String>>,
+    pub fail: Mutex<bool>,
+}
+
+impl FakeDownloader {
+    pub fn new(fs: std::sync::Arc<FakeFs>) -> Self {
+        FakeDownloader {
+            fs,
+            urls: Mutex::new(Vec::new()),
+            fail: Mutex::new(false),
+        }
+    }
+}
+
+#[async_trait]
+impl crate::ports::Downloader for FakeDownloader {
+    async fn download(&self, url: &str, dest: &Path) -> Result<(), AppError> {
+        self.urls.lock().unwrap().push(url.to_string());
+        if *self.fail.lock().unwrap() {
+            return Err(AppError::Process(format!(
+                "No se pudo descargar {url}: sin conexión"
+            )));
+        }
+        self.fs.write(dest, &format!("descargado de {url}"))
+    }
+}
+
+/// "Extrae" un WordPress mínimo (o nada si `broken`).
+pub struct FakeArchive {
+    fs: std::sync::Arc<FakeFs>,
+    pub broken: Mutex<bool>,
+}
+
+impl FakeArchive {
+    pub fn new(fs: std::sync::Arc<FakeFs>) -> Self {
+        FakeArchive {
+            fs,
+            broken: Mutex::new(false),
+        }
+    }
+}
+
+impl crate::ports::ArchiveExtractor for FakeArchive {
+    fn extract_zip(&self, _archive: &Path, dest: &Path, _strip_top: bool) -> Result<(), AppError> {
+        if *self.broken.lock().unwrap() {
+            return self.fs.write(&dest.join("LEEME.txt"), "no es WordPress");
+        }
+        self.fs.write(&dest.join("index.php"), "<?php")?;
+        self.fs.write(&dest.join("wp-settings.php"), "<?php")
+    }
+}
+
+// ---------------------------------------------------------------- certificados
+
+pub struct FakeCa {
+    fs: std::sync::Arc<FakeFs>,
+    pub trusted: Mutex<bool>,
+    pub refuse_trust: Mutex<bool>,
+    pub issued: Mutex<Vec<String>>,
+}
+
+impl FakeCa {
+    pub fn new(fs: std::sync::Arc<FakeFs>) -> Self {
+        FakeCa {
+            fs,
+            trusted: Mutex::new(false),
+            refuse_trust: Mutex::new(false),
+            issued: Mutex::new(Vec::new()),
+        }
+    }
+}
+
+#[async_trait]
+impl crate::ports::CertificateAuthority for FakeCa {
+    fn ensure_ca(&self) -> Result<(), AppError> {
+        Ok(())
+    }
+
+    fn ensure_cert(&self, domain: &str) -> Result<crate::ports::SiteCert, AppError> {
+        let paths = crate::domain::Paths::new(ROOT);
+        let site = crate::ports::SiteCert {
+            cert: paths.site_cert(domain),
+            key: paths.site_key(domain),
+        };
+        if !self.fs.exists(&site.cert) {
+            self.issued.lock().unwrap().push(domain.to_string());
+            self.fs.write(&site.cert, "cert")?;
+            self.fs.write(&site.key, "key")?;
+        }
+        Ok(site)
+    }
+
+    async fn is_trusted(&self) -> bool {
+        *self.trusted.lock().unwrap()
+    }
+
+    async fn trust(&self) -> Result<(), AppError> {
+        if *self.refuse_trust.lock().unwrap() {
+            return Err(AppError::Process("se canceló la instalación".into()));
+        }
+        *self.trusted.lock().unwrap() = true;
+        Ok(())
+    }
+}
+
+pub struct FakeSecrets;
+
+impl crate::ports::SecretSource for FakeSecrets {
+    fn random_string(&self, len: usize) -> String {
+        "k".repeat(len)
     }
 }

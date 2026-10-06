@@ -28,6 +28,44 @@ fn admin(ctx: &RenderContext, command: &str) -> Result<ProcessSpec, AppError> {
         .arg(command))
 }
 
+/// `CREATE DATABASE` con el cliente `mariadb`. El nombre debe venir ya
+/// validado (`domain::database_name`).
+pub fn create_database_spec(ctx: &RenderContext, db: &str) -> Result<ProcessSpec, AppError> {
+    if db.is_empty()
+        || !db
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+    {
+        return Err(AppError::InvalidInput(format!(
+            "Nombre de base de datos no válido: {db}"
+        )));
+    }
+    Ok(tool(ctx, "mariadb")?
+        .arg("--host=127.0.0.1")
+        .arg(format!("--port={}", ctx.config.mariadb_port))
+        .arg("--user=root")
+        .arg("-e")
+        .arg(format!(
+            "CREATE DATABASE IF NOT EXISTS `{db}` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+        )))
+}
+
+/// Crea la base de datos si no existe. MariaDB debe estar en marcha.
+pub async fn create_database(ctx: &RenderContext, db: &str) -> Result<(), AppError> {
+    let out = ctx
+        .runner
+        .run(&create_database_spec(ctx, db)?, ADMIN_TIMEOUT)
+        .await?;
+    if out.success() {
+        Ok(())
+    } else {
+        Err(AppError::Process(format!(
+            "No se pudo crear la base de datos {db}: {}",
+            out.text()
+        )))
+    }
+}
+
 #[async_trait]
 impl ServiceDriver for MariadbDriver {
     fn id(&self) -> ServiceId {
@@ -213,6 +251,34 @@ mod tests {
         });
         let err = MariadbDriver.first_run_setup(&f.ctx).await.unwrap_err();
         assert!(err.to_string().contains("Access denied"));
+    }
+
+    #[test]
+    fn create_database_uses_client_and_rejects_bad_names() {
+        let f = fixture();
+        let spec = create_database_spec(&f.ctx, "mi_blog").unwrap();
+        assert_eq!(
+            slash(&spec.program),
+            format!("C:/APP/bin/mariadb/11.4.5/bin/{}", exe("mariadb"))
+        );
+        assert_eq!(
+            spec.args.last().unwrap(),
+            "CREATE DATABASE IF NOT EXISTS `mi_blog` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+        );
+        assert!(create_database_spec(&f.ctx, "x`; DROP").is_err());
+        assert!(create_database_spec(&f.ctx, "").is_err());
+    }
+
+    #[tokio::test]
+    async fn create_database_reports_client_errors() {
+        let f = fixture();
+        f.runner.set_run_output(CommandOutput {
+            code: Some(1),
+            stdout: String::new(),
+            stderr: "Can't connect".into(),
+        });
+        let err = create_database(&f.ctx, "blog").await.unwrap_err();
+        assert!(err.to_string().contains("Can't connect"));
     }
 
     #[test]

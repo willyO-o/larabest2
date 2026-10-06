@@ -1,9 +1,12 @@
 //! Adaptadores que sirven en cualquier plataforma (solo usan `std`).
 
+pub mod archive;
 pub mod binaries;
+pub mod ca;
 pub mod config;
 pub mod fs;
 pub mod netstat;
+pub mod secrets;
 pub mod watcher;
 
 #[cfg(test)]
