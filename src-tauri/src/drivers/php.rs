@@ -57,9 +57,12 @@ pub fn cli_spec(
             detail: format!("falta {}", slash(&program)),
         });
     }
+    // `PHPRC` además de `-c`: los `php` que lanza Composer en sus scripts
+    // (`@php artisan ...`) no reciben `-c`, pero sí heredan el entorno.
     let mut spec = ProcessSpec::new(program, cwd)
         .arg("-c")
         .arg(slash(&ctx.paths.php_ini()))
+        .env("PHPRC", slash(&ctx.paths.etc_php()))
         .env("PHP_INI_SCAN_DIR", slash(&ctx.paths.php_custom()));
     spec.args.extend(args.iter().cloned());
     Ok(spec)
@@ -248,10 +251,13 @@ mod tests {
         assert_eq!(slash(&spec.cwd), "C:/APP/www");
         assert_eq!(
             spec.env,
-            vec![(
-                "PHP_INI_SCAN_DIR".to_string(),
-                "C:/APP/etc/php/custom".to_string()
-            )]
+            vec![
+                ("PHPRC".to_string(), "C:/APP/etc/php".to_string()),
+                (
+                    "PHP_INI_SCAN_DIR".to_string(),
+                    "C:/APP/etc/php/custom".to_string()
+                ),
+            ]
         );
     }
 

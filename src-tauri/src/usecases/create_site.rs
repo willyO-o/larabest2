@@ -24,9 +24,43 @@ const ARTISAN_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 /// Líneas de salida de Composer que se muestran si falla.
 const OUTPUT_TAIL: usize = 8;
 
+/// Quita los códigos de color ANSI (los scripts de Laravel usan `--ansi`).
+fn strip_ansi(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\u{1b}' && chars.peek() == Some(&'[') {
+            chars.next();
+            for c in chars.by_ref() {
+                if c.is_ascii_alphabetic() {
+                    break;
+                }
+            }
+            continue;
+        }
+        out.push(c);
+    }
+    out
+}
+
 fn tail(text: &str) -> String {
-    let lines: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
+    let clean = strip_ansi(text);
+    let lines: Vec<&str> = clean.lines().filter(|l| !l.trim().is_empty()).collect();
     lines[lines.len().saturating_sub(OUTPUT_TAIL)..].join("\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tail_strips_colors_and_keeps_last_lines() {
+        let text = "a\n\n\u{1b}[32mok\u{1b}[39m\n\u{1b}[1;31mError\u{1b}[0m: falló\n";
+        assert_eq!(tail(text), "a\nok\nError: falló");
+        let many: String = (0..20).map(|i| format!("l{i}\n")).collect();
+        assert_eq!(tail(&many).lines().count(), OUTPUT_TAIL);
+        assert!(tail(&many).ends_with("l19"));
+    }
 }
 
 /// Avisa a la interfaz de cada paso de la creación.

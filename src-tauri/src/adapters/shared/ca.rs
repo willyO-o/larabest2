@@ -108,6 +108,20 @@ pub fn issue_cert(ca: &Pem, domain: &str, app_name: &str) -> Result<Pem, AppErro
     to_pem(&cert, &key)
 }
 
+/// Días que faltan para que venza un certificado (negativo si ya venció).
+pub fn days_left(cert_pem: &str) -> Result<i64, AppError> {
+    let cert = Certificate::from_pem(cert_pem.as_bytes()).map_err(cert_error)?;
+    let not_after = cert.tbs_certificate.validity.not_after.to_system_time();
+    let now = std::time::SystemTime::now();
+    Ok(match not_after.duration_since(now) {
+        Ok(left) => (left.as_secs() / 86_400) as i64,
+        Err(past) => -((past.duration().as_secs() / 86_400) as i64),
+    })
+}
+
+/// Se renueva antes de vencer para no encontrarse con un sitio roto.
+const RENEW_DAYS: i64 = 30;
+
 /// Huella SHA-1 en hexadecimal (la que muestra Windows).
 pub fn thumbprint(cert_pem: &str) -> Result<String, AppError> {
     let cert = Certificate::from_pem(cert_pem.as_bytes()).map_err(cert_error)?;
@@ -197,8 +211,13 @@ impl CertificateAuthority for LocalCa {
             cert: self.paths.site_cert(domain),
             key: self.paths.site_key(domain),
         };
-        if site.cert.is_file() && site.key.is_file() {
-            return Ok(site);
+        if site.key.is_file() {
+            let current = Self::read(&site.cert).ok();
+            // Se reutiliza mientras sea válido; si está dañado o por vencer,
+            // se vuelve a emitir.
+            if current.is_some_and(|pem| days_left(&pem).is_ok_and(|d| d > RENEW_DAYS)) {
+                return Ok(site);
+            }
         }
         let pem = issue_cert(&self.load_ca()?, domain, &self.app_name)?;
         Self::write(&site.key, &pem.key)?;
@@ -321,6 +340,31 @@ mod tests {
             pem,
             "se reutiliza"
         );
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn new_leaf_has_about_825_days_left() {
+        let ca = generate_ca("LARABEST").unwrap();
+        let leaf = issue_cert(&ca, "blog.test", "LARABEST").unwrap();
+        let left = days_left(&leaf.cert).unwrap();
+        assert!((823..=825).contains(&left), "{left}");
+    }
+
+    #[test]
+    fn damaged_site_cert_is_reissued() {
+        let dir = temp_dir("ca-damaged");
+        let ca = LocalCa::new(
+            dir.join("ca"),
+            Paths::new(dir.join("root")),
+            "LARABEST".into(),
+            Arc::new(MemoryStore::default()),
+        );
+        let site = ca.ensure_cert("blog.test").unwrap();
+        std::fs::write(&site.cert, "dañado").unwrap();
+        ca.ensure_cert("blog.test").unwrap();
+        let pem = std::fs::read_to_string(&site.cert).unwrap();
+        assert!(pem.starts_with("-----BEGIN CERTIFICATE-----"));
         std::fs::remove_dir_all(dir).unwrap();
     }
 
