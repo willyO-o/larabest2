@@ -135,10 +135,10 @@ pub mod urls {
         "https://downloads.mariadb.org/rest-api/mariadb/all-releases/?olderReleases=false";
     pub const POSTGRESQL_VERSIONS: &str = "https://www.postgresql.org/versions.json";
     pub const MONGODB_CURRENT: &str = "https://downloads.mongodb.org/current.json";
-    /// Páginas `releases/latest` de GitHub (no la API: sin cuenta solo
-    /// permite 60 consultas por hora y por IP, poco para un aula o el CI).
-    pub const REDIS_LATEST: &str = "https://github.com/redis-windows/redis-windows/releases/latest";
-    pub const MAILPIT_LATEST: &str = "https://github.com/axllent/mailpit/releases/latest";
+    /// Feeds `releases.atom` de GitHub (no la API: sin cuenta solo permite
+    /// 60 consultas por hora y por IP, poco para un aula o el CI).
+    pub const REDIS_LATEST: &str = "https://github.com/redis-windows/redis-windows/releases.atom";
+    pub const MAILPIT_LATEST: &str = "https://github.com/axllent/mailpit/releases.atom";
     /// Réplica en fossies.org de los binarios de Apache Lounge (la que usa
     /// Scoop): apachelounge.com bloquea algunas descargas automáticas.
     pub const APACHE_INDEX: &str = "https://fossies.org/windows/www/";
@@ -147,7 +147,7 @@ pub mod urls {
     /// estable de la última versión de MySQL de una rama.
     pub const MYSQL_FORMULA: &str = "https://formulae.brew.sh/api/formula/mysql@8.4.json";
     pub const NODE_INDEX: &str = "https://nodejs.org/dist/index.json";
-    pub const GIT_LATEST: &str = "https://github.com/git-for-windows/git/releases/latest";
+    pub const GIT_LATEST: &str = "https://github.com/git-for-windows/git/releases.atom";
 
     pub fn mingit_zip(tag: &str, version: &str) -> String {
         format!(
@@ -390,18 +390,26 @@ pub fn mingit_from_tag(tag: &str) -> Option<(String, String)> {
     Some((version, url))
 }
 
-/// Último release de GitHub: su etiqueta, de la página `releases/latest`
-/// (enlaces `/releases/tag/<etiqueta>`) o de la respuesta JSON de la API.
+/// Último release estable de GitHub: su etiqueta, del feed
+/// `releases.atom` (enlaces `/releases/tag/<etiqueta>`, el más nuevo
+/// primero) o de la respuesta JSON de la API. Salta las versiones previas.
 pub fn github_tag(text: &str) -> Option<String> {
     if let Ok(doc) = serde_json::from_str::<Value>(text) {
         return doc.get("tag_name")?.as_str().map(str::to_string);
     }
-    let start = text.find("/releases/tag/")? + "/releases/tag/".len();
-    let tag: String = text[start..]
-        .chars()
-        .take_while(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))
-        .collect();
-    (!tag.is_empty()).then_some(tag)
+    let preview = |tag: &str| {
+        let t = tag.to_ascii_lowercase();
+        ["-rc", "rc", "beta", "alpha", "preview", "pre"]
+            .iter()
+            .any(|p| t.contains(p))
+    };
+    text.match_indices("/releases/tag/").find_map(|(i, m)| {
+        let tag: String = text[i + m.len()..]
+            .chars()
+            .take_while(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))
+            .collect();
+        (!tag.is_empty() && !preview(&tag)).then_some(tag)
+    })
 }
 
 #[cfg(test)]
@@ -530,8 +538,9 @@ mod tests {
         );
         assert_eq!(mingit_from_tag("v2.51.0.windows.2").unwrap().0, "2.51.0.2");
         assert_eq!(mingit_from_tag("2.51.0"), None);
-        let page = r#"<a href="/git-for-windows/git/releases/tag/v2.51.0.windows.1" data-view-component="true">"#;
-        assert_eq!(github_tag(page).as_deref(), Some("v2.51.0.windows.1"));
+        let feed = r#"<entry><link rel="alternate" type="text/html" href="https://github.com/git-for-windows/git/releases/tag/v2.52.0-rc1.windows.1"/></entry>
+            <entry><link rel="alternate" type="text/html" href="https://github.com/git-for-windows/git/releases/tag/v2.51.0.windows.1"/></entry>"#;
+        assert_eq!(github_tag(feed).as_deref(), Some("v2.51.0.windows.1"));
     }
 
     #[test]
