@@ -76,9 +76,17 @@ async fn e2e_windows() {
     );
 
     // La terminal usa el PHP de la app.
+    // Sin comillas en la línea de cmd: Rust las escaparía con \" y cmd no
+    // entiende ese escape.
+    let script = w.root.join("www").join("hola").join("binario.php");
+    std::fs::write(
+        &script,
+        "<?php echo PHP_BINARY . ' ' . (extension_loaded('pdo_mysql') ? 'pdo' : 'sin-pdo');",
+    )
+    .unwrap();
     let env = w.core.terminal_env().unwrap();
     let out = tokio::process::Command::new("cmd.exe")
-        .args(["/C", "php -r \"echo PHP_BINARY;\""])
+        .args(["/C", &format!("php {}", script.display())])
         .env("PATH", &env["PATH"])
         .env("PHPRC", &env["PHPRC"])
         .env("PHP_INI_SCAN_DIR", &env["PHP_INI_SCAN_DIR"])
@@ -95,7 +103,13 @@ async fn e2e_windows() {
     // Los atajos de etc\shell (los del PATH del usuario) también.
     let shims = w.core.refresh_shims().unwrap();
     let out = tokio::process::Command::new("cmd.exe")
-        .args(["/C", "php -r \"echo PHP_BINARY . ' ' . (extension_loaded('pdo_mysql') ? 'pdo' : '-');\" && node --version && git --version"])
+        .args([
+            "/C",
+            &format!(
+                "php {} && node --version && git --version",
+                script.display()
+            ),
+        ])
         .env("PATH", format!("{};C:\\Windows\\System32", shims.display()))
         .output()
         .await

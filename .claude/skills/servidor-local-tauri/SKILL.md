@@ -13,7 +13,7 @@ Referencia funcional: Laragon (concepto y simplicidad). Referencia de implementa
 
 1. **Hexagonal.** El núcleo (dominio, casos de uso, supervisor, drivers) nunca llama al sistema operativo directamente: pide lo que necesita a un puerto (trait) y un adaptador por plataforma lo resuelve. Así el port a macOS es solo escribir adaptadores.
 2. **La interfaz no tiene lógica de negocio.** Vue solo hace `invoke` y `listen`. El estado de un servicio cambia en pantalla únicamente al recibir un evento, nunca por suponer que el comando funcionó.
-3. **Todo bajo una raíz portable.** Sin servicios de Windows, sin tocar el registro, sin modificar el PATH global. La única excepción es el archivo hosts.
+3. **Todo bajo una raíz portable.** Sin servicios de Windows, sin tocar el registro, sin modificar el PATH global. La única excepción siempre activa es el archivo hosts. Solo si el usuario lo elige en Preferencias: iniciar con el sistema (clave `Run` del usuario o `LaunchAgent`, con `tauri-plugin-autostart`) y agregar `etc/shell` al PATH del usuario (puerto `UserPath`).
 4. **Lo generado no se edita.** Los archivos de `etc/` se regeneran desde plantillas; lo personalizado va en archivos de inclusión aparte.
 5. **Identidad propia.** No usar el nombre, logo ni íconos de Laragon. El nombre de la app está pendiente: usar el marcador `APP_NAME` de `tauri.conf.json` y no inventar uno.
 6. **Windows 10 o superior.** Ver la tabla de plataformas.
@@ -71,9 +71,10 @@ src-tauri/
       windows/
       macos/
       shared/             archivos, descargas, config en JSON
-    drivers/              nginx.rs, php.rs, mariadb.rs
+    drivers/              nginx.rs, apache.rs, php.rs, mariadb.rs (MariaDB y MySQL), opcionales
     supervisor/           estado y ciclo de vida de los procesos
-    usecases/             start_all, stop_all, switch_php, sync_sites, create_site
+    usecases/             start_all, stop_all, switch_php, sync_sites, create_site,
+                          preferences, terminal (atajos y PATH), procfile, backups
     commands/             funciones #[tauri::command], delgadas
     tray.rs
 .github/workflows/build-windows.yml
@@ -340,9 +341,10 @@ Requiere el script `"tauri": "tauri"` en `package.json`. Si el push que incluye 
 | 1. Núcleo | Windows 10 | Iniciar y detener todo o un servicio; cambio de versión de PHP; sitio `.test` por carpeta; bandeja; botones Web, Base de datos, Terminal y Raíz |
 | 2. Enseñanza | Windows | Crear sitio WordPress o Laravel con un clic; SSL automático; acceso a configuraciones y logs |
 | 3. macOS | macOS | Adaptadores de macOS; `php-fpm`; binarios desde Homebrew |
-| 4. Extras | Ambas | Descarga de versiones desde la app; respaldos programados; Mailpit; Redis |
+| 4. Extras | Ambas | Descarga de versiones desde la app; respaldos; Mailpit; Redis |
+| 5. Paridad con Laragon | Ambas | MySQL como alternativa a MariaDB; contraseña de root; panel de puertos y dominio; iniciar con el sistema y minimizado; Node.js y Git; atajos en `etc/shell` y PATH opcional; Procfile; plantillas propias (`etc/sitios.conf`); respaldar y restaurar |
 
-Fuera de alcance: Apache, PostgreSQL, compartir sitios por túnel, gestión de Node o Python, actualización automática. No adelantar trabajo de una fase posterior sin que se pida.
+Fuera de alcance: compartir sitios por túnel, cambio de versión de Node o Python, actualización automática. No adelantar trabajo de una fase posterior sin que se pida.
 
 ## Pendiente de decidir
 

@@ -27,6 +27,9 @@ const problem = computed(() => {
   return null
 })
 
+/** Vacía y sin contraseña: no hay nada que quitar. */
+const nothingToDo = computed(() => !password.value && !settings.settings?.hasRootPassword)
+
 watch(open, async (value) => {
   if (!value) {
     dialog.value?.close()
@@ -124,7 +127,7 @@ async function save() {
             (settings.settings?.hasRootPassword ? 'Ahora tiene contraseña.' : 'Ahora no tiene contraseña.')
           }}</span>
           <button type="button" class="sheet-btn" :disabled="saving" @click="close">Cancelar</button>
-          <button type="submit" class="sheet-btn sheet-btn-main" :disabled="!!problem || saving">
+          <button type="submit" class="sheet-btn sheet-btn-main" :disabled="!!problem || saving || nothingToDo">
             {{ saving ? 'Cambiando…' : password ? 'Cambiar' : 'Quitar contraseña' }}
           </button>
         </template>

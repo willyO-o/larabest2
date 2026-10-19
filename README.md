@@ -14,7 +14,9 @@ La interfaz sigue la estructura de Laragon (ventana compacta, una fila por servi
 
 **Apache:** se puede usar Apache en lugar de Nginx, con los mismos sitios. Ver [Apache en lugar de Nginx](#apache-en-lugar-de-nginx).
 
-**Agregar desde el menú:** versiones de PHP, Nginx, Apache, MariaDB y los servicios opcionales, más Adminer, phpMyAdmin y Composer, con un clic. Ver [Agregar programas desde el menú](#agregar-programas-desde-el-menú).
+**Agregar desde el menú:** versiones de PHP, Nginx, Apache, MariaDB, MySQL y los servicios opcionales, más Adminer, phpMyAdmin, Composer, Node.js y Git, con un clic. Ver [Agregar programas desde el menú](#agregar-programas-desde-el-menú).
+
+**Paridad con Laragon:** MySQL en lugar de MariaDB, contraseña de root, puertos y dominio desde la ventana, iniciar con el sistema y minimizado, atajos de línea de comandos y opción de agregarlos al PATH, Procfile, plantillas propias de *Crear sitio* y respaldos de las bases de datos. Ver [Paridad con Laragon](#paridad-con-laragon).
 
 ## Menú contextual
 
@@ -23,15 +25,15 @@ Clic derecho en cualquier parte de la ventana, el botón **Menú** o el ícono d
 | Menú | Contenido |
 | --- | --- |
 | Iniciar todo / Detener todo | según el estado |
-| www | un sitio por carpeta (abre `http://<carpeta>.test`), **Crear sitio** (en blanco, WordPress, Laravel), abrir la carpeta www, actualizar sitios y archivo hosts |
+| www | un sitio por carpeta (abre `http://<carpeta>.test`), **Crear sitio** (en blanco, WordPress, Laravel y las plantillas de `etc\sitios.conf`), abrir la carpeta www, actualizar sitios y archivo hosts |
 | Nginx o Apache | el servidor web elegido: versión, recargar configuración, carpeta de configuración propia por sitio (`etc\nginx\custom\<sitio>.conf` o `etc\apache\custom\<sitio>.conf`), configuración generada, logs |
 | PHP | versión, `php.ini` de ajustes propios, extensiones (marcar o desmarcar), `php.ini` generado, log de errores |
-| MariaDB | versión, `my.cnf` de ajustes propios, Adminer, phpMyAdmin, `my.cnf` generado, carpeta de datos, log de errores |
+| MariaDB o MySQL | el motor elegido: versión, `my.cnf` de ajustes propios, Adminer, phpMyAdmin, **Contraseña de root…**, respaldar ahora, restaurar un respaldo, carpeta de respaldos, `my.cnf` generado, carpeta de datos, log de errores |
 | PostgreSQL, Redis, MongoDB, Mailpit | uno por cada servicio opcional en la pila (ver abajo) |
-| Logs | errores y accesos del servidor web, errores de PHP y de MariaDB, logs de los opcionales, carpeta de logs |
-| Herramientas | Web, Base de datos, Correo (con Mailpit), Terminal, carpeta raíz |
+| Logs | errores y accesos del servidor web, errores de PHP y de la base de datos, logs de los opcionales, carpeta de logs |
+| Herramientas | Web, Base de datos, Correo (con Mailpit), Terminal, carpeta raíz, **Procfile** (estado de cada proceso, editar, reiniciar) |
 | Agregar | descargar versiones y herramientas (ver abajo) |
-| Preferencias | tema (Sistema, Claro, Oscuro), servidor web (Nginx o Apache), servicios opcionales, botón Base de datos (Adminer o phpMyAdmin), iniciar todo al abrir, HTTPS para los sitios `.test`, carpeta de certificados, cambiar la carpeta raíz, abrir `app.json` |
+| Preferencias | tema (Sistema, Claro, Oscuro), servidor web (Nginx o Apache), base de datos (MariaDB o MySQL), servicios opcionales, botón Base de datos (Adminer o phpMyAdmin), **Puertos y dominio…**, iniciar con Windows (o macOS), iniciar minimizado en la bandeja, iniciar todo al abrir, agregar php, composer, mysql… al PATH, respaldar las bases de datos al detener, HTTPS para los sitios `.test`, carpeta de certificados, cambiar la carpeta raíz, abrir `app.json` |
 
 Lo generado (`etc\nginx\nginx.conf`, `etc\php\php.ini`, `etc\mariadb\my.cnf`) se regenera en cada inicio: ábrelo solo para consultarlo. Tus ajustes van en archivos que nunca se regeneran:
 
@@ -51,13 +53,85 @@ Las extensiones marcadas en el menú se guardan en `app.json` y PHP se reinicia 
 | Nginx | versión estable de `nginx.org` | `brew install nginx` |
 | Apache | build de Apache Lounge para Windows x64, desde su réplica en `fossies.org` (la misma que usa Scoop; `apachelounge.com` bloquea algunas descargas automáticas) | `brew install httpd` |
 | MariaDB 11.4 | última 11.4 de `archive.mariadb.org` | `brew install mariadb@11.4` |
+| MySQL 8.4 (LTS) | zip de `cdn.mysql.com` (la versión la da la fórmula `mysql@8.4` de `formulae.brew.sh`) | `brew install mysql@8.4` |
 | PostgreSQL 17 | binarios de EDB (`get.enterprisedb.com`) | `brew install postgresql@17` |
 | Redis | `redis-windows/redis-windows` (GitHub) | `brew install redis` |
 | MongoDB | `fastdl.mongodb.org` | tap `mongodb/brew` y `brew install mongodb-community` |
 | Mailpit | `axllent/mailpit` (GitHub) | `brew install mailpit` |
 | Adminer, phpMyAdmin, Composer | sus descargas oficiales, en `bin\` | igual |
+| Node.js (LTS) | zip de `nodejs.org` en `bin\node\<versión>\` | `brew install node` |
+| Git | MinGit de `git-for-windows` (GitHub) en `bin\git\<versión>\` | `brew install git` |
 
 En Windows cada versión queda en su carpeta (`bin\php\8.4.13\`), así que conviven varias y se elige en **Menú → PHP → Versión**. El menú muestra al lado lo que ya está instalado; volver a agregar algo baja la versión más nueva de esa rama si la hay. El progreso aparece en la línea de estado y, al terminar, la fila del servicio ya muestra la versión nueva. En macOS hace falta tener Homebrew (<https://brew.sh>); la app solo ejecuta `brew install`.
+
+## Paridad con Laragon
+
+### MySQL en lugar de MariaDB
+
+**Menú → Agregar → MySQL 8.4** y luego **Menú → Preferencias → Base de datos → MySQL**. Si MariaDB estaba en marcha, se detiene y MySQL arranca en su lugar; la fila cambia de MariaDB a MySQL y el submenú de la base de datos pasa a llamarse MySQL. Se vuelve igual a MariaDB.
+
+- Mismo puerto (3306 por defecto), usuario `root` y botón Base de datos. Los sitios WordPress y Laravel nuevos usan el motor elegido (`DB_CONNECTION=mysql` en el `.env`).
+- Cada motor tiene sus datos: `data\mariadb` y `data\mysql`, y su configuración: `etc\mariadb\my.cnf` y `etc\mysql\my.cnf` (generados), con los ajustes propios en `etc\<motor>\custom\user.cnf`. Cambiar de motor no mueve bases de datos: usa un respaldo y restáuralo en el otro.
+- La primera vez MySQL crea sus tablas con `mysqld --initialize-insecure` (root sin contraseña). El protocolo X (puerto 33060) queda apagado.
+- Logs: `logs\mysql-error.log`.
+
+### Contraseña de root
+
+**Menú → MariaDB (o MySQL) → Contraseña de root…** abre un panel en la ventana. La contraseña se cambia en todos los usuarios `root` del motor (`localhost`, `127.0.0.1`…) y se guarda en `app.json`, porque la app la necesita para detener el motor, comprobar que responde, crear bases de datos y respaldar. Adminer y phpMyAdmin siguen entrando solos (su configuración generada lleva la contraseña). Los sitios WordPress y Laravel nuevos la reciben en `wp-config.php` o `.env`; los creados antes conservan la anterior y hay que cambiarla a mano. Cada motor tiene la suya. Déjala vacía para quitarla.
+
+Solo se aceptan letras, números y `_-.@!%*+=?,:` (sin espacios, comillas ni `$` o `#`), para que no haya que escaparla en `wp-config.php`, `.env` ni la configuración de phpMyAdmin.
+
+### Puertos y dominio
+
+**Menú → Preferencias → Puertos y dominio…** abre un panel con los puertos de HTTP, HTTPS, PHP, la base de datos, PostgreSQL, Redis, MongoDB y Mailpit, y el dominio de los sitios (`test` por defecto, por ejemplo `local`). La app rechaza puertos repetidos (contando los 4 de PHP en Windows) y los dominios `dev` y `app` (los navegadores los obligan a HTTPS). Al guardar se regeneran los sitios, el archivo hosts y los certificados, y se reinicia solo lo que estaba en marcha y cambió. Los `.env` de Laravel ya creados conservan su `APP_URL` y `DB_PORT`.
+
+### Iniciar con el sistema y minimizado
+
+- **Preferencias → Iniciar con Windows** (o **con macOS**): la app se abre al entrar a la sesión, en la bandeja y sin mostrar la ventana. En Windows queda en *Configuración → Aplicaciones → Inicio* (clave `Run` del usuario, sin permisos de administrador); en macOS como un elemento de inicio (`LaunchAgent`).
+- **Preferencias → Iniciar minimizado en la bandeja**: cada vez que se abre, la ventana espera al clic en la bandeja.
+- Junto con **Iniciar todo al abrir**, los servicios quedan en marcha al prender la PC, como en Laragon.
+
+### Terminal, Node.js, Git y el PATH
+
+La **Terminal** pone delante del PATH el PHP activo, el cliente de MariaDB o MySQL, el servidor web, Node.js y Git de la app (los de **Agregar**), solo para esa consola.
+
+Además, en `etc\shell\` la app genera atajos que apuntan siempre a la versión activa: `php` (con el `php.ini` de la app), `composer`, `mariadb`/`mariadb-dump` o `mysql`/`mysqldump`, `node`, `npm`, `npx` y `git` (`.bat` en Windows, scripts en macOS). Se regeneran al cambiar de versión o de motor y al agregar programas.
+
+**Preferencias → Agregar php, composer, mysql… al PATH** agrega solo esa carpeta al PATH de tu usuario, así esos comandos funcionan en cualquier consola, en VS Code o en PowerShell. Es lo único que la app escribe fuera de su carpeta (además del archivo hosts) y solo si lo eliges; desmarcarlo lo quita. En Windows se escribe en `HKCU\Environment` sin tocar las demás entradas; en macOS se agrega un bloque marcado a `~/.zprofile` (y a `~/.bash_profile` si existe). Abre una consola nueva para verlo. Algunas extensiones de VS Code piden la ruta de `php.exe` y no un `.bat`: usa `C:\LARABEST\bin\php\<versión>\php.exe`.
+
+### Procfile
+
+Como en Laragon, `C:\LARABEST\Procfile` define procesos propios que arrancan con **Iniciar todo** y se detienen con **Detener todo**. Una línea por proceso, `nombre: comando`; el comando corre en `www\` con el mismo PATH que la Terminal y su salida queda en `logs\procfile-<nombre>.log`:
+
+```text
+cola: cd tienda && php artisan queue:work
+vite: cd tienda && npm run dev
+reverb: cd tienda && php artisan reverb:start
+```
+
+**Menú → Herramientas → Procfile** muestra cuáles están en marcha y permite editarlo (la primera vez se crea con estos ejemplos comentados) o reiniciar los procesos. Si la app se cierra a la fuerza, al volver a abrirla detiene los que quedaron.
+
+### Plantillas propias de Crear sitio
+
+`etc\sitios.conf` (como el `sites.conf` de Laragon) agrega plantillas a **Crear sitio**, en el formulario (**Otra…**) y en **Menú → www → Crear sitio**. Una por línea, `Nombre=acción`, con `%s` como nombre del sitio:
+
+```text
+Symfony=composer create-project symfony/skeleton %s
+CodeIgniter 4=composer create-project codeigniter4/appstarter %s
+CakePHP=composer create-project --prefer-dist cakephp/app %s
+Drupal=composer create-project drupal/recommended-project %s
+MiProyecto=git clone https://github.com/usuario/proyecto.git %s
+MiPlantilla=https://example.com/plantilla.zip
+```
+
+Un comando de Composer usa el PHP y el Composer de la app (se descarga si falta); una URL de `.zip` se descomprime en `www\<sitio>`; cualquier otro comando corre en `www\` con el PATH de la Terminal. También se crea una base de datos con el nombre del sitio (si el motor puede arrancar). Las cuatro primeras vienen activas; **Editar plantillas** abre el archivo.
+
+### Respaldos
+
+- **Menú → MariaDB (o MySQL) → Respaldar las bases de datos ahora**: un `.sql` por base (sin las del sistema) con `mariadb-dump` o `mysqldump` (`--single-transaction`, rutinas, eventos y disparadores) en `backups\<fecha>-<motor>\`.
+- **Preferencias → Respaldar las bases de datos al detener**: lo mismo antes de detener el motor (con su botón, **Detener todo** o al salir). Si falla, el motor se detiene igual y el error queda en `logs\backups.log`.
+- Se conservan los 10 respaldos más recientes (`backupKeep` en `app.json`; 0 los conserva todos).
+- **Restaurar un respaldo (.sql)…** ejecuta un `.sql` con el cliente del motor, después de confirmar: los respaldos de la app traen su `CREATE DATABASE`, así que reemplazan las tablas de esas bases.
 
 ## Apache en lugar de Nginx
 
@@ -127,7 +201,12 @@ C:\LARABEST\
     nginx\custom\ tus inclusiones por sitio: <sitio>.conf (nunca se regeneran)
     php\custom\   user.ini con tus ajustes de PHP (nunca se regenera)
     mariadb\custom\ user.cnf con tus ajustes de MariaDB (nunca se regenera)
-  data\mariadb\   bases de datos
+    mysql\custom\   user.cnf con tus ajustes de MySQL (nunca se regenera)
+    shell\         atajos php, composer, mysql, node, git… (los que van al PATH)
+    sitios.conf    plantillas propias de Crear sitio
+  data\mariadb\   bases de datos (data\mysql\ con MySQL)
+  backups\        respaldos de las bases de datos, uno por fecha
+  Procfile        procesos propios que arrancan con Iniciar todo
   logs\           logs de Nginx, PHP y MariaDB
   tmp\            PID y temporales
   app.json        versión activa de cada servicio, puertos
@@ -293,6 +372,18 @@ Prepara `bin\` como se describe arriba y crea `www\blog\index.php` con `<?php ph
 - [ ] Con HTTPS activo, `https://blog.test` abre con candado.
 - [ ] **Detener** cierra los dos `httpd.exe` sin forzarlos (en `logs\apache-error.log` no hay errores de cierre).
 - [ ] **Servidor web → Nginx** vuelve atrás.
+
+**Paridad con Laragon**
+
+- [ ] **Agregar → MySQL 8.4** y **Preferencias → Base de datos → MySQL** con todo en marcha: MariaDB se detiene, la fila MySQL queda *En marcha* y el menú se llama MySQL. **Nuevo sitio → Laravel** deja `DB_CONNECTION=mysql` y migra.
+- [ ] **MySQL → Contraseña de root…** con `Clave-1`: el botón Base de datos sigue entrando a Adminer y phpMyAdmin sin pedir nada; **Detener** y **Iniciar** funcionan. Un WordPress nuevo instala sin pedir datos de la base. Vaciarla quita la contraseña.
+- [ ] **Preferencias → Puertos y dominio…**: HTTP 8080 y dominio `local` con Nginx en marcha: solo Nginx se reinicia y `http://blog.local:8080` funciona. Un puerto repetido o el dominio `dev` muestran el error en el panel.
+- [ ] **Preferencias → Iniciar con Windows** y **Iniciar minimizado**: tras cerrar sesión y volver a entrar, el ícono está en la bandeja y la ventana no se abre. Aparece en *Configuración → Aplicaciones → Inicio*.
+- [ ] **Agregar → Node.js** y **Agregar → Git**: en la **Terminal**, `node -v`, `npm -v` y `git --version` funcionan.
+- [ ] **Preferencias → Agregar php, composer, mysql… al PATH**: en una consola nueva de PowerShell, fuera de la app, `php -v`, `composer -V` y `mariadb --version` usan la versión activa; al cambiar de PHP en el menú, `php -v` cambia sin tocar el PATH. Desmarcarlo lo quita.
+- [ ] **Herramientas → Procfile → Editar Procfile**, agrega `srv: php -S 127.0.0.1:8000 -t blog` y **Iniciar todo**: `http://127.0.0.1:8000` responde y el submenú dice «srv: en marcha». **Detener todo** lo detiene.
+- [ ] **Nuevo sitio → Otra… → Symfony** con el nombre `api`: Composer crea `www\api` y `http://api.test` muestra la página de Symfony.
+- [ ] **MariaDB → Respaldar las bases de datos ahora**: aparece `backups\<fecha>-mariadb\` con un `.sql` por base. Borra una tabla en Adminer y **Restaurar un respaldo** la trae de vuelta.
 
 ## macOS
 

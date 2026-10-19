@@ -257,12 +257,18 @@ impl Core {
         branch: &str,
     ) -> Result<String, AppError> {
         let formula = brew_formula(service, branch);
-        self.brew_install(progress, &formula, service == ServiceId::Mongodb)
-            .await?;
+        let installed = self
+            .brew_install(progress, &formula, service == ServiceId::Mongodb)
+            .await;
         let version = self
             .versions(service)?
             .into_iter()
             .find(|v| branch.is_empty() || v.version.starts_with(&format!("{branch}.")));
+        // `brew install` falla también si no puede enlazar (mysql@8.4 y
+        // mariadb@11.4 comparten cabeceras), pero la app usa el Cellar.
+        if version.is_none() {
+            installed?;
+        }
         Ok(match version {
             Some(v) => format!("{} {} instalado con Homebrew.", service.label(), v.version),
             None => format!("{} instalado con Homebrew.", service.label()),

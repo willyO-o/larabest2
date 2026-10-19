@@ -48,8 +48,11 @@ jobs:
       # como de confianza.
       - run: brew tap mongodb/brew && brew trust mongodb/brew
       - run: >-
-          brew install nginx httpd php@8.3 php@8.4 mariadb@11.4 mysql@8.4 postgresql@17
+          brew install nginx httpd php@8.3 php@8.4 mariadb@11.4 postgresql@17
           redis mailpit mongodb/brew/mongodb-community
+      # mysql@8.4 choca al enlazar sus cabeceras con mariadb@11.4; la app usa
+      # el Cellar, así que basta con que quede instalado.
+      - run: brew install mysql@8.4 || ls "$(brew --cellar)/mysql@8.4"/*/bin/mysqld
       - run: set -o pipefail; cargo test --manifest-path src-tauri/Cargo.toml --lib -- --ignored --nocapture e2e_homebrew 2>&1 | tee "$RUNNER_TEMP/e2e.log"
         shell: bash
         env:
