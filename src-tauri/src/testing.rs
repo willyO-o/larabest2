@@ -538,6 +538,30 @@ impl ShellLauncher for FakeShell {
     }
 }
 
+/// PATH del usuario en memoria.
+#[derive(Default)]
+pub struct FakeUserPath {
+    pub dirs: Mutex<Vec<String>>,
+}
+
+impl crate::ports::UserPath for FakeUserPath {
+    fn contains(&self, dir: &Path) -> bool {
+        self.dirs.lock().unwrap().contains(&slash(dir))
+    }
+
+    fn add(&self, dir: &Path) -> Result<(), AppError> {
+        if !self.contains(dir) {
+            self.dirs.lock().unwrap().push(slash(dir));
+        }
+        Ok(())
+    }
+
+    fn remove(&self, dir: &Path) -> Result<(), AppError> {
+        self.dirs.lock().unwrap().retain(|d| *d != slash(dir));
+        Ok(())
+    }
+}
+
 // ---------------------------------------------------------------- arnés
 
 /// Supervisor y núcleo armados con adaptadores falsos y plazos cortos.
@@ -550,6 +574,7 @@ pub struct Harness {
     pub events: std::sync::Arc<FakeEvents>,
     pub hosts: std::sync::Arc<FakeHosts>,
     pub shell: std::sync::Arc<FakeShell>,
+    pub user_path: std::sync::Arc<FakeUserPath>,
     pub downloader: std::sync::Arc<FakeDownloader>,
     pub archive: std::sync::Arc<FakeArchive>,
     pub ca: std::sync::Arc<FakeCa>,
@@ -645,6 +670,7 @@ impl Harness {
             events,
             hosts: Arc::new(FakeHosts::default()),
             shell: Arc::new(FakeShell::default()),
+            user_path: Arc::new(FakeUserPath::default()),
             supervisor,
         }
     }
@@ -659,6 +685,7 @@ impl Harness {
                 archive: self.archive.clone(),
                 ca: self.ca.clone(),
                 secrets: std::sync::Arc::new(FakeSecrets),
+                user_path: self.user_path.clone(),
             },
             // En macOS el PATH base lo pone la propia terminal.
             match self.supervisor.deps().layout {

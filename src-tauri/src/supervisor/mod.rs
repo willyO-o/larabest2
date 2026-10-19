@@ -98,6 +98,8 @@ impl Supervisor {
                         ports: vec![cfg.port_of(id)],
                         enabled: if id.is_web() {
                             id == cfg.web_server.service()
+                        } else if id.is_database() {
+                            id == cfg.database_server.service()
                         } else {
                             !id.is_optional()
                         },

@@ -57,6 +57,7 @@ pub fn prepare(ctx: &RenderContext, name: &str) -> Result<(PathBuf, bool), AppEr
                 context! {
                     app_name => ctx.app_name,
                     adminer_php => slash(&ctx.paths.adminer_php()),
+                    password => ctx.config.root_password(ctx.database()),
                 },
             )?;
             let index = ctx.paths.etc_adminer().join("index.php");
@@ -78,6 +79,7 @@ pub fn prepare(ctx: &RenderContext, name: &str) -> Result<(PathBuf, bool), AppEr
                     app_name => ctx.app_name,
                     secret => blowfish_secret(&ctx.paths, &ctx.app_name),
                     port => ctx.config.mariadb_port,
+                    password => ctx.config.root_password(ctx.database()),
                     tmp => slash(&tmp),
                     custom => slash(&ctx.paths.phpmyadmin_custom()),
                 },

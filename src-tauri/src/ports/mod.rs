@@ -130,6 +130,15 @@ pub trait ShellLauncher: Send + Sync {
     fn open_in_editor(&self, path: &Path) -> Result<(), AppError>;
 }
 
+/// PATH del usuario (fuera de la app). Solo se toca si se pide desde
+/// Preferencias → Agregar al PATH.
+pub trait UserPath: Send + Sync {
+    /// `true` si `dir` ya está en el PATH del usuario.
+    fn contains(&self, dir: &Path) -> bool;
+    fn add(&self, dir: &Path) -> Result<(), AppError>;
+    fn remove(&self, dir: &Path) -> Result<(), AppError>;
+}
+
 pub trait ConfigStore: Send + Sync {
     fn load(&self) -> Result<crate::domain::AppConfig, AppError>;
     fn save(&self, cfg: &crate::domain::AppConfig) -> Result<(), AppError>;

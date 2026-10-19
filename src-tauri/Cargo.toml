@@ -31,6 +31,8 @@ rand_core = { version = "0.6", features = ["getrandom"] }
 sha1 = "0.10"
 x509-cert = { version = "0.2.5", features = ["builder", "pem"] }
 sha2 = { version = "0.10.9", features = ["oid"] }
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+tauri-plugin-autostart = "2"
 
 [profile.release]
 opt-level = "s"

@@ -10,6 +10,8 @@ pub const HTTPD_CONF: &str = "httpd.conf";
 pub const HTTPD_VHOST_CONF: &str = "httpd-vhost.conf";
 pub const PHP_INI: &str = "php.ini";
 pub const MY_CNF: &str = "my.cnf";
+pub const MYSQL_CNF: &str = "mysql.cnf";
+pub const USER_MYSQL_CNF: &str = "user-mysql.cnf";
 pub const ADMINER_PHP: &str = "adminer.php";
 pub const COMPOSER_BAT: &str = "composer.bat";
 pub const COMPOSER_SH: &str = "composer.sh";
@@ -39,6 +41,11 @@ fn environment() -> Environment<'static> {
         ),
         (PHP_INI, include_str!("../../templates/php.ini")),
         (MY_CNF, include_str!("../../templates/my.cnf")),
+        (MYSQL_CNF, include_str!("../../templates/mysql.cnf")),
+        (
+            USER_MYSQL_CNF,
+            include_str!("../../templates/user-mysql.cnf"),
+        ),
         (ADMINER_PHP, include_str!("../../templates/adminer.php")),
         (COMPOSER_BAT, include_str!("../../templates/composer.bat")),
         (COMPOSER_SH, include_str!("../../templates/composer.sh")),

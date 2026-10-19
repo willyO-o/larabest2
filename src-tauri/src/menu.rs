@@ -10,11 +10,13 @@ use tauri::{AppHandle, Emitter, Manager, Wry};
 use crate::commands::{open_path, open_url};
 use crate::domain::catalog;
 use crate::domain::{
-    BinaryLayout, DatabaseClient, ServiceId, ServiceState, ThemePreference, WebServer,
+    BinaryLayout, DatabaseClient, DatabaseServer, ServiceId, ServiceState, ThemePreference,
+    WebServer,
 };
 use crate::error::AppError;
 use crate::usecases::ConfigTarget;
 use crate::{settings, tray, AppState};
+use tauri_plugin_autostart::ManagerExt;
 
 type Item = Box<dyn IsMenuItem<Wry>>;
 
@@ -115,15 +117,25 @@ pub fn build(app: &AppHandle, from_tray: bool) -> tauri::Result<Menu<Wry>> {
         www.push(text(app, &format!("site:{}", site.name), &site.domain)?);
     }
     www.push(sep(app)?);
-    www.push(Box::new(submenu(
+    let mut create = vec![
+        text(app, "create:blank", "En blanco…")?,
+        text(app, "create:wordpress", "WordPress…")?,
+        text(app, "create:laravel", "Laravel…")?,
+        sep(app)?,
+    ];
+    for template in core.site_templates() {
+        create.push(text(
+            app,
+            &format!("create-tpl:{}", template.name),
+            &format!("{}…", template.name),
+        )?);
+    }
+    create.push(open(
         app,
-        "Crear sitio",
-        vec![
-            text(app, "create:blank", "En blanco…")?,
-            text(app, "create:wordpress", "WordPress…")?,
-            text(app, "create:laravel", "Laravel…")?,
-        ],
-    )?));
+        "siteTemplates",
+        "Editar plantillas (sitios.conf)",
+    )?);
+    www.push(Box::new(submenu(app, "Crear sitio", create)?));
     www.push(open(app, "www", "Abrir carpeta www")?);
     www.push(text(
         app,
@@ -203,16 +215,30 @@ pub fn build(app: &AppHandle, from_tray: bool) -> tauri::Result<Menu<Wry>> {
         open(app, "phpErrorLog", "Log de errores")?,
     ];
 
-    let mariadb = vec![
-        versions(
-            app,
-            &state,
-            ServiceId::Mariadb,
-            active(ServiceId::Mariadb).as_deref(),
-        )?,
+    // MariaDB o MySQL, el elegido en Preferencias.
+    let db = core.database_service();
+    let db_up = sup.state(db) == ServiceState::Running;
+    let password_label = if core.has_root_password() {
+        "Contraseña de root (tiene)…"
+    } else {
+        "Contraseña de root (sin contraseña)…"
+    };
+    let database = vec![
+        versions(app, &state, db, active(db).as_deref())?,
         open(app, "mariadbUserCnf", "my.cnf (ajustes propios)")?,
-        text(app, "adminer:mariadb", "Abrir Adminer")?,
+        text(app, "adminer:db", "Abrir Adminer")?,
         text(app, "phpmyadmin", "Abrir phpMyAdmin")?,
+        text(app, "panel:password", password_label)?,
+        sep(app)?,
+        Box::new(MenuItem::with_id(
+            app,
+            "backup_now",
+            "Respaldar las bases de datos ahora",
+            db_up,
+            None::<&str>,
+        )?) as Item,
+        text(app, "backup_restore", "Restaurar un respaldo (.sql)…")?,
+        open(app, "backups", "Carpeta de respaldos")?,
         sep(app)?,
         open(app, "mariadbCnf", "my.cnf generado (solo lectura)")?,
         open(app, "mariadbData", "Carpeta de datos")?,
@@ -265,7 +291,7 @@ pub fn build(app: &AppHandle, from_tray: bool) -> tauri::Result<Menu<Wry>> {
         open(app, error_log, &format!("{}: errores", web.label()))?,
         open(app, access_log, &format!("{}: accesos", web.label()))?,
         open(app, "phpErrorLog", "PHP: errores")?,
-        open(app, "mariadbErrorLog", "MariaDB: errores")?,
+        open(app, "mariadbErrorLog", &format!("{}: errores", db.label()))?,
     ];
     for &id in &enabled {
         let target = match id {
@@ -293,6 +319,24 @@ pub fn build(app: &AppHandle, from_tray: bool) -> tauri::Result<Menu<Wry>> {
     }
     tools.push(text(app, "terminal", "Terminal")?);
     tools.push(text(app, "root", "Carpeta raíz")?);
+
+    // Procfile: procesos propios que arrancan con la pila.
+    let mut procfile = Vec::new();
+    let status = core.procfile_status();
+    if status.is_empty() {
+        procfile.push(disabled(app, "(sin procesos: edita el Procfile)")?);
+    }
+    for p in &status {
+        let state = if p.running { "en marcha" } else { "detenido" };
+        procfile.push(disabled(app, &format!("{}: {state}", p.name))?);
+    }
+    procfile.push(sep(app)?);
+    procfile.push(open(app, "procfile", "Editar Procfile")?);
+    if !status.is_empty() {
+        procfile.push(text(app, "procfile_restart", "Reiniciar procesos")?);
+    }
+    tools.push(sep(app)?);
+    tools.push(Box::new(submenu(app, "Procfile", procfile)?));
 
     // Preferencias → Servicios: qué opcionales forman parte de la pila.
     let mut services = Vec::new();
@@ -361,17 +405,65 @@ pub fn build(app: &AppHandle, from_tray: bool) -> tauri::Result<Menu<Wry>> {
         };
         web_servers.push(check(app, &format!("webserver:{key}"), &label, id == web)?);
     }
+    // Preferencias → Base de datos: MariaDB o MySQL.
+    let mut databases = Vec::new();
+    for (key, choice) in [
+        ("mariadb", DatabaseServer::Mariadb),
+        ("mysql", DatabaseServer::Mysql),
+    ] {
+        let id = choice.service();
+        let label = if core.versions(id).unwrap_or_default().is_empty() {
+            format!("{} (sin instalar)", id.label())
+        } else {
+            id.label().to_string()
+        };
+        databases.push(check(app, &format!("dbserver:{key}"), &label, id == db)?);
+    }
+    let system = if cfg!(target_os = "macos") {
+        "macOS"
+    } else {
+        "Windows"
+    };
+    let autostart = app.autolaunch().is_enabled().unwrap_or(false);
     let prefs = vec![
         Box::new(submenu(app, "Tema", themes)?) as Item,
         Box::new(submenu(app, "Servidor web", web_servers)?) as Item,
+        Box::new(submenu(app, "Base de datos", databases)?) as Item,
         Box::new(submenu(app, "Servicios", services)?) as Item,
         Box::new(submenu(app, "Botón Base de datos", clients)?) as Item,
+        text(app, "panel:ports", "Puertos y dominio…")?,
+        sep(app)?,
+        check(
+            app,
+            "autostart",
+            &format!("Iniciar con {system}"),
+            autostart,
+        )?,
+        check(
+            app,
+            "start_minimized",
+            "Iniciar minimizado en la bandeja",
+            core.start_minimized(),
+        )?,
         check(
             app,
             "auto_start",
             "Iniciar todo al abrir",
             core.auto_start(),
         )?,
+        check(
+            app,
+            "user_path",
+            "Agregar php, composer, mysql… al PATH",
+            core.in_user_path(),
+        )?,
+        check(
+            app,
+            "backup_on_stop",
+            "Respaldar las bases de datos al detener",
+            core.backup_on_stop(),
+        )?,
+        sep(app)?,
         check(
             app,
             "ssl_toggle",
@@ -403,7 +495,7 @@ pub fn build(app: &AppHandle, from_tray: bool) -> tauri::Result<Menu<Wry>> {
         .item(&submenu(app, "www", www)?)
         .item(&submenu(app, web.label(), web_menu)?)
         .item(&submenu(app, "PHP", php)?)
-        .item(&submenu(app, "MariaDB", mariadb)?);
+        .item(&submenu(app, db.label(), database)?);
     for menu in &optional {
         builder = builder.item(menu);
     }
@@ -449,7 +541,7 @@ async fn run(app: &AppHandle, id: &str) -> Result<(), AppError> {
         "web" => return open_url(app, &core.web_url()?),
         "database" => return open_url(app, &core.database_url()?),
         "adminer:postgresql" => return open_url(app, &core.adminer_url(ServiceId::Postgresql)?),
-        "adminer:mariadb" => return open_url(app, &core.adminer_url(ServiceId::Mariadb)?),
+        "adminer:db" => return open_url(app, &core.adminer_url(core.database_service())?),
         "phpmyadmin" => return open_url(app, &core.phpmyadmin_url()?),
         "mailpit" => return open_url(app, &core.mailpit_url()?),
         "terminal" => return core.open_terminal(None),
@@ -457,6 +549,49 @@ async fn run(app: &AppHandle, id: &str) -> Result<(), AppError> {
         "web_reload" => return core.reload(core.web_server().service()).await,
         "hosts_sync" => return core.sync_sites().await.map(|_| ()),
         "auto_start" => return core.set_auto_start(!core.auto_start()),
+        "start_minimized" => return core.set_start_minimized(!core.start_minimized()),
+        "backup_on_stop" => return core.set_backup_on_stop(!core.backup_on_stop()),
+        "autostart" => {
+            let launcher = app.autolaunch();
+            let enabled = launcher.is_enabled().unwrap_or(false);
+            let result = if enabled {
+                launcher.disable()
+            } else {
+                launcher.enable()
+            };
+            return result.map_err(|e| {
+                AppError::Process(format!("No se pudo cambiar el inicio con el sistema: {e}"))
+            });
+        }
+        "user_path" => {
+            let message = core.set_in_user_path(!core.in_user_path())?;
+            tray::show_info(app, &message);
+            return Ok(());
+        }
+        "backup_now" => {
+            let message = core.backup_databases().await?;
+            tray::show_info(app, &message);
+            return Ok(());
+        }
+        "backup_restore" => {
+            let Some(file) = pick_sql(app, core.backups_dir()?).await else {
+                return Ok(());
+            };
+            let question = format!(
+                "Restaurar {} en {}. Las tablas de esas bases de datos se reemplazan por las del respaldo. ¿Continuar?",
+                crate::domain::slash(&file),
+                core.database_service().label()
+            );
+            if confirm(app, "Restaurar un respaldo", &question).await {
+                let message = core.restore_backup(&file).await?;
+                tray::show_info(app, &message);
+            }
+            return Ok(());
+        }
+        "procfile_restart" => {
+            core.stop_procfile().await;
+            return core.start_procfile().await;
+        }
         "ssl_toggle" => {
             let enabled = !core.ssl_enabled();
             core.set_ssl(enabled).await?;
@@ -480,6 +615,25 @@ async fn run(app: &AppHandle, id: &str) -> Result<(), AppError> {
         let _ = app.emit("ui:create-site", preset);
         return Ok(());
     }
+    if let Some(template) = id.strip_prefix("create-tpl:") {
+        tray::show_main(app);
+        let _ = app.emit("ui:create-site", format!("template:{template}"));
+        return Ok(());
+    }
+    if let Some(panel) = id.strip_prefix("panel:") {
+        // Puertos y contraseña se editan en la ventana.
+        tray::show_main(app);
+        let _ = app.emit("ui:panel", panel);
+        return Ok(());
+    }
+    if let Some(server) = id.strip_prefix("dbserver:") {
+        let server: DatabaseServer =
+            serde_json::from_value(serde_json::Value::String(server.into()))
+                .map_err(|_| AppError::InvalidInput(id.into()))?;
+        core.set_database_server(server).await?;
+        let _ = app.emit("settings:changed", ());
+        return Ok(());
+    }
     if let Some(theme) = id.strip_prefix("theme:") {
         let theme: ThemePreference =
             serde_json::from_value(serde_json::Value::String(theme.into()))
@@ -491,13 +645,7 @@ async fn run(app: &AppHandle, id: &str) -> Result<(), AppError> {
     if let Some(target) = id.strip_prefix("open:") {
         let target: ConfigTarget = serde_json::from_value(serde_json::Value::String(target.into()))
             .map_err(|_| AppError::InvalidInput(format!("Opción desconocida: {target}")))?;
-        // Carpetas en el Finder o el Explorador; archivos en el editor.
-        let path = core.config_target(target)?;
-        return if path.is_dir() {
-            open_path(app, path)
-        } else {
-            core.open_in_editor(&path)
-        };
+        return open_target(app, core, target);
     }
     if let Some(package) = id.strip_prefix("add:") {
         let message = core.install_package(package).await?;
@@ -553,4 +701,52 @@ async fn run(app: &AppHandle, id: &str) -> Result<(), AppError> {
         return open_url(app, &site.url);
     }
     Ok(())
+}
+
+/// Carpetas en el Finder o el Explorador; archivos en el editor.
+pub fn open_target(
+    app: &AppHandle,
+    core: &crate::usecases::Core,
+    target: ConfigTarget,
+) -> Result<(), AppError> {
+    let path = core.config_target(target)?;
+    if path.is_dir() {
+        open_path(app, path)
+    } else {
+        core.open_in_editor(&path)
+    }
+}
+
+/// Selector de un `.sql` para restaurar, empezando en la carpeta de
+/// respaldos. `None` si se canceló.
+async fn pick_sql(app: &AppHandle, start: std::path::PathBuf) -> Option<std::path::PathBuf> {
+    use tauri_plugin_dialog::DialogExt;
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.dialog()
+        .file()
+        .set_title("Restaurar un respaldo")
+        .set_directory(start)
+        .add_filter("Respaldo SQL", &["sql"])
+        .pick_file(move |file| {
+            let _ = tx.send(file);
+        });
+    rx.await.ok().flatten().and_then(|f| f.into_path().ok())
+}
+
+/// Pregunta Aceptar/Cancelar. `true` si se aceptó.
+async fn confirm(app: &AppHandle, title: &str, message: &str) -> bool {
+    use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.dialog()
+        .message(message)
+        .title(title)
+        .kind(MessageDialogKind::Warning)
+        .buttons(MessageDialogButtons::OkCancelCustom(
+            "Restaurar".into(),
+            "Cancelar".into(),
+        ))
+        .show(move |ok| {
+            let _ = tx.send(ok);
+        });
+    rx.await.unwrap_or(false)
 }

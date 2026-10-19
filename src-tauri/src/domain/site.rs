@@ -23,6 +23,8 @@ pub enum SitePreset {
     Blank,
     Wordpress,
     Laravel,
+    /// Una plantilla propia de `etc/sitios.conf` (Symfony, CodeIgniter...).
+    Template,
 }
 
 impl SitePreset {
@@ -31,6 +33,7 @@ impl SitePreset {
             SitePreset::Blank => "En blanco",
             SitePreset::Wordpress => "WordPress",
             SitePreset::Laravel => "Laravel",
+            SitePreset::Template => "Plantilla propia",
         }
     }
 

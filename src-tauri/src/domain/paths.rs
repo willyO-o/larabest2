@@ -142,6 +142,44 @@ impl Paths {
         self.tmp().join("mariadb.sock")
     }
 
+    /// `my.cnf` generado de MariaDB o MySQL (`etc/<motor>/my.cnf`).
+    pub fn db_cnf(&self, id: ServiceId) -> PathBuf {
+        self.etc_service(id).join("my.cnf")
+    }
+
+    /// Ajustes propios de MariaDB o MySQL (`!includedir`).
+    pub fn db_custom(&self, id: ServiceId) -> PathBuf {
+        self.etc_service(id).join("custom")
+    }
+
+    pub fn db_user_cnf(&self, id: ServiceId) -> PathBuf {
+        self.db_custom(id).join("user.cnf")
+    }
+
+    /// Socket propio en macOS (`tmp/mariadb.sock` o `tmp/mysql.sock`).
+    pub fn db_socket(&self, id: ServiceId) -> PathBuf {
+        self.tmp().join(format!("{}.sock", id.key()))
+    }
+
+    /// Respaldos de las bases de datos: una carpeta por fecha.
+    pub fn backups(&self) -> PathBuf {
+        self.root.join("backups")
+    }
+
+    /// Procesos propios que arrancan con "Iniciar todo" (como en Laragon).
+    pub fn procfile(&self) -> PathBuf {
+        self.root.join("Procfile")
+    }
+
+    pub fn procfile_pids(&self) -> PathBuf {
+        self.tmp().join("procfile.pids")
+    }
+
+    /// Plantillas propias de "Crear sitio".
+    pub fn site_templates(&self) -> PathBuf {
+        self.etc().join("sitios.conf")
+    }
+
     /// Envoltorio generado que carga Adminer sin pedir contraseña.
     pub fn etc_adminer(&self) -> PathBuf {
         self.etc().join("adminer")
@@ -243,6 +281,7 @@ impl Paths {
             self.nginx_custom(),
             self.php_custom(),
             self.mariadb_custom(),
+            self.db_custom(ServiceId::Mysql),
             self.redis_user_conf()
                 .parent()
                 .expect("custom/")
@@ -278,5 +317,21 @@ mod tests {
         assert_eq!(slash(&p.data_mariadb()), "C:/APP/data/mariadb");
         assert_eq!(slash(&p.pid_file(ServiceId::Php)), "C:/APP/tmp/php.pids");
         assert!(!p.layout_dirs().contains(&p.data_mariadb()));
+        assert_eq!(
+            slash(&p.db_cnf(ServiceId::Mysql)),
+            "C:/APP/etc/mysql/my.cnf"
+        );
+        assert_eq!(
+            slash(&p.db_cnf(ServiceId::Mariadb)),
+            slash(&p.mariadb_cnf())
+        );
+        assert_eq!(
+            slash(&p.db_socket(ServiceId::Mysql)),
+            "C:/APP/tmp/mysql.sock"
+        );
+        assert_eq!(
+            slash(&p.db_socket(ServiceId::Mariadb)),
+            slash(&p.mariadb_socket())
+        );
     }
 }

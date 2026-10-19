@@ -3,7 +3,13 @@ import { computed, ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { attempt, report } from '../lib/errors'
-import { EVENTS, type Site, type SitePreset, type SiteProgress } from '../types/ipc'
+import {
+  EVENTS,
+  type Site,
+  type SitePreset,
+  type SiteProgress,
+  type SiteTemplate,
+} from '../types/ipc'
 
 /** Estado del formulario de sitio nuevo, alimentado por `sites:progress`. */
 export interface Creation {
@@ -25,6 +31,9 @@ export const useSitesStore = defineStore('sites', () => {
   /** Formulario abierto y plantilla preseleccionada. */
   const createOpen = ref(false)
   const createPreset = ref<SitePreset>('blank')
+  /** Plantilla propia elegida (con `createPreset === 'template'`). */
+  const createTemplate = ref<string | null>(null)
+  const templates = ref<SiteTemplate[]>([])
   const creation = ref<Creation | null>(null)
   const creating = computed(() => !!creation.value && !creation.value.site && !creation.value.error)
 
@@ -53,7 +62,11 @@ export const useSitesStore = defineStore('sites', () => {
       }
       c.steps.push(e.payload)
     })
-    await listen<SitePreset>(EVENTS.uiCreateSite, (e) => openCreate(e.payload))
+    // "blank", "wordpress", "laravel" o "template:<nombre>".
+    await listen<string>(EVENTS.uiCreateSite, (e) => {
+      const [preset, ...rest] = e.payload.split(':')
+      openCreate(preset as SitePreset, rest.length ? rest.join(':') : null)
+    })
     list.value = (await attempt(() => invoke<Site[]>('sites_list'))) ?? []
   }
 
@@ -74,14 +87,20 @@ export const useSitesStore = defineStore('sites', () => {
     if (!creating.value) creation.value = null
   }
 
-  function openCreate(preset: SitePreset = 'blank') {
+  async function loadTemplates() {
+    templates.value = (await attempt(() => invoke<SiteTemplate[]>('sites_templates'))) ?? []
+  }
+
+  function openCreate(preset: SitePreset = 'blank', template: string | null = null) {
     if (creating.value) {
       createOpen.value = true
       return
     }
     creation.value = null
     createPreset.value = preset
+    createTemplate.value = template
     createOpen.value = true
+    loadTemplates()
   }
 
   function closeCreate() {
@@ -90,10 +109,10 @@ export const useSitesStore = defineStore('sites', () => {
     creation.value = null
   }
 
-  async function create(name: string, preset: SitePreset) {
+  async function create(name: string, preset: SitePreset, template: string | null = null) {
     creation.value = { name, preset, steps: [], site: null, error: null, warning: null }
     try {
-      const site = await invoke<Site>('sites_create', { name, preset })
+      const site = await invoke<Site>('sites_create', { name, preset, template })
       if (creation.value?.name === name) {
         const last = creation.value.steps[creation.value.steps.length - 1]
         if (last && last.state === 'running') last.state = 'done'
@@ -120,12 +139,15 @@ export const useSitesStore = defineStore('sites', () => {
     missingHosts,
     createOpen,
     createPreset,
+    createTemplate,
+    templates,
     creation,
     creating,
     init,
     sync,
     openCreate,
     closeCreate,
+    loadTemplates,
     backToForm,
     create,
     open,

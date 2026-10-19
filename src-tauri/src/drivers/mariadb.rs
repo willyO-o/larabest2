@@ -1,3 +1,7 @@
+//! MariaDB y MySQL: el mismo driver con los nombres de programa de cada
+//! motor. Se usa uno u otro (Preferencias → Base de datos); comparten
+//! puerto, usuario root y la contraseña de `app.json`.
+
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -11,55 +15,132 @@ use crate::ports::{write_if_changed, ProcessRunner, ProcessSpec};
 
 const INSTALL_TIMEOUT: Duration = Duration::from_secs(120);
 const ADMIN_TIMEOUT: Duration = Duration::from_secs(5);
+/// Un respaldo grande puede tardar.
+const DUMP_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 
-pub struct MariadbDriver;
+/// Bases de datos del sistema: no se respaldan.
+const SYSTEM_DATABASES: [&str; 4] = ["information_schema", "mysql", "performance_schema", "sys"];
 
-fn tool(ctx: &RenderContext, name: &str) -> Result<ProcessSpec, AppError> {
-    let dir = ctx.install_dir(ServiceId::Mariadb)?;
-    Ok(ProcessSpec::new(
-        ctx.program(ServiceId::Mariadb, name)?,
-        &dir,
-    ))
+/// Programas de cada motor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Programs {
+    pub server: &'static str,
+    pub admin: &'static str,
+    pub client: &'static str,
+    pub dump: &'static str,
 }
 
-/// Cliente de MariaDB sin leer otros `my.cnf` (por ejemplo el de Homebrew
-/// o un `~/.my.cnf` con contraseña): todo va en la línea de comandos.
-fn client(ctx: &RenderContext, name: &str) -> Result<ProcessSpec, AppError> {
-    Ok(tool(ctx, name)?.arg("--no-defaults"))
+pub fn programs(id: ServiceId) -> Programs {
+    match id {
+        ServiceId::Mysql => Programs {
+            server: "mysqld",
+            admin: "mysqladmin",
+            client: "mysql",
+            dump: "mysqldump",
+        },
+        _ => Programs {
+            server: "mariadbd",
+            admin: "mariadb-admin",
+            client: "mariadb",
+            dump: "mariadb-dump",
+        },
+    }
 }
 
-/// `mariadb-admin` contra 127.0.0.1 como root sin contraseña.
-fn admin(ctx: &RenderContext, command: &str) -> Result<ProcessSpec, AppError> {
-    Ok(client(ctx, "mariadb-admin")?
+pub struct MariadbDriver {
+    id: ServiceId,
+}
+
+impl MariadbDriver {
+    pub fn mariadb() -> Self {
+        MariadbDriver {
+            id: ServiceId::Mariadb,
+        }
+    }
+
+    pub fn mysql() -> Self {
+        MariadbDriver {
+            id: ServiceId::Mysql,
+        }
+    }
+}
+
+fn tool(ctx: &RenderContext, id: ServiceId, name: &str) -> Result<ProcessSpec, AppError> {
+    let dir = ctx.install_dir(id)?;
+    Ok(ProcessSpec::new(ctx.program(id, name)?, &dir))
+}
+
+/// Cliente sin leer otros `my.cnf` (por ejemplo el de Homebrew o un
+/// `~/.my.cnf` con contraseña): todo va en la línea de comandos, como root
+/// contra 127.0.0.1.
+fn client(ctx: &RenderContext, id: ServiceId, name: &str) -> Result<ProcessSpec, AppError> {
+    let mut spec = tool(ctx, id, name)?
+        .arg("--no-defaults")
         .arg("--host=127.0.0.1")
         .arg(format!("--port={}", ctx.config.mariadb_port))
-        .arg("--user=root")
-        .arg(command))
+        .arg("--user=root");
+    let password = ctx.config.root_password(id);
+    if !password.is_empty() {
+        spec = spec.arg(format!("--password={password}"));
+    }
+    Ok(spec)
 }
 
-/// `CREATE DATABASE` con el cliente `mariadb`. El nombre debe venir ya
-/// validado (`domain::database_name`).
-pub fn create_database_spec(ctx: &RenderContext, db: &str) -> Result<ProcessSpec, AppError> {
-    if db.is_empty()
-        || !db
+fn admin(ctx: &RenderContext, id: ServiceId, command: &str) -> Result<ProcessSpec, AppError> {
+    Ok(client(ctx, id, programs(id).admin)?.arg(command))
+}
+
+/// El cliente `mariadb` o `mysql` del motor elegido con una sentencia SQL.
+pub fn sql_spec(ctx: &RenderContext, sql: &str) -> Result<ProcessSpec, AppError> {
+    let id = ctx.database();
+    Ok(client(ctx, id, programs(id).client)?
+        .arg("--batch")
+        .arg("--skip-column-names")
+        .arg("-e")
+        .arg(sql))
+}
+
+async fn run_sql(ctx: &RenderContext, sql: &str, what: &str) -> Result<String, AppError> {
+    let out = ctx.runner.run(&sql_spec(ctx, sql)?, ADMIN_TIMEOUT).await?;
+    if out.success() {
+        Ok(out.stdout)
+    } else {
+        Err(AppError::Process(format!("{what}: {}", clean(&out.text()))))
+    }
+}
+
+/// Quita el aviso de MySQL por pasar la contraseña en la línea de comandos.
+fn clean(text: &str) -> String {
+    text.lines()
+        .filter(|l| !l.contains("Using a password on the command line"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn valid_database(db: &str) -> bool {
+    !db.is_empty()
+        && db
             .chars()
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
-    {
+}
+
+/// `CREATE DATABASE` con el cliente del motor elegido. El nombre debe venir
+/// ya validado (`domain::database_name`).
+pub fn create_database_spec(ctx: &RenderContext, db: &str) -> Result<ProcessSpec, AppError> {
+    if !valid_database(db) {
         return Err(AppError::InvalidInput(format!(
             "Nombre de base de datos no válido: {db}"
         )));
     }
-    Ok(client(ctx, "mariadb")?
-        .arg("--host=127.0.0.1")
-        .arg(format!("--port={}", ctx.config.mariadb_port))
-        .arg("--user=root")
-        .arg("-e")
-        .arg(format!(
+    sql_spec(
+        ctx,
+        &format!(
             "CREATE DATABASE IF NOT EXISTS `{db}` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
-        )))
+        ),
+    )
 }
 
-/// Crea la base de datos si no existe. MariaDB debe estar en marcha.
+/// Crea la base de datos si no existe. El motor debe estar en marcha.
 pub async fn create_database(ctx: &RenderContext, db: &str) -> Result<(), AppError> {
     let out = ctx
         .runner
@@ -70,15 +151,139 @@ pub async fn create_database(ctx: &RenderContext, db: &str) -> Result<(), AppErr
     } else {
         Err(AppError::Process(format!(
             "No se pudo crear la base de datos {db}: {}",
-            out.text()
+            clean(&out.text())
         )))
+    }
+}
+
+/// Bases de datos del usuario (sin las del sistema), en orden.
+pub async fn list_databases(ctx: &RenderContext) -> Result<Vec<String>, AppError> {
+    let out = run_sql(
+        ctx,
+        "SHOW DATABASES;",
+        "No se pudo leer la lista de bases de datos",
+    )
+    .await?;
+    let mut dbs: Vec<String> = out
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !SYSTEM_DATABASES.contains(&l.to_ascii_lowercase().as_str()))
+        .map(str::to_string)
+        .collect();
+    dbs.sort();
+    Ok(dbs)
+}
+
+/// `mariadb-dump` o `mysqldump` de una base, con rutinas, eventos y
+/// disparadores, en `file`.
+pub fn dump_spec(
+    ctx: &RenderContext,
+    db: &str,
+    file: &std::path::Path,
+) -> Result<ProcessSpec, AppError> {
+    let id = ctx.database();
+    Ok(client(ctx, id, programs(id).dump)?
+        .arg("--single-transaction")
+        .arg("--routines")
+        .arg("--events")
+        .arg("--triggers")
+        .arg("--default-character-set=utf8mb4")
+        .arg(format!("--result-file={}", slash(file)))
+        .arg("--databases")
+        .arg(db))
+}
+
+pub async fn dump_database(
+    ctx: &RenderContext,
+    db: &str,
+    file: &std::path::Path,
+) -> Result<(), AppError> {
+    let out = ctx
+        .runner
+        .run(&dump_spec(ctx, db, file)?, DUMP_TIMEOUT)
+        .await?;
+    if out.success() {
+        Ok(())
+    } else {
+        Err(AppError::Process(format!(
+            "No se pudo respaldar {db}: {}",
+            clean(&out.text())
+        )))
+    }
+}
+
+/// Caracteres permitidos en la contraseña de root: sin comillas, barras,
+/// espacios ni `$` o `#`, que habría que escapar en `wp-config.php`, `.env`
+/// y los archivos de configuración generados.
+pub fn valid_password(password: &str) -> bool {
+    password.len() <= 64
+        && password
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "_-.@!%*+=?,:".contains(c))
+}
+
+/// Cambia la contraseña de root en todos sus hosts (`localhost`,
+/// `127.0.0.1`...). Usa la contraseña actual de `ctx.config`.
+pub async fn set_root_password(ctx: &RenderContext, password: &str) -> Result<(), AppError> {
+    if !valid_password(password) {
+        return Err(AppError::InvalidInput(
+            "La contraseña solo puede tener letras, números y _-.@!%*+=?,: (hasta 64).".into(),
+        ));
+    }
+    let hosts = run_sql(
+        ctx,
+        "SELECT Host FROM mysql.user WHERE User = 'root';",
+        "No se pudo leer el usuario root",
+    )
+    .await?;
+    let hosts: Vec<&str> = hosts
+        .lines()
+        .map(str::trim)
+        .filter(|h| {
+            !h.is_empty()
+                && h.chars()
+                    .all(|c| c.is_ascii_alphanumeric() || ".:%-_".contains(c))
+        })
+        .collect();
+    if hosts.is_empty() {
+        return Err(AppError::NotFound(
+            "No se encontró el usuario root en la base de datos.".into(),
+        ));
+    }
+    let statements: String = hosts
+        .iter()
+        .map(|host| format!("ALTER USER 'root'@'{host}' IDENTIFIED BY '{password}';"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    run_sql(
+        ctx,
+        &format!("{statements} FLUSH PRIVILEGES;"),
+        "No se pudo cambiar la contraseña",
+    )
+    .await?;
+    Ok(())
+}
+
+impl MariadbDriver {
+    fn cnf(&self, ctx: &RenderContext) -> PathBuf {
+        ctx.paths.db_cnf(self.id)
+    }
+
+    fn data(&self, ctx: &RenderContext) -> PathBuf {
+        ctx.paths.data(self.id)
+    }
+
+    fn log(&self, ctx: &RenderContext, kind: &str) -> PathBuf {
+        ctx.paths
+            .logs()
+            .join(format!("{}-{kind}.log", self.id.key()))
     }
 }
 
 #[async_trait]
 impl ServiceDriver for MariadbDriver {
     fn id(&self) -> ServiceId {
-        ServiceId::Mariadb
+        self.id
     }
 
     fn depends_on(&self) -> &[ServiceId] {
@@ -94,45 +299,47 @@ impl ServiceDriver for MariadbDriver {
     }
 
     fn log_files(&self, ctx: &RenderContext) -> Vec<PathBuf> {
-        vec![
-            ctx.paths.logs().join("mariadb-error.log"),
-            ctx.paths.logs().join("mariadb-console.log"),
-        ]
+        vec![self.log(ctx, "error"), self.log(ctx, "console")]
     }
 
     async fn render_config(&self, ctx: &RenderContext) -> Result<(), AppError> {
-        let install = ctx.install(ServiceId::Mariadb)?;
+        let install = ctx.install(self.id)?;
         let fs = ctx.fs.as_ref();
         fs.create_dir_all(&ctx.paths.logs())?;
+        let (template, user_template) = match self.id {
+            ServiceId::Mysql => (templates::MYSQL_CNF, templates::USER_MYSQL_CNF),
+            _ => (templates::MY_CNF, templates::USER_CNF),
+        };
         templates::ensure_user_file(
             fs,
-            &ctx.paths.mariadb_user_cnf(),
-            templates::USER_CNF,
+            &ctx.paths.db_user_cnf(self.id),
+            user_template,
             &ctx.app_name,
         )?;
         let cnf = templates::render(
-            templates::MY_CNF,
+            template,
             context! {
                 app_name => ctx.app_name,
                 version => install.version,
                 basedir => install.path,
-                datadir => slash(&ctx.paths.data_mariadb()),
+                datadir => slash(&self.data(ctx)),
                 port => ctx.config.mariadb_port,
                 logs => slash(&ctx.paths.logs()),
                 tmp => slash(&ctx.paths.tmp()),
-                custom_dir => slash(&ctx.paths.mariadb_custom()),
+                custom_dir => slash(&ctx.paths.db_custom(self.id)),
                 // En macOS el socket propio evita chocar con otro MySQL.
                 socket => (ctx.layout == BinaryLayout::Homebrew)
-                    .then(|| slash(&ctx.paths.mariadb_socket())),
+                    .then(|| slash(&ctx.paths.db_socket(self.id))),
             },
         )?;
-        write_if_changed(fs, &ctx.paths.mariadb_cnf(), &cnf)?;
+        write_if_changed(fs, &self.cnf(ctx), &cnf)?;
         Ok(())
     }
 
-    /// La primera vez crea las tablas del sistema con `mariadb-install-db`.
+    /// La primera vez crea las tablas del sistema: `mariadb-install-db` o
+    /// `mysqld --initialize-insecure` (root sin contraseña).
     async fn first_run_setup(&self, ctx: &RenderContext) -> Result<(), AppError> {
-        let datadir = ctx.paths.data_mariadb();
+        let datadir = self.data(ctx);
         if ctx.fs.exists(&datadir.join("mysql")) {
             return Ok(());
         }
@@ -144,26 +351,28 @@ impl ServiceDriver for MariadbDriver {
                 slash(&datadir)
             )));
         }
-        let mut spec = tool(ctx, "mariadb-install-db")?;
-        if ctx.layout == BinaryLayout::Homebrew {
-            // El script de Unix necesita la carpeta de la fórmula y, sin
-            // `normal`, root solo entraría por socket como usuario del
-            // sistema: Adminer, WordPress y Laravel entran por TCP.
-            spec = spec
-                .arg(format!(
-                    "--defaults-file={}",
-                    slash(&ctx.paths.mariadb_cnf())
-                ))
-                .arg(format!(
-                    "--basedir={}",
-                    ctx.install(ServiceId::Mariadb)?.path
-                ))
-                .arg("--auth-root-authentication-method=normal")
-                .arg("--skip-test-db");
-        }
-        let spec = spec
-            .arg(format!("--datadir={}", slash(&datadir)))
-            .log_to(ctx.paths.logs().join("mariadb-install.log"));
+        let spec = if self.id == ServiceId::Mysql {
+            // --defaults-file debe ser el primer argumento; datadir y basedir
+            // salen de ahí.
+            tool(ctx, self.id, "mysqld")?
+                .arg(format!("--defaults-file={}", slash(&self.cnf(ctx))))
+                .arg("--initialize-insecure")
+                .log_to(ctx.paths.logs().join("mysql-install.log"))
+        } else {
+            let mut spec = tool(ctx, self.id, "mariadb-install-db")?;
+            if ctx.layout == BinaryLayout::Homebrew {
+                // El script de Unix necesita la carpeta de la fórmula y, sin
+                // `normal`, root solo entraría por socket como usuario del
+                // sistema: Adminer, WordPress y Laravel entran por TCP.
+                spec = spec
+                    .arg(format!("--defaults-file={}", slash(&self.cnf(ctx))))
+                    .arg(format!("--basedir={}", ctx.install(self.id)?.path))
+                    .arg("--auth-root-authentication-method=normal")
+                    .arg("--skip-test-db");
+            }
+            spec.arg(format!("--datadir={}", slash(&datadir)))
+                .log_to(ctx.paths.logs().join("mariadb-install.log"))
+        };
         let out = ctx.runner.run(&spec, INSTALL_TIMEOUT).await?;
         if out.success() {
             Ok(())
@@ -176,27 +385,24 @@ impl ServiceDriver for MariadbDriver {
     }
 
     fn start_specs(&self, ctx: &RenderContext) -> Vec<ProcessSpec> {
-        match tool(ctx, "mariadbd") {
+        match tool(ctx, self.id, programs(self.id).server) {
             // --defaults-file debe ser el primer argumento.
             Ok(spec) => vec![spec
-                .arg(format!(
-                    "--defaults-file={}",
-                    slash(&ctx.paths.mariadb_cnf())
-                ))
-                .log_to(ctx.paths.logs().join("mariadb-console.log"))],
+                .arg(format!("--defaults-file={}", slash(&self.cnf(ctx))))
+                .log_to(self.log(ctx, "console"))],
             Err(_) => Vec::new(),
         }
     }
 
-    /// Apagado ordenado con `mariadb-admin shutdown`. Solo se fuerza si no
-    /// termina dentro del plazo: matar MariaDB puede dañar tablas.
+    /// Apagado ordenado con `mariadb-admin shutdown` (o `mysqladmin`). Solo
+    /// se fuerza si no termina dentro del plazo: matarlo puede dañar tablas.
     async fn stop(
         &self,
         ctx: &RenderContext,
         pids: &[u32],
         runner: &dyn ProcessRunner,
     ) -> Result<(), AppError> {
-        if let Ok(spec) = admin(ctx, "shutdown") {
+        if let Ok(spec) = admin(ctx, self.id, "shutdown") {
             let _ = runner.run(&spec, ctx.stop_grace).await;
         }
         if !wait_for_exit(runner, pids, ctx.stop_grace).await {
@@ -206,13 +412,13 @@ impl ServiceDriver for MariadbDriver {
     }
 
     async fn health(&self, ctx: &RenderContext) -> Health {
-        let spec = match admin(ctx, "ping") {
+        let spec = match admin(ctx, self.id, "ping") {
             Ok(spec) => spec,
             Err(e) => return Health::Down(e.to_string()),
         };
         match ctx.runner.run(&spec, ADMIN_TIMEOUT).await {
             Ok(out) if out.success() => Health::Up,
-            Ok(out) => Health::Down(out.text()),
+            Ok(out) => Health::Down(clean(&out.text())),
             Err(e) => Health::Down(e.to_string()),
         }
     }
@@ -221,15 +427,35 @@ impl ServiceDriver for MariadbDriver {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::{DatabaseServer, InstalledVersion};
     use crate::drivers::exe;
-    use crate::drivers::test_support::{fixture, homebrew_fixture};
+    use crate::drivers::test_support::{fixture, homebrew_fixture, Fixture};
     use crate::ports::{CommandOutput, FileStore};
     use std::path::Path;
+
+    fn driver() -> MariadbDriver {
+        MariadbDriver::mariadb()
+    }
+
+    /// La pila con MySQL 8.4 en lugar de MariaDB.
+    fn mysql_fixture() -> Fixture {
+        let mut f = fixture();
+        f.ctx.config.database_server = DatabaseServer::Mysql;
+        f.ctx.versions.insert(
+            ServiceId::Mysql,
+            InstalledVersion {
+                service: ServiceId::Mysql,
+                version: "8.4.6".into(),
+                path: "C:/APP/bin/mysql/8.4.6".into(),
+            },
+        );
+        f
+    }
 
     #[tokio::test]
     async fn renders_my_cnf_local_only_and_utf8mb4() {
         let f = fixture();
-        MariadbDriver.render_config(&f.ctx).await.unwrap();
+        driver().render_config(&f.ctx).await.unwrap();
         let cnf = f.fs.read("C:/APP/etc/mariadb/my.cnf");
         assert!(cnf.contains("bind-address = 127.0.0.1\n"));
         assert!(cnf.contains("character-set-server = utf8mb4\n"));
@@ -242,9 +468,48 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn mysql_has_its_own_config_data_and_programs() {
+        let f = mysql_fixture();
+        let mysql = MariadbDriver::mysql();
+        mysql.render_config(&f.ctx).await.unwrap();
+        let cnf = f.fs.read("C:/APP/etc/mysql/my.cnf");
+        assert!(cnf.contains(r#"datadir = "C:/APP/data/mysql""#));
+        assert!(cnf.contains("mysqlx = OFF\n"));
+        assert!(cnf.contains(r#"log-error = "C:/APP/logs/mysql-error.log""#));
+        assert!(cnf.contains("!includedir C:/APP/etc/mysql/custom\n"));
+        assert!(f
+            .fs
+            .read("C:/APP/etc/mysql/custom/user.cnf")
+            .contains("MySQL"));
+
+        let specs = mysql.start_specs(&f.ctx);
+        assert_eq!(
+            slash(&specs[0].program),
+            format!("C:/APP/bin/mysql/8.4.6/bin/{}", exe("mysqld"))
+        );
+        mysql.first_run_setup(&f.ctx).await.unwrap();
+        let ran = f.runner.ran();
+        assert_eq!(
+            ran[0].args,
+            vec![
+                "--defaults-file=C:/APP/etc/mysql/my.cnf",
+                "--initialize-insecure"
+            ]
+        );
+        // Los clientes son los de MySQL.
+        let spec = create_database_spec(&f.ctx, "blog").unwrap();
+        assert_eq!(
+            slash(&spec.program),
+            format!("C:/APP/bin/mysql/8.4.6/bin/{}", exe("mysql"))
+        );
+        assert!(mysql.health(&f.ctx).await.is_up());
+        assert!(slash(&f.runner.ran()[1].program).ends_with(&exe("mysqladmin")));
+    }
+
+    #[tokio::test]
     async fn homebrew_uses_its_own_socket() {
         let f = homebrew_fixture();
-        MariadbDriver.render_config(&f.ctx).await.unwrap();
+        driver().render_config(&f.ctx).await.unwrap();
         let cnf = f.fs.read("/Users/ana/LARABEST/etc/mariadb/my.cnf");
         assert!(cnf.contains(r#"basedir = "/opt/homebrew/Cellar/mariadb@11.4/11.4.8""#));
         let socket = r#"socket = "/Users/ana/LARABEST/tmp/mariadb.sock""#;
@@ -254,7 +519,7 @@ mod tests {
     #[tokio::test]
     async fn homebrew_install_db_gets_basedir_and_passwordless_root() {
         let f = homebrew_fixture();
-        MariadbDriver.first_run_setup(&f.ctx).await.unwrap();
+        driver().first_run_setup(&f.ctx).await.unwrap();
         let ran = f.runner.ran();
         assert_eq!(
             slash(&ran[0].program),
@@ -275,16 +540,28 @@ mod tests {
     #[test]
     fn clients_ignore_other_option_files() {
         let f = fixture();
-        let spec = admin(&f.ctx, "ping").unwrap();
+        let spec = admin(&f.ctx, ServiceId::Mariadb, "ping").unwrap();
         assert_eq!(spec.args[0], "--no-defaults");
         let spec = create_database_spec(&f.ctx, "blog").unwrap();
         assert_eq!(spec.args[0], "--no-defaults");
+        assert!(!spec.args.iter().any(|a| a.starts_with("--password")));
+    }
+
+    #[test]
+    fn clients_send_the_root_password_when_there_is_one() {
+        let mut f = fixture();
+        f.ctx
+            .config
+            .set_root_password(ServiceId::Mariadb, "secreta");
+        let spec = admin(&f.ctx, ServiceId::Mariadb, "ping").unwrap();
+        assert!(spec.args.contains(&"--password=secreta".to_string()));
+        assert_eq!(spec.args.last().unwrap(), "ping");
     }
 
     #[tokio::test]
     async fn first_run_installs_db_once() {
         let f = fixture();
-        MariadbDriver.first_run_setup(&f.ctx).await.unwrap();
+        driver().first_run_setup(&f.ctx).await.unwrap();
         let ran = f.runner.ran();
         assert_eq!(ran.len(), 1);
         assert_eq!(
@@ -298,7 +575,7 @@ mod tests {
 
         f.fs.create_dir_all(Path::new("C:/APP/data/mariadb/mysql"))
             .unwrap();
-        MariadbDriver.first_run_setup(&f.ctx).await.unwrap();
+        driver().first_run_setup(&f.ctx).await.unwrap();
         assert_eq!(f.runner.ran().len(), 1);
     }
 
@@ -307,7 +584,7 @@ mod tests {
         let f = fixture();
         f.fs.write(Path::new("C:/APP/data/mariadb/basura.txt"), "x")
             .unwrap();
-        let err = MariadbDriver.first_run_setup(&f.ctx).await.unwrap_err();
+        let err = driver().first_run_setup(&f.ctx).await.unwrap_err();
         assert!(err.to_string().contains("no está vacía"));
         assert!(f.runner.ran().is_empty());
     }
@@ -320,7 +597,7 @@ mod tests {
             stdout: String::new(),
             stderr: "Access denied".into(),
         });
-        let err = MariadbDriver.first_run_setup(&f.ctx).await.unwrap_err();
+        let err = driver().first_run_setup(&f.ctx).await.unwrap_err();
         assert!(err.to_string().contains("Access denied"));
     }
 
@@ -352,10 +629,52 @@ mod tests {
         assert!(err.to_string().contains("Can't connect"));
     }
 
+    #[tokio::test]
+    async fn lists_user_databases_without_system_ones() {
+        let f = fixture();
+        f.runner.set_run_output(CommandOutput {
+            code: Some(0),
+            stdout: "information_schema\nblog\nmysql\nperformance_schema\nsys\nalfa\n".into(),
+            stderr: String::new(),
+        });
+        assert_eq!(list_databases(&f.ctx).await.unwrap(), vec!["alfa", "blog"]);
+    }
+
+    #[test]
+    fn dump_writes_one_file_per_database() {
+        let f = fixture();
+        let spec = dump_spec(&f.ctx, "blog", Path::new("C:/APP/backups/x/blog.sql")).unwrap();
+        assert!(slash(&spec.program).ends_with(&exe("mariadb-dump")));
+        assert!(spec
+            .args
+            .contains(&"--result-file=C:/APP/backups/x/blog.sql".to_string()));
+        assert_eq!(&spec.args[spec.args.len() - 2..], ["--databases", "blog"]);
+    }
+
+    #[tokio::test]
+    async fn root_password_changes_every_root_host() {
+        let f = fixture();
+        f.runner.set_run_output(CommandOutput {
+            code: Some(0),
+            stdout: "localhost\n127.0.0.1\n".into(),
+            stderr: String::new(),
+        });
+        set_root_password(&f.ctx, "Nueva-1").await.unwrap();
+        let ran = f.runner.ran();
+        assert!(ran[0].args.last().unwrap().contains("FROM mysql.user"));
+        assert_eq!(
+            ran[1].args.last().unwrap(),
+            "ALTER USER 'root'@'localhost' IDENTIFIED BY 'Nueva-1'; ALTER USER 'root'@'127.0.0.1' IDENTIFIED BY 'Nueva-1'; FLUSH PRIVILEGES;"
+        );
+        assert!(set_root_password(&f.ctx, "con'comilla").await.is_err());
+        assert!(set_root_password(&f.ctx, "con espacio").await.is_err());
+        assert!(valid_password(""));
+    }
+
     #[test]
     fn start_spec_puts_defaults_file_first() {
         let f = fixture();
-        let specs = MariadbDriver.start_specs(&f.ctx);
+        let specs = driver().start_specs(&f.ctx);
         assert_eq!(
             slash(&specs[0].program),
             format!("C:/APP/bin/mariadb/11.4.5/bin/{}", exe("mariadbd"))
@@ -371,7 +690,7 @@ mod tests {
         let f = fixture();
         f.runner.set_alive(7, true);
         f.runner.kill_on_run(7);
-        MariadbDriver
+        driver()
             .stop(&f.ctx, &[7], f.runner.as_ref())
             .await
             .unwrap();
@@ -385,7 +704,7 @@ mod tests {
     async fn stop_forces_only_after_grace() {
         let f = fixture();
         f.runner.set_alive(7, true);
-        MariadbDriver
+        driver()
             .stop(&f.ctx, &[7], f.runner.as_ref())
             .await
             .unwrap();
@@ -395,7 +714,7 @@ mod tests {
     #[tokio::test]
     async fn health_uses_admin_ping() {
         let f = fixture();
-        assert!(MariadbDriver.health(&f.ctx).await.is_up());
+        assert!(driver().health(&f.ctx).await.is_up());
         assert_eq!(f.runner.ran()[0].args.last().unwrap(), "ping");
         f.runner.set_run_output(CommandOutput {
             code: Some(1),
@@ -403,7 +722,7 @@ mod tests {
             stderr: "connect failed".into(),
         });
         assert_eq!(
-            MariadbDriver.health(&f.ctx).await,
+            driver().health(&f.ctx).await,
             Health::Down("connect failed".into())
         );
     }

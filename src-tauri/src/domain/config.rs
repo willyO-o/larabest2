@@ -10,6 +10,7 @@ pub struct ActiveVersions {
     pub apache: Option<String>,
     pub php: Option<String>,
     pub mariadb: Option<String>,
+    pub mysql: Option<String>,
     pub postgresql: Option<String>,
     pub redis: Option<String>,
     pub mongodb: Option<String>,
@@ -23,6 +24,7 @@ impl ActiveVersions {
             ServiceId::Apache => &mut self.apache,
             ServiceId::Php => &mut self.php,
             ServiceId::Mariadb => &mut self.mariadb,
+            ServiceId::Mysql => &mut self.mysql,
             ServiceId::Postgresql => &mut self.postgresql,
             ServiceId::Redis => &mut self.redis,
             ServiceId::Mongodb => &mut self.mongodb,
@@ -36,6 +38,7 @@ impl ActiveVersions {
             ServiceId::Apache => self.apache.as_deref(),
             ServiceId::Php => self.php.as_deref(),
             ServiceId::Mariadb => self.mariadb.as_deref(),
+            ServiceId::Mysql => self.mysql.as_deref(),
             ServiceId::Postgresql => self.postgresql.as_deref(),
             ServiceId::Redis => self.redis.as_deref(),
             ServiceId::Mongodb => self.mongodb.as_deref(),
@@ -109,6 +112,32 @@ impl WebServer {
     }
 }
 
+/// Motor de base de datos: MariaDB o MySQL, nunca los dos.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DatabaseServer {
+    #[default]
+    Mariadb,
+    Mysql,
+}
+
+impl DatabaseServer {
+    pub fn service(self) -> ServiceId {
+        match self {
+            DatabaseServer::Mariadb => ServiceId::Mariadb,
+            DatabaseServer::Mysql => ServiceId::Mysql,
+        }
+    }
+}
+
+/// Contraseña de root de MariaDB y de MySQL: cada motor tiene sus datos.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct RootPasswords {
+    pub mariadb: String,
+    pub mysql: String,
+}
+
 /// Qué abre el botón "Base de datos".
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -141,6 +170,7 @@ pub const DEFAULT_PHP_EXTENSIONS: [&str; 11] = [
 pub struct AppConfig {
     pub versions: ActiveVersions,
     pub http_port: u16,
+    /// Puerto de la base de datos (MariaDB o MySQL).
     pub mariadb_port: u16,
     /// Primer puerto de los procesos `php-cgi`; el resto son consecutivos.
     pub php_base_port: u16,
@@ -164,6 +194,17 @@ pub struct AppConfig {
     pub mailpit_smtp_port: u16,
     /// ...y lo muestra en la web en este.
     pub mailpit_http_port: u16,
+    /// Al abrir la app, quedarse en la bandeja sin mostrar la ventana.
+    pub start_minimized: bool,
+    pub database_server: DatabaseServer,
+    /// Contraseña de root de cada motor. Vacía: sin contraseña (solo
+    /// escuchan en 127.0.0.1). La app la necesita para detener el motor,
+    /// crear bases de datos y entrar a Adminer y phpMyAdmin.
+    pub root_passwords: RootPasswords,
+    /// Respaldar las bases de datos al detener MariaDB o MySQL.
+    pub backup_on_stop: bool,
+    /// Respaldos que se conservan; los más viejos se borran.
+    pub backup_keep: u16,
 }
 
 impl Default for AppConfig {
@@ -188,6 +229,11 @@ impl Default for AppConfig {
             mongodb_port: 27017,
             mailpit_smtp_port: 1025,
             mailpit_http_port: 8025,
+            start_minimized: false,
+            database_server: DatabaseServer::Mariadb,
+            root_passwords: RootPasswords::default(),
+            backup_on_stop: false,
+            backup_keep: 10,
         }
     }
 }
@@ -208,11 +254,26 @@ impl AppConfig {
         }
     }
 
+    /// Contraseña de root del motor (`Mariadb` o `Mysql`).
+    pub fn root_password(&self, id: ServiceId) -> &str {
+        match id {
+            ServiceId::Mysql => &self.root_passwords.mysql,
+            _ => &self.root_passwords.mariadb,
+        }
+    }
+
+    pub fn set_root_password(&mut self, id: ServiceId, password: &str) {
+        match id {
+            ServiceId::Mysql => self.root_passwords.mysql = password.into(),
+            _ => self.root_passwords.mariadb = password.into(),
+        }
+    }
+
     pub fn port_of(&self, id: ServiceId) -> u16 {
         match id {
             ServiceId::Nginx | ServiceId::Apache => self.http_port,
             ServiceId::Php => self.php_base_port,
-            ServiceId::Mariadb => self.mariadb_port,
+            ServiceId::Mariadb | ServiceId::Mysql => self.mariadb_port,
             ServiceId::Postgresql => self.postgresql_port,
             ServiceId::Redis => self.redis_port,
             ServiceId::Mongodb => self.mongodb_port,
@@ -240,6 +301,10 @@ mod tests {
         assert_eq!(cfg.services.get(ServiceId::Redis), None);
         assert_eq!(cfg.services.get(ServiceId::Php), Some(true));
         assert_eq!(cfg.web_server, WebServer::Nginx);
+        assert_eq!(cfg.database_server.service(), ServiceId::Mariadb);
+        assert!(cfg.root_password(ServiceId::Mariadb).is_empty());
+        assert_eq!(cfg.backup_keep, 10);
+        assert!(!cfg.start_minimized);
     }
 
     #[test]

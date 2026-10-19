@@ -180,6 +180,62 @@ impl ShellLauncher for MacShellLauncher {
     }
 }
 
+/// PATH del usuario en macOS: un bloque marcado en `~/.zprofile` (zsh, la
+/// shell por defecto) y en `~/.bash_profile` si existe.
+pub struct MacUserPath {
+    app_name: String,
+    home: PathBuf,
+}
+
+impl MacUserPath {
+    pub fn new(app_name: impl Into<String>, home: PathBuf) -> Self {
+        MacUserPath {
+            app_name: app_name.into(),
+            home,
+        }
+    }
+
+    fn profiles(&self, creating: bool) -> Vec<PathBuf> {
+        let zsh = self.home.join(".zprofile");
+        let bash = self.home.join(".bash_profile");
+        let mut out = Vec::new();
+        if creating || zsh.exists() {
+            out.push(zsh);
+        }
+        if bash.exists() {
+            out.push(bash);
+        }
+        out
+    }
+
+    fn edit(&self, dir: &Path, add: bool) -> Result<(), AppError> {
+        use crate::adapters::shared::user_path::profile_edit;
+        for profile in self.profiles(add) {
+            let current = std::fs::read_to_string(&profile).unwrap_or_default();
+            let new = profile_edit(&current, &self.app_name, &slash(dir), add);
+            if new != current {
+                write(&profile, &new)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+impl crate::ports::UserPath for MacUserPath {
+    fn contains(&self, dir: &Path) -> bool {
+        let profile = std::fs::read_to_string(self.home.join(".zprofile")).unwrap_or_default();
+        crate::adapters::shared::user_path::profile_contains(&profile, &self.app_name, &slash(dir))
+    }
+
+    fn add(&self, dir: &Path) -> Result<(), AppError> {
+        self.edit(dir, true)
+    }
+
+    fn remove(&self, dir: &Path) -> Result<(), AppError> {
+        self.edit(dir, false)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

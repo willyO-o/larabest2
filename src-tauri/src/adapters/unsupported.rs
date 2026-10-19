@@ -115,3 +115,19 @@ impl TrustStore for UnsupportedTrustStore {
         Err(unsupported())
     }
 }
+
+pub struct UnsupportedUserPath;
+
+impl crate::ports::UserPath for UnsupportedUserPath {
+    fn contains(&self, _dir: &Path) -> bool {
+        false
+    }
+
+    fn add(&self, _dir: &Path) -> Result<(), AppError> {
+        Err(unsupported())
+    }
+
+    fn remove(&self, _dir: &Path) -> Result<(), AppError> {
+        Err(unsupported())
+    }
+}

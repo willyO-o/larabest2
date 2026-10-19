@@ -48,6 +48,7 @@ fn brew_formula(service: ServiceId, branch: &str) -> String {
         ServiceId::Apache => "httpd".into(),
         ServiceId::Php => format!("php@{branch}"),
         ServiceId::Mariadb => format!("mariadb@{branch}"),
+        ServiceId::Mysql => format!("mysql@{branch}"),
         ServiceId::Postgresql => format!("postgresql@{branch}"),
         ServiceId::Mongodb => "mongodb/brew/mongodb-community".into(),
         other => other.key().into(),
@@ -142,6 +143,14 @@ impl Core {
                 let url = urls::mariadb_zip(&version);
                 Ok((version, url))
             }
+            ServiceId::Mysql => {
+                let json = self.fetch_text(urls::MYSQL_FORMULA).await?;
+                let version = catalog::brew_stable(&json)
+                    .filter(|v| v.starts_with(&format!("{branch}.")))
+                    .ok_or_else(|| unreadable("formulae.brew.sh"))?;
+                let url = urls::mysql_zip(&version, branch);
+                Ok((version, url))
+            }
             ServiceId::Postgresql => {
                 let json = self.fetch_text(urls::POSTGRESQL_VERSIONS).await?;
                 let version = catalog::postgresql_latest(&json, branch)
@@ -197,7 +206,15 @@ impl Core {
             .paths
             .downloads()
             .join(format!("{}-{version}.zip", service.key()));
-        self.downloader.download(&url, &zip).await?;
+        let downloaded = self.downloader.download(&url, &zip).await;
+        if downloaded.is_err() && service == ServiceId::Mysql {
+            // Si ya salió otra versión, la anterior pasó a archives/.
+            self.downloader
+                .download(&urls::mysql_archive_zip(&version, branch), &zip)
+                .await?;
+        } else {
+            downloaded?;
+        }
         progress.step(format!("Extrayendo en {}", slash(&dest)));
         // Del zip de Apache Lounge solo interesa su carpeta Apache24.
         let folder = (service == ServiceId::Apache).then_some(catalog::APACHE_ZIP_FOLDER);
@@ -239,6 +256,27 @@ impl Core {
         service: ServiceId,
         branch: &str,
     ) -> Result<String, AppError> {
+        let formula = brew_formula(service, branch);
+        self.brew_install(progress, &formula, service == ServiceId::Mongodb)
+            .await?;
+        let version = self
+            .versions(service)?
+            .into_iter()
+            .find(|v| branch.is_empty() || v.version.starts_with(&format!("{branch}.")));
+        Ok(match version {
+            Some(v) => format!("{} {} instalado con Homebrew.", service.label(), v.version),
+            None => format!("{} instalado con Homebrew.", service.label()),
+        })
+    }
+
+    /// `brew install <fórmula>`; con `mongodb_tap`, antes agrega el tap de
+    /// MongoDB.
+    async fn brew_install(
+        &self,
+        progress: &Progress<'_>,
+        formula: &str,
+        mongodb_tap: bool,
+    ) -> Result<(), AppError> {
         let deps = self.supervisor.deps();
         let brew = BREW_PATHS
             .iter()
@@ -264,7 +302,7 @@ impl Core {
             spec
         };
         let runner = deps.runner.as_ref();
-        if service == ServiceId::Mongodb {
+        if mongodb_tap {
             progress.step("Agregando el tap de MongoDB");
             runner
                 .run(&brew_spec(&["tap", "mongodb/brew"]), BREW_TIMEOUT)
@@ -274,12 +312,11 @@ impl Core {
                 .run(&brew_spec(&["trust", "mongodb/brew"]), BREW_TIMEOUT)
                 .await;
         }
-        let formula = brew_formula(service, branch);
         progress.step(format!(
             "brew install {formula} (puede tardar varios minutos)"
         ));
         let out = runner
-            .run(&brew_spec(&["install", &formula]), BREW_TIMEOUT)
+            .run(&brew_spec(&["install", formula]), BREW_TIMEOUT)
             .await?;
         if !out.success() {
             let text = out.text();
@@ -289,23 +326,78 @@ impl Core {
                 lines[lines.len().saturating_sub(8)..].join("\n")
             )));
         }
-        let version = self
-            .versions(service)?
-            .into_iter()
-            .find(|v| branch.is_empty() || v.version.starts_with(&format!("{branch}.")));
-        Ok(match version {
-            Some(v) => format!("{} {} instalado con Homebrew.", service.label(), v.version),
-            None => format!("{} instalado con Homebrew.", service.label()),
-        })
+        Ok(())
+    }
+
+    /// Node.js y Git: el zip oficial en `bin/node/<versión>/` o
+    /// `bin/git/<versión>/` en Windows; `brew install` en macOS.
+    async fn install_cli_tool(
+        &self,
+        progress: &Progress<'_>,
+        tool: Tool,
+    ) -> Result<String, AppError> {
+        let deps = self.supervisor.deps();
+        let label = progress.package.label;
+        let key = match tool {
+            Tool::Git => "git",
+            _ => "node",
+        };
+        if deps.layout == BinaryLayout::Homebrew {
+            self.brew_install(progress, key, false).await?;
+            return Ok(format!("{label} instalado con Homebrew."));
+        }
+        progress.step(format!("Buscando la última versión de {label}"));
+        let unreadable = |source: &str| {
+            AppError::Process(format!(
+                "No se encontró la versión en {source}. Vuelve a intentarlo más tarde."
+            ))
+        };
+        let (version, url) = match tool {
+            Tool::Git => {
+                let json = self.fetch_text(urls::GIT_LATEST).await?;
+                catalog::mingit_latest(&json).ok_or_else(|| unreadable("GitHub"))?
+            }
+            _ => {
+                let json = self.fetch_text(urls::NODE_INDEX).await?;
+                let tag = catalog::node_lts(&json).ok_or_else(|| unreadable("nodejs.org"))?;
+                let url = urls::node_zip(&tag);
+                (tag.trim_start_matches('v').to_string(), url)
+            }
+        };
+        let base = deps.paths.bin().join(key);
+        let dest = base.join(&version);
+        if super::terminal::cli_dir_in(deps.fs.as_ref(), &dest, tool).is_some() {
+            return Ok(format!("{label} {version} ya estaba instalado."));
+        }
+        progress.step(format!("Descargando {label} {version}"));
+        let zip = deps.paths.downloads().join(format!("{key}-{version}.zip"));
+        self.downloader.download(&url, &zip).await?;
+        progress.step(format!("Extrayendo en {}", slash(&dest)));
+        let extracted = self.extract(&zip, &dest, None).await;
+        let _ = deps.fs.remove_file(&zip);
+        extracted?;
+        if super::terminal::cli_dir_in(deps.fs.as_ref(), &dest, tool).is_none() {
+            let _ = deps.fs.remove_dir_all(&dest);
+            return Err(AppError::Process(format!(
+                "El archivo descargado de {url} no es un {label} válido."
+            )));
+        }
+        // La terminal y los atajos del PATH apuntan a la versión nueva.
+        self.refresh_shims()?;
+        Ok(format!("{label} {version} instalado."))
     }
 
     /// Adminer, phpMyAdmin y Composer se descargan igual en las dos
     /// plataformas.
     async fn install_tool(&self, progress: &Progress<'_>, tool: Tool) -> Result<String, AppError> {
+        if matches!(tool, Tool::Node | Tool::Git) {
+            return self.install_cli_tool(progress, tool).await;
+        }
         let deps = self.supervisor.deps();
         let label = progress.package.label;
         progress.step(format!("Descargando {label}"));
         match tool {
+            Tool::Node | Tool::Git => unreachable!("se instalan arriba"),
             Tool::Adminer => {
                 self.downloader
                     .download(urls::ADMINER, &deps.paths.adminer_php())
@@ -365,6 +457,9 @@ impl Core {
                         tools::installed(deps.fs.as_ref(), &deps.paths, tools::PHPMYADMIN)
                     }
                     Tool::Composer => deps.fs.exists(&deps.paths.composer_phar()),
+                    Tool::Node | Tool::Git => {
+                        return self.cli_tool_dir(tool).map(|_| "instalado".to_string())
+                    }
                 };
                 installed.then(|| "instalado".to_string())
             }

@@ -1,0 +1,27 @@
+# Generado por {{ app_name }} para MySQL {{ version }}. No editar: se regenera en cada inicio.
+
+[mysqld]
+basedir = "{{ basedir }}"
+datadir = "{{ datadir }}"
+port = {{ port }}
+bind-address = 127.0.0.1
+# El protocolo X (puerto 33060) no hace falta y choca entre instancias.
+mysqlx = OFF
+character-set-server = utf8mb4
+collation-server = utf8mb4_unicode_ci
+log-error = "{{ logs }}/mysql-error.log"
+pid-file = "{{ tmp }}/mysql.pid"
+{%- if socket %}
+socket = "{{ socket }}"
+{%- endif %}
+
+[client]
+host = 127.0.0.1
+port = {{ port }}
+default-character-set = utf8mb4
+{%- if socket %}
+socket = "{{ socket }}"
+{%- endif %}
+
+# Ajustes propios: archivos .cnf en esta carpeta (no se regeneran).
+!includedir {{ custom_dir }}

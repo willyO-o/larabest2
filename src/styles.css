@@ -764,6 +764,94 @@ button:disabled {
   background: var(--sunken);
 }
 
+.segmented-4 {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.ports-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px 10px;
+}
+
+.password-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.field-compact {
+  gap: 4px;
+  min-width: 0;
+}
+
+.field-compact .field-label {
+  color: var(--ink-2);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.field-compact .field-input {
+  width: 100%;
+  min-width: 0;
+  height: 30px;
+  padding: 0 8px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Sin flechas en los números: ocupan sitio y no ayudan con puertos. */
+.field-compact input[type='number'] {
+  appearance: textfield;
+}
+
+.field-compact input[type='number']::-webkit-inner-spin-button,
+.field-compact input[type='number']::-webkit-outer-spin-button {
+  appearance: none;
+  margin: 0;
+}
+
+.tld-input {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.tld-prefix {
+  color: var(--ink-3);
+  font-size: 12px;
+}
+
+.sheet-text {
+  margin: 0;
+  color: var(--ink-2);
+  line-height: 1.45;
+}
+
+.check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ink-2);
+  font-size: 12px;
+}
+
+.check input {
+  accent-color: var(--accent);
+}
+
+.template-row {
+  display: flex;
+  gap: 8px;
+}
+
+.template-select {
+  flex: 1;
+  min-width: 0;
+}
+
 .segment {
   height: 30px;
   border: 1px solid transparent;
@@ -918,6 +1006,11 @@ button:disabled {
 .sheet-alert.is-error {
   background: var(--bad-ground);
   color: var(--bad);
+}
+
+.sheet-alert.is-ok {
+  background: color-mix(in srgb, var(--ok) 14%, transparent);
+  color: var(--ok);
 }
 
 .sheet-alert.is-warn {

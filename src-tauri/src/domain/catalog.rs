@@ -46,6 +46,10 @@ pub enum Tool {
     Adminer,
     Phpmyadmin,
     Composer,
+    /// Node.js y npm para la terminal (Vite, Laravel Breeze...).
+    Node,
+    /// Git para la terminal (en Windows, MinGit).
+    Git,
 }
 
 const fn service(
@@ -75,12 +79,13 @@ impl Package {
 
 /// El catálogo, en el orden del menú. Las versiones elegidas para la app:
 /// PHP 8.3 y 8.4, MariaDB 11.4 (LTS) y PostgreSQL 17.
-pub const PACKAGES: [Package; 12] = [
+pub const PACKAGES: [Package; 15] = [
     service("php-8.4", "PHP 8.4", ServiceId::Php, "8.4"),
     service("php-8.3", "PHP 8.3", ServiceId::Php, "8.3"),
     service("nginx", "Nginx", ServiceId::Nginx, ""),
     service("apache", "Apache", ServiceId::Apache, ""),
     service("mariadb-11.4", "MariaDB 11.4", ServiceId::Mariadb, "11.4"),
+    service("mysql-8.4", "MySQL 8.4", ServiceId::Mysql, "8.4"),
     service(
         "postgresql-17",
         "PostgreSQL 17",
@@ -105,6 +110,16 @@ pub const PACKAGES: [Package; 12] = [
         label: "Composer",
         kind: PackageKind::Tool(Tool::Composer),
     },
+    Package {
+        id: "node",
+        label: "Node.js (LTS)",
+        kind: PackageKind::Tool(Tool::Node),
+    },
+    Package {
+        id: "git",
+        label: "Git",
+        kind: PackageKind::Tool(Tool::Git),
+    },
 ];
 
 pub fn find(id: &str) -> Option<Package> {
@@ -127,6 +142,11 @@ pub mod urls {
     /// Scoop): apachelounge.com bloquea algunas descargas automáticas.
     pub const APACHE_INDEX: &str = "https://fossies.org/windows/www/";
     pub const ADMINER: &str = "https://www.adminer.org/latest.php";
+    /// Versión estable de una fórmula de Homebrew: fuente sencilla y
+    /// estable de la última versión de MySQL de una rama.
+    pub const MYSQL_FORMULA: &str = "https://formulae.brew.sh/api/formula/mysql@8.4.json";
+    pub const NODE_INDEX: &str = "https://nodejs.org/dist/index.json";
+    pub const GIT_LATEST: &str = "https://api.github.com/repos/git-for-windows/git/releases/latest";
     pub const PHPMYADMIN: &str =
         "https://www.phpmyadmin.net/downloads/phpMyAdmin-latest-all-languages.zip";
 
@@ -147,6 +167,20 @@ pub mod urls {
 
     pub fn mongodb_zip(version: &str) -> String {
         format!("https://fastdl.mongodb.org/windows/mongodb-windows-x86_64-{version}.zip")
+    }
+
+    /// MySQL publica la última versión de cada rama en `Downloads/` y las
+    /// anteriores en `archives/`.
+    pub fn mysql_zip(version: &str, branch: &str) -> String {
+        format!("https://cdn.mysql.com/Downloads/MySQL-{branch}/mysql-{version}-winx64.zip")
+    }
+
+    pub fn mysql_archive_zip(version: &str, branch: &str) -> String {
+        format!("https://cdn.mysql.com/archives/mysql-{branch}/mysql-{version}-winx64.zip")
+    }
+
+    pub fn node_zip(version: &str) -> String {
+        format!("https://nodejs.org/dist/{version}/node-{version}-win-x64.zip")
     }
 
     pub fn redis_zip(tag: &str) -> String {
@@ -309,6 +343,50 @@ pub fn apache_latest(html: &str) -> Option<(String, String)> {
     best.map(|(version, _, _, file)| (version, file))
 }
 
+/// API de Homebrew (`formulae.brew.sh`): la versión estable de la fórmula.
+pub fn brew_stable(json: &str) -> Option<String> {
+    let doc: Value = serde_json::from_str(json).ok()?;
+    doc.get("versions")?
+        .get("stable")?
+        .as_str()
+        .map(str::to_string)
+}
+
+/// `index.json` de nodejs.org: la LTS más reciente ("v22.20.0").
+pub fn node_lts(json: &str) -> Option<String> {
+    let doc: Value = serde_json::from_str(json).ok()?;
+    doc.as_array()?.iter().find_map(|r| {
+        let lts = r.get("lts")?;
+        let is_lts = lts.as_str().is_some() || lts.as_bool() == Some(true);
+        let has_zip = r
+            .get("files")
+            .and_then(Value::as_array)
+            .is_some_and(|f| f.iter().any(|x| x.as_str() == Some("win-x64-zip")));
+        (is_lts && has_zip)
+            .then(|| r.get("version")?.as_str().map(str::to_string))
+            .flatten()
+    })
+}
+
+/// Último release de Git para Windows: la versión y el zip de MinGit de
+/// 64 bits (sin la variante "busybox").
+pub fn mingit_latest(json: &str) -> Option<(String, String)> {
+    let doc: Value = serde_json::from_str(json).ok()?;
+    let tag = doc.get("tag_name")?.as_str()?;
+    let version = tag
+        .trim_start_matches('v')
+        .split(".windows")
+        .next()?
+        .to_string();
+    let url = doc.get("assets")?.as_array()?.iter().find_map(|a| {
+        let name = a.get("name")?.as_str()?;
+        (name.starts_with("MinGit-") && name.ends_with("-64-bit.zip") && !name.contains("busybox"))
+            .then(|| a.get("browser_download_url")?.as_str().map(str::to_string))
+            .flatten()
+    })?;
+    Some((version, url))
+}
+
 /// Último release de GitHub (`/releases/latest`): su etiqueta.
 pub fn github_tag(json: &str) -> Option<String> {
     let doc: Value = serde_json::from_str(json).ok()?;
@@ -415,7 +493,32 @@ mod tests {
     #[test]
     fn packages_are_grouped_for_the_menu() {
         let groups: Vec<u8> = PACKAGES.iter().map(Package::group).collect();
-        assert_eq!(groups, vec![0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2]);
+        assert_eq!(groups, vec![0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 2]);
+    }
+
+    #[test]
+    fn reads_mysql_node_and_git_sources() {
+        let brew = r#"{"name": "mysql@8.4", "versions": {"stable": "8.4.6", "bottle": true}}"#;
+        assert_eq!(brew_stable(brew).as_deref(), Some("8.4.6"));
+        assert_eq!(
+            urls::mysql_zip("8.4.6", "8.4"),
+            "https://cdn.mysql.com/Downloads/MySQL-8.4/mysql-8.4.6-winx64.zip"
+        );
+        let node = r#"[
+            {"version": "v25.0.0", "lts": false, "files": ["win-x64-zip"]},
+            {"version": "v24.10.0", "lts": "Krypton", "files": ["linux-x64"]},
+            {"version": "v24.9.0", "lts": "Krypton", "files": ["win-x64-zip", "linux-x64"]}
+        ]"#;
+        assert_eq!(node_lts(node).as_deref(), Some("v24.9.0"));
+        let git = r#"{"tag_name": "v2.51.0.windows.1", "assets": [
+            {"name": "Git-2.51.0-64-bit.exe", "browser_download_url": "https://x/Git.exe"},
+            {"name": "MinGit-2.51.0-busybox-64-bit.zip", "browser_download_url": "https://x/bb.zip"},
+            {"name": "MinGit-2.51.0-64-bit.zip", "browser_download_url": "https://x/MinGit.zip"}
+        ]}"#;
+        assert_eq!(
+            mingit_latest(git),
+            Some(("2.51.0".into(), "https://x/MinGit.zip".into()))
+        );
     }
 
     #[test]

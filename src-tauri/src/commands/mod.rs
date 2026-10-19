@@ -10,6 +10,7 @@ use crate::domain::{
     slash, InstalledVersion, ServiceId, ServiceStatus, Site, SitePreset, ThemePreference,
 };
 use crate::error::AppError;
+use crate::usecases::{PortSettings, SiteTemplate};
 use crate::{menu, settings, tray, AppState};
 
 #[tauri::command]
@@ -79,8 +80,59 @@ pub async fn sites_create(
     state: State<'_, AppState>,
     name: String,
     preset: SitePreset,
+    template: Option<String>,
 ) -> Result<Site, AppError> {
-    state.core.create_site(&name, preset).await
+    state
+        .core
+        .create_site_from(&name, preset, template.as_deref())
+        .await
+}
+
+/// Abre una configuración, carpeta o log (como el menú).
+#[tauri::command]
+pub async fn config_open(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    target: crate::usecases::ConfigTarget,
+) -> Result<(), AppError> {
+    menu::open_target(&app, &state.core, target)
+}
+
+/// Plantillas propias de `etc/sitios.conf` para el formulario.
+#[tauri::command]
+pub async fn sites_templates(state: State<'_, AppState>) -> Result<Vec<SiteTemplate>, AppError> {
+    Ok(state.core.site_templates())
+}
+
+#[tauri::command]
+pub async fn settings_get_ports(state: State<'_, AppState>) -> Result<PortSettings, AppError> {
+    state.core.port_settings()
+}
+
+/// Guarda puertos y dominio; reinicia lo que cambió.
+#[tauri::command]
+pub async fn settings_set_ports(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    ports: PortSettings,
+) -> Result<(), AppError> {
+    let result = state.core.set_port_settings(ports).await;
+    let _ = app.emit("settings:changed", ());
+    tray::rebuild(&app);
+    result
+}
+
+/// Cambia la contraseña de root del motor elegido. Devuelve un aviso.
+#[tauri::command]
+pub async fn settings_set_root_password(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    password: String,
+) -> Result<String, AppError> {
+    let result = state.core.set_root_password(&password).await;
+    let _ = app.emit("settings:changed", ());
+    tray::rebuild(&app);
+    result
 }
 
 #[tauri::command]
@@ -138,6 +190,11 @@ pub struct Settings {
     pub default_root: String,
     pub theme: ThemePreference,
     pub ssl: bool,
+    /// Dominio de los sitios (`test`).
+    pub tld: String,
+    /// MariaDB o MySQL.
+    pub database: ServiceId,
+    pub has_root_password: bool,
 }
 
 #[tauri::command]
@@ -151,6 +208,9 @@ pub async fn settings_get(
         default_root: slash(&settings::default_root(&settings::app_name(&app))),
         theme: state.core.theme(),
         ssl: state.core.ssl_enabled(),
+        tld: state.core.port_settings()?.tld,
+        database: state.core.database_service(),
+        has_root_password: state.core.has_root_password(),
     })
 }
 
@@ -183,8 +243,14 @@ pub async fn settings_set_theme(
 /// La interfaz ya pintó su primer cuadro: se muestra la ventana (se crea
 /// oculta para no parpadear con el tema equivocado).
 #[tauri::command]
-pub async fn app_ready(app: AppHandle) -> Result<(), AppError> {
-    tray::show_main(&app);
+pub async fn app_ready(app: AppHandle, state: State<'_, AppState>) -> Result<(), AppError> {
+    // Con "iniciar minimizado" la ventana espera al clic en la bandeja.
+    if !state
+        .start_hidden
+        .swap(false, std::sync::atomic::Ordering::SeqCst)
+    {
+        tray::show_main(&app);
+    }
     Ok(())
 }
 

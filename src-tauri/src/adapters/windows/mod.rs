@@ -13,7 +13,7 @@ pub use download::WindowsDownloader;
 pub use hosts::{apply_hosts_request, WindowsHostsManager};
 pub use ports::WindowsPortChecker;
 pub use process::WindowsProcessRunner;
-pub use shell::WindowsShellLauncher;
+pub use shell::{WindowsShellLauncher, WindowsUserPath};
 pub use trust::CertutilTrustStore;
 
 use std::path::PathBuf;

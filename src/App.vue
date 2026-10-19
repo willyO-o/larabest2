@@ -5,6 +5,8 @@ import ActionBar from './components/ActionBar.vue'
 import AppIcon from './components/AppIcon.vue'
 import BrandMark from './components/BrandMark.vue'
 import CreateSitePanel from './components/CreateSitePanel.vue'
+import PasswordPanel from './components/PasswordPanel.vue'
+import PortsPanel from './components/PortsPanel.vue'
 import ServiceRow from './components/ServiceRow.vue'
 import ThemeSwitch from './components/ThemeSwitch.vue'
 import { attempt, lastError } from './lib/errors'
@@ -166,5 +168,7 @@ function openMenu(e?: MouseEvent) {
     </footer>
 
     <CreateSitePanel />
+    <PortsPanel />
+    <PasswordPanel />
   </div>
 </template>

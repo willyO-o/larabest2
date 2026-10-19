@@ -1,6 +1,6 @@
 //! Prueba de punta a punta en macOS con los programas reales de Homebrew
-//! (`brew install nginx httpd php@8.3 php@8.4 mariadb@11.4 postgresql@17
-//! redis mongodb/brew/mongodb-community mailpit`). Necesita internet para
+//! (`brew install nginx httpd php@8.3 php@8.4 mariadb@11.4 mysql@8.4
+//! postgresql@17 redis mongodb/brew/mongodb-community mailpit`). Necesita internet para
 //! Adminer, WordPress y Composer. La corre el CI (`build-macos`):
 //!
 //! ```sh
@@ -26,6 +26,7 @@ const PORTS: E2ePorts = E2ePorts {
     mongodb: 27018,
     smtp: 1026,
     mail_web: 8026,
+    procfile: 8091,
 };
 
 #[tokio::test(flavor = "multi_thread")]
@@ -54,7 +55,7 @@ async fn e2e_homebrew() {
     // Primero con Nginx: Apache espera su turno.
     let stack: Vec<ServiceId> = ServiceId::ALL
         .into_iter()
-        .filter(|&id| id != ServiceId::Apache)
+        .filter(|&id| id != ServiceId::Apache && id != ServiceId::Mysql)
         .collect();
     e2e::common_flow(&w, &stack).await;
 
@@ -96,6 +97,26 @@ async fn e2e_homebrew() {
         &format!("{text}{}", String::from_utf8_lossy(&out.stderr)),
     );
 
+    // Los atajos de etc/shell (los del PATH del usuario) también.
+    let shims = w.core.refresh_shims().unwrap();
+    let out = tokio::process::Command::new("/bin/sh")
+        .args([
+            "-c",
+            "php -r 'echo PHP_BINARY;' && composer --version && mariadb --version",
+        ])
+        .env("PATH", format!("{}:/usr/bin:/bin", shims.display()))
+        .output()
+        .await
+        .unwrap();
+    let text = String::from_utf8_lossy(&out.stdout).into_owned();
+    check(
+        &w,
+        text.starts_with("/opt/homebrew/Cellar/php")
+            && text.contains("Composer")
+            && text.contains("MariaDB"),
+        &format!("atajos: {text}{}", String::from_utf8_lossy(&out.stderr)),
+    );
+
     // Cambiar de PHP reinicia solo php-fpm.
     let php83 = w
         .core
@@ -107,10 +128,20 @@ async fn e2e_homebrew() {
     w.core.switch_php(&php83.version).await.unwrap();
     let page = get("hola.test", PORTS.http, "/", false).await;
     check(&w, page.contains("hola 8.3."), &page);
+    // Laravel 13 pide PHP 8.4: se vuelve a la más nueva.
+    let php84 = w
+        .core
+        .versions(ServiceId::Php)
+        .unwrap()
+        .into_iter()
+        .find(|v| v.version.starts_with("8.4."))
+        .expect("PHP 8.4");
+    w.core.switch_php(&php84.version).await.unwrap();
 
     // Apache (brew install httpd) en lugar de Nginx, con php-fpm.
     e2e::apache_flow(&w).await;
 
+    e2e::mysql_flow(&w).await;
     e2e::orphans_are_cleaned(&w).await;
     let _ = std::fs::remove_dir_all(&w.root);
 }

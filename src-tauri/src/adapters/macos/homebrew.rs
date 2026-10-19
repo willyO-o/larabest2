@@ -34,6 +34,7 @@ fn formula_base(service: ServiceId) -> &'static str {
         ServiceId::Apache => "httpd",
         ServiceId::Php => "php",
         ServiceId::Mariadb => "mariadb",
+        ServiceId::Mysql => "mysql",
         ServiceId::Postgresql => "postgresql",
         ServiceId::Redis => "redis",
         ServiceId::Mongodb => "mongodb-community",

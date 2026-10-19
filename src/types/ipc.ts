@@ -6,6 +6,7 @@ export type ServiceId =
   | 'apache'
   | 'php'
   | 'mariadb'
+  | 'mysql'
   | 'postgresql'
   | 'redis'
   | 'mongodb'
@@ -38,7 +39,14 @@ export interface Site {
   inHosts: boolean
 }
 
-export type SitePreset = 'blank' | 'wordpress' | 'laravel'
+export type SitePreset = 'blank' | 'wordpress' | 'laravel' | 'template'
+
+/** Plantilla propia de `etc/sitios.conf` (`sites_templates`). */
+export interface SiteTemplate {
+  name: string
+  /** Comando de Composer, URL de un .zip u otro comando, con %s como nombre. */
+  action: string
+}
 
 export type ProgressState = 'running' | 'done' | 'failed'
 
@@ -74,7 +82,30 @@ export interface Settings {
   defaultRoot: string
   theme: ThemePreference
   ssl: boolean
+  /** Dominio de los sitios (`test`). */
+  tld: string
+  /** Motor de base de datos elegido. */
+  database: 'mariadb' | 'mysql'
+  hasRootPassword: boolean
 }
+
+/** `settings_get_ports` / `settings_set_ports`. */
+export interface PortSettings {
+  http: number
+  https: number
+  /** Primer puerto de PHP (en Windows, uno por cada php-cgi). */
+  php: number
+  database: number
+  postgresql: number
+  redis: number
+  mongodb: number
+  mailpitSmtp: number
+  mailpitHttp: number
+  tld: string
+}
+
+/** Paneles que el menú pide abrir en la ventana (`ui:panel`). */
+export type Panel = 'ports' | 'password'
 
 export type AppErrorKind =
   | 'io'
@@ -105,4 +136,8 @@ export const EVENTS = {
   /** El menú contextual pide abrir el formulario de sitio nuevo. */
   uiCreateSite: 'ui:create-site',
   installProgress: 'install:progress',
+  /** El menú pide abrir un panel (puertos, contraseña). */
+  uiPanel: 'ui:panel',
+  /** Cambió algo de Preferencias: volver a leer `settings_get`. */
+  settingsChanged: 'settings:changed',
 } as const

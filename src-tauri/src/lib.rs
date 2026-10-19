@@ -17,6 +17,9 @@ mod testing;
 mod e2e;
 
 use std::sync::atomic::{AtomicBool, Ordering};
+
+/// Argumento con que el inicio automático abre la app: queda en la bandeja.
+pub const MINIMIZED_ARG: &str = "--minimized";
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -27,6 +30,7 @@ use adapters::shared::{config::JsonConfigStore, fs::StdFileStore, watcher::watch
 use domain::{BinaryLayout, Paths, ServiceStatus, Site, SiteProgress};
 use ports::{
     BinaryProvider, Downloader, EventSink, HostsManager, PortChecker, ProcessRunner, ShellLauncher,
+    UserPath,
 };
 use supervisor::{Deps, Supervisor, Timings};
 use usecases::{Core, CoreAdapters};
@@ -35,6 +39,9 @@ use usecases::{Core, CoreAdapters};
 pub struct AppState {
     pub core: Arc<Core>,
     watcher: Mutex<Option<notify::RecommendedWatcher>>,
+    /// La ventana no se muestra al abrir (inicio con el sistema o
+    /// Preferencias → Iniciar minimizado).
+    pub start_hidden: AtomicBool,
 }
 
 /// Emite los eventos del contrato hacia la interfaz.
@@ -71,6 +78,7 @@ struct Platform {
     hosts: Arc<dyn HostsManager>,
     downloader: Arc<dyn Downloader>,
     trust: Arc<dyn TrustStore>,
+    user_path: Arc<dyn UserPath>,
     /// Base del PATH de la terminal (ver `Core::new`).
     system_path: String,
 }
@@ -95,6 +103,7 @@ fn platform(app_name: &str, paths: &Paths) -> Platform {
         runner,
         ports: Arc::new(WindowsPortChecker),
         shell: Arc::new(WindowsShellLauncher),
+        user_path: Arc::new(WindowsUserPath),
         system_path: std::env::var("PATH").unwrap_or_default(),
     }
 }
@@ -121,6 +130,12 @@ fn platform(app_name: &str, paths: &Paths) -> Platform {
             app_name,
             paths.tmp().join("terminal"),
         )),
+        user_path: Arc::new(MacUserPath::new(
+            app_name,
+            std::env::var_os("HOME")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_default(),
+        )),
         // Una app abierta desde el Finder tiene un PATH mínimo; la terminal
         // antepone el PATH propio al de la shell del usuario.
         system_path: String::new(),
@@ -140,6 +155,7 @@ fn platform(_app_name: &str, paths: &Paths) -> Platform {
         hosts: Arc::new(UnsupportedHosts),
         downloader: Arc::new(UnsupportedDownloader),
         trust: Arc::new(UnsupportedTrustStore),
+        user_path: Arc::new(UnsupportedUserPath),
         system_path: std::env::var("PATH").unwrap_or_default(),
     }
 }
@@ -207,18 +223,21 @@ fn setup(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
             archive: Arc::new(ZipExtractor),
             ca,
             secrets: Arc::new(OsSecrets),
+            user_path: platform.user_path,
         },
         platform.system_path,
     ));
+    let start_hidden = std::env::args().any(|a| a == MINIMIZED_ARG) || core.start_minimized();
     app.manage(AppState {
         core: core.clone(),
         watcher: Mutex::new(None),
+        start_hidden: AtomicBool::new(start_hidden),
     });
     tray::create(app)?;
     settings::apply_theme(app, core.theme());
     // La ventana se crea oculta y la muestra la interfaz al pintar
     // (`app_ready`). Por si la interfaz no llega a avisar, se muestra igual.
-    {
+    if !start_hidden {
         let app = app.clone();
         tauri::async_runtime::spawn(async move {
             tokio::time::sleep(Duration::from_secs(3)).await;
@@ -271,6 +290,11 @@ pub fn run() {
             tray::show_main(app);
         }))
         .plugin(tauri_plugin_opener::init())
+        // Preferencias → Iniciar con el sistema: abre la app en la bandeja.
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec![MINIMIZED_ARG]),
+        ))
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| setup(app.handle()))
         // Clics del menú contextual y de la bandeja.
@@ -305,6 +329,11 @@ pub fn run() {
             commands::settings_choose_root,
             commands::menu_popup,
             commands::settings_set_theme,
+            commands::settings_get_ports,
+            commands::settings_set_ports,
+            commands::settings_set_root_password,
+            commands::sites_templates,
+            commands::config_open,
             commands::app_ready,
             commands::window_fit,
         ])

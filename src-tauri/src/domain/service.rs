@@ -7,6 +7,7 @@ pub enum ServiceId {
     Apache,
     Php,
     Mariadb,
+    Mysql,
     Postgresql,
     Redis,
     Mongodb,
@@ -15,11 +16,12 @@ pub enum ServiceId {
 
 impl ServiceId {
     /// En el orden en que se muestran.
-    pub const ALL: [ServiceId; 8] = [
+    pub const ALL: [ServiceId; 9] = [
         ServiceId::Nginx,
         ServiceId::Apache,
         ServiceId::Php,
         ServiceId::Mariadb,
+        ServiceId::Mysql,
         ServiceId::Postgresql,
         ServiceId::Redis,
         ServiceId::Mongodb,
@@ -38,12 +40,25 @@ impl ServiceId {
     /// Servidores web: se usa uno u otro (Preferencias → Servidor web).
     pub const WEB: [ServiceId; 2] = [ServiceId::Nginx, ServiceId::Apache];
 
+    /// Motores de base de datos: se usa uno u otro (Preferencias → Base de
+    /// datos). Comparten puerto, usuario root y clientes compatibles.
+    pub const DATABASE: [ServiceId; 2] = [ServiceId::Mariadb, ServiceId::Mysql];
+
     pub fn is_optional(self) -> bool {
         Self::OPTIONAL.contains(&self)
     }
 
     pub fn is_web(self) -> bool {
         Self::WEB.contains(&self)
+    }
+
+    pub fn is_database(self) -> bool {
+        Self::DATABASE.contains(&self)
+    }
+
+    /// Se elige uno de su grupo (servidor web o base de datos).
+    pub fn is_exclusive(self) -> bool {
+        self.is_web() || self.is_database()
     }
 
     /// Nombre de la carpeta dentro de `bin/` y de los archivos en `tmp/`.
@@ -53,6 +68,7 @@ impl ServiceId {
             ServiceId::Apache => "apache",
             ServiceId::Php => "php",
             ServiceId::Mariadb => "mariadb",
+            ServiceId::Mysql => "mysql",
             ServiceId::Postgresql => "postgresql",
             ServiceId::Redis => "redis",
             ServiceId::Mongodb => "mongodb",
@@ -67,6 +83,7 @@ impl ServiceId {
             ServiceId::Apache => "Apache",
             ServiceId::Php => "PHP",
             ServiceId::Mariadb => "MariaDB",
+            ServiceId::Mysql => "MySQL",
             ServiceId::Postgresql => "PostgreSQL",
             ServiceId::Redis => "Redis",
             ServiceId::Mongodb => "MongoDB",

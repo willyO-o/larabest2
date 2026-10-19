@@ -17,5 +17,5 @@ pub use homebrew::HomebrewBinaryProvider;
 pub use hosts::{apply_hosts_request, MacHostsManager};
 pub use ports::MacPortChecker;
 pub use process::UnixProcessRunner;
-pub use shell::MacShellLauncher;
+pub use shell::{MacShellLauncher, MacUserPath};
 pub use trust::KeychainTrustStore;

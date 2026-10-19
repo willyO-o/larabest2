@@ -22,7 +22,7 @@ use crate::domain::{
 use crate::error::AppError;
 use crate::ports::{BinaryProvider, ConfigStore, Downloader, PortChecker, ProcessRunner};
 use crate::supervisor::{Deps, Supervisor, Timings};
-use crate::testing::{FakeEvents, FakeHosts, FakeShell};
+use crate::testing::{FakeEvents, FakeHosts, FakeShell, FakeUserPath};
 use crate::usecases::{Core, CoreAdapters};
 
 const CURL: &str = if cfg!(windows) {
@@ -44,6 +44,8 @@ pub struct E2ePorts {
     pub mongodb: u16,
     pub smtp: u16,
     pub mail_web: u16,
+    /// Lo usa el proceso de prueba del Procfile.
+    pub procfile: u16,
 }
 
 impl E2ePorts {
@@ -152,6 +154,7 @@ pub fn world(root: PathBuf, platform: Platform, ports: E2ePorts) -> World {
             archive: Arc::new(ZipExtractor),
             ca: Arc::new(ca),
             secrets: Arc::new(OsSecrets),
+            user_path: Arc::new(FakeUserPath::default()),
         },
         platform.system_path,
     ));
@@ -373,11 +376,45 @@ pub async fn common_flow(w: &World, stack: &[ServiceId]) {
         "MongoDB debe volver a arrancar",
     );
     let mongo_log = std::fs::read_to_string(w.root.join("logs").join("mongodb.log")).unwrap();
+    let shutdown_lines: Vec<&str> = mongo_log
+        .lines()
+        .filter(|l| {
+            ["hutdown", "signal", "Ctrl", "unclean", "terminat"]
+                .iter()
+                .any(|k| l.contains(k))
+        })
+        .collect();
     check(
         w,
         !mongo_log.contains("unclean shutdown"),
-        "MongoDB se cerró a la fuerza",
+        &format!(
+            "MongoDB se cerró a la fuerza:\n{}",
+            shutdown_lines[shutdown_lines.len().saturating_sub(25)..].join("\n")
+        ),
     );
+
+    // Procfile: un proceso propio con el PHP de la app, que se detiene con
+    // la pila.
+    std::fs::write(
+        w.root.join("Procfile"),
+        format!("srv: php -S 127.0.0.1:{} -t hola\n", ports.procfile),
+    )
+    .unwrap();
+    let started = w.core.start_procfile().await;
+    check(w, started.is_ok(), &format!("{started:?}"));
+    let served = get_until("127.0.0.1", ports.procfile, "/", false, "hola 8.").await;
+    check(
+        w,
+        served.contains("hola 8."),
+        &format!("Procfile: {served}"),
+    );
+    w.core.stop_procfile().await;
+    let released = (0..50).any(|_| {
+        std::thread::sleep(Duration::from_millis(100));
+        !w.deps.ports.is_listening(ports.procfile)
+    });
+    check(w, released, "el proceso del Procfile debe detenerse");
+    std::fs::remove_file(w.root.join("Procfile")).unwrap();
 
     // HTTPS con la CA local.
     w.core.set_ssl(true).await.unwrap();
@@ -435,6 +472,72 @@ pub async fn apache_flow(w: &World) {
         running(w, &[ServiceId::Apache]),
         "Apache debe volver a arrancar",
     );
+}
+
+/// MySQL en lugar de MariaDB (Preferencias → Base de datos): primer
+/// arranque, base de datos, Laravel no; contraseña de root con Adminer y
+/// phpMyAdmin, respaldo y vuelta a MariaDB.
+pub async fn mysql_flow(w: &World) {
+    use crate::domain::DatabaseServer;
+    let switched = w.core.set_database_server(DatabaseServer::Mysql).await;
+    check(w, switched.is_ok(), &format!("{switched:?}"));
+    w.core.start(ServiceId::Mysql).await.unwrap();
+    check(
+        w,
+        running(w, &[ServiceId::Mysql])
+            && w.core.supervisor.state(ServiceId::Mariadb) == ServiceState::Stopped,
+        "MySQL debe reemplazar a MariaDB",
+    );
+    let ctx = w.core.supervisor.context().unwrap();
+    crate::drivers::mariadb::create_database(&ctx, "e2e_mysql")
+        .await
+        .unwrap();
+    std::fs::write(
+        w.root.join("www").join("hola").join("db.php"),
+        format!(
+            "<?php $p = $_GET['p'] ?? ''; $db = new PDO('mysql:host=127.0.0.1;port={};dbname=e2e_mysql', 'root', $p); echo 'motor ' . $db->query('select version()')->fetchColumn();",
+            w.ports.mariadb
+        ),
+    )
+    .unwrap();
+    let page = get("hola.test", w.ports.http, "/db.php", false).await;
+    check(w, page.contains("motor 8."), &page);
+
+    // Con contraseña: PHP entra con ella y Adminer sigue entrando solo.
+    let changed = w.core.set_root_password("Clave-e2e1").await;
+    check(w, changed.is_ok(), &format!("{changed:?}"));
+    let page = get("hola.test", w.ports.http, "/db.php?p=Clave-e2e1", false).await;
+    check(w, page.contains("motor 8."), &page);
+    let adminer = adminer_databases(w).await;
+    check(w, adminer.contains("e2e_mysql"), &adminer);
+    // Detener y arrancar usa la contraseña guardada.
+    w.core.stop(ServiceId::Mysql).await.unwrap();
+    w.core.start(ServiceId::Mysql).await.unwrap();
+    check(w, running(w, &[ServiceId::Mysql]), "MySQL con contraseña");
+
+    // Respaldo con mysqldump.
+    let backup = w.core.backup_databases().await;
+    check(w, backup.is_ok(), &format!("{backup:?}"));
+    let folder = std::fs::read_dir(w.root.join("backups"))
+        .unwrap()
+        .flatten()
+        .next()
+        .unwrap()
+        .path();
+    let dump = std::fs::read_to_string(folder.join("e2e_mysql.sql")).unwrap_or_default();
+    check(
+        w,
+        dump.contains("CREATE DATABASE"),
+        &format!("respaldo: {}", &dump[..dump.len().min(400)]),
+    );
+
+    w.core.set_root_password("").await.unwrap();
+    w.core
+        .set_database_server(DatabaseServer::Mariadb)
+        .await
+        .unwrap();
+    w.core.start(ServiceId::Mariadb).await.unwrap();
+    check(w, running(w, &[ServiceId::Mariadb]), "vuelta a MariaDB");
 }
 
 /// Si la app muere sin detener nada, al volver a abrirla limpia los

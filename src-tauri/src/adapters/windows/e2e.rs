@@ -25,6 +25,7 @@ const PORTS: E2ePorts = E2ePorts {
     mongodb: 27018,
     smtp: 1026,
     mail_web: 8026,
+    procfile: 8091,
 };
 
 #[tokio::test(flavor = "multi_thread")]
@@ -91,6 +92,21 @@ async fn e2e_windows() {
         &binary,
     );
 
+    // Los atajos de etc\shell (los del PATH del usuario) también.
+    let shims = w.core.refresh_shims().unwrap();
+    let out = tokio::process::Command::new("cmd.exe")
+        .args(["/C", "php -r \"echo PHP_BINARY . ' ' . (extension_loaded('pdo_mysql') ? 'pdo' : '-');\" && node --version && git --version"])
+        .env("PATH", format!("{};C:\\Windows\\System32", shims.display()))
+        .output()
+        .await
+        .unwrap();
+    let text = String::from_utf8_lossy(&out.stdout).replace('\\', "/");
+    check(
+        &w,
+        text.contains(" pdo") && text.contains("v2") && text.contains("git version"),
+        &format!("{text}{}", String::from_utf8_lossy(&out.stderr)),
+    );
+
     // Cambiar de PHP reinicia solo los php-cgi.
     let php83 = w
         .core
@@ -102,9 +118,19 @@ async fn e2e_windows() {
     w.core.switch_php(&php83.version).await.unwrap();
     let page = get("hola.test", PORTS.http, "/", false).await;
     check(&w, page.contains("hola 8.3."), &page);
+    // Laravel 13 pide PHP 8.4: se vuelve a la más nueva.
+    let php84 = w
+        .core
+        .versions(ServiceId::Php)
+        .unwrap()
+        .into_iter()
+        .find(|v| v.version.starts_with("8.4."))
+        .expect("PHP 8.4");
+    w.core.switch_php(&php84.version).await.unwrap();
 
     // Apache (de Apache Lounge) en lugar de Nginx, con los php-cgi.
     e2e::apache_flow(&w).await;
 
+    e2e::mysql_flow(&w).await;
     e2e::orphans_are_cleaned(&w).await;
 }

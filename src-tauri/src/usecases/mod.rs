@@ -1,17 +1,21 @@
 //! Casos de uso. Los comandos de Tauri solo llaman a estos métodos.
 
+mod backups;
 mod create_site;
 mod install;
+mod preferences;
+mod procfile;
 pub mod sites;
 mod ssl;
+pub mod terminal;
 
-pub use create_site::{COMPOSER_URL, WORDPRESS_URL};
+pub use create_site::{SiteTemplate, COMPOSER_URL, WORDPRESS_URL};
+pub use preferences::PortSettings;
+pub use procfile::Status as ProcfileStatus;
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeSet, HashSet};
 use std::path::PathBuf;
 use std::sync::Arc;
-
-use minijinja::context;
 
 use crate::domain::{
     slash, BinaryLayout, DatabaseClient, HostEntry, InstalledVersion, ServiceId, ServiceState,
@@ -20,8 +24,8 @@ use crate::domain::{
 use crate::drivers::{apache, mailpit, nginx, postgresql, templates, tools};
 use crate::error::AppError;
 use crate::ports::{
-    write_if_changed, ArchiveExtractor, CertificateAuthority, Downloader, HostsManager,
-    SecretSource, ShellLauncher,
+    ArchiveExtractor, CertificateAuthority, Downloader, HostsManager, SecretSource, ShellLauncher,
+    UserPath,
 };
 use crate::supervisor::Supervisor;
 use sites::scan_sites;
@@ -61,6 +65,9 @@ pub enum ConfigTarget {
     MongodbData,
     MongodbLog,
     MailpitLog,
+    Backups,
+    Procfile,
+    SiteTemplates,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
@@ -78,6 +85,7 @@ pub struct CoreAdapters {
     pub archive: Arc<dyn ArchiveExtractor>,
     pub ca: Arc<dyn CertificateAuthority>,
     pub secrets: Arc<dyn SecretSource>,
+    pub user_path: Arc<dyn UserPath>,
 }
 
 pub struct Core {
@@ -88,6 +96,10 @@ pub struct Core {
     archive: Arc<dyn ArchiveExtractor>,
     ca: Arc<dyn CertificateAuthority>,
     secrets: Arc<dyn SecretSource>,
+    user_path: Arc<dyn UserPath>,
+    user_path_cached: std::sync::Mutex<Option<bool>>,
+    /// Procesos del Procfile en marcha: nombre y PID.
+    procfile: std::sync::Mutex<Vec<procfile::Running>>,
     /// PATH del sistema, base del PATH propio de la terminal. Vacío en
     /// macOS: allí la terminal antepone el PATH propio al de la shell.
     system_path: String,
@@ -97,6 +109,8 @@ pub struct Core {
     create_lock: tokio::sync::Mutex<()>,
     /// Se agrega un paquete a la vez.
     install_lock: tokio::sync::Mutex<()>,
+    /// Un respaldo a la vez.
+    backup_lock: tokio::sync::Mutex<()>,
 }
 
 impl Core {
@@ -109,10 +123,14 @@ impl Core {
             archive: adapters.archive,
             ca: adapters.ca,
             secrets: adapters.secrets,
+            user_path: adapters.user_path,
+            user_path_cached: std::sync::Mutex::new(None),
+            procfile: std::sync::Mutex::new(Vec::new()),
             system_path,
             sites_lock: tokio::sync::Mutex::new(()),
             create_lock: tokio::sync::Mutex::new(()),
             install_lock: tokio::sync::Mutex::new(()),
+            backup_lock: tokio::sync::Mutex::new(()),
         }
     }
 
@@ -131,15 +149,24 @@ impl Core {
             deps.fs.create_dir_all(&dir)?;
         }
         self.supervisor.cleanup_orphans().await;
+        self.cleanup_procfile_orphans().await;
+        // Atajos de etc/shell al día (por si se usan desde el PATH).
+        let _ = self.refresh_shims();
         Ok(())
     }
 
+    /// La pila y, después, los procesos del Procfile.
     pub async fn start_all(&self) -> Result<(), AppError> {
         self.ensure_certs()?;
-        self.supervisor.start_all().await
+        self.supervisor.start_all().await?;
+        self.start_procfile().await
     }
 
+    /// Primero el Procfile (usa la pila), el respaldo si está elegido y
+    /// luego los servicios.
     pub async fn stop_all(&self) -> Result<(), AppError> {
+        self.stop_procfile().await;
+        self.backup_before_stop(self.database_service()).await;
         self.supervisor.stop_all().await
     }
 
@@ -151,6 +178,7 @@ impl Core {
     }
 
     pub async fn stop(&self, id: ServiceId) -> Result<(), AppError> {
+        self.backup_before_stop(id).await;
         self.supervisor.stop(id).await
     }
 
@@ -230,7 +258,10 @@ impl Core {
         let mut cfg = deps.config.load()?;
         cfg.versions.set(id, Some(version.to_string()));
         deps.config.save(&cfg)?;
-        self.apply_config_change(id).await
+        self.apply_config_change(id).await?;
+        // Los atajos de etc/shell apuntan a la versión nueva.
+        let _ = self.refresh_shims();
+        Ok(())
     }
 
     /// Tras cambiar `app.json`: reinicia el servicio si está en marcha o
@@ -375,6 +406,8 @@ impl Core {
                 paths.root().join("data")
             }
         };
+        // Configuración del motor de base de datos elegido.
+        let db = self.database_service();
         match target {
             ConfigTarget::Root => Ok(paths.root().to_path_buf()),
             ConfigTarget::Www => Ok(paths.www()),
@@ -410,25 +443,20 @@ impl Core {
                 Ok(paths.php_user_ini())
             }
             ConfigTarget::PhpErrorLog => log("php-error.log"),
-            ConfigTarget::MariadbCnf => generated(paths.mariadb_cnf(), ServiceId::Mariadb),
+            ConfigTarget::MariadbCnf => generated(paths.db_cnf(db), db),
             ConfigTarget::MariadbUserCnf => {
-                templates::ensure_user_file(
-                    fs,
-                    &paths.mariadb_user_cnf(),
-                    templates::USER_CNF,
-                    &deps.app_name,
-                )?;
-                Ok(paths.mariadb_user_cnf())
+                let template = match db {
+                    ServiceId::Mysql => templates::USER_MYSQL_CNF,
+                    _ => templates::USER_CNF,
+                };
+                templates::ensure_user_file(fs, &paths.db_user_cnf(db), template, &deps.app_name)?;
+                Ok(paths.db_user_cnf(db))
             }
-            ConfigTarget::MariadbData => {
-                let data = paths.data_mariadb();
-                Ok(if fs.exists(&data) {
-                    data
-                } else {
-                    paths.root().join("data")
-                })
-            }
-            ConfigTarget::MariadbErrorLog => log("mariadb-error.log"),
+            ConfigTarget::MariadbData => Ok(data_or_parent(db)),
+            ConfigTarget::MariadbErrorLog => log(&format!("{}-error.log", db.key())),
+            ConfigTarget::Backups => self.backups_dir(),
+            ConfigTarget::Procfile => self.procfile_path(),
+            ConfigTarget::SiteTemplates => self.site_templates_path(),
             ConfigTarget::Ssl => {
                 fs.create_dir_all(&paths.etc_ssl())?;
                 Ok(paths.etc_ssl())
@@ -534,7 +562,7 @@ impl Core {
     /// Botón "Base de datos": Adminer o phpMyAdmin según Preferencias.
     pub fn database_url(&self) -> Result<String, AppError> {
         match self.supervisor.deps().config.load()?.database_client {
-            DatabaseClient::Adminer => self.adminer_url(ServiceId::Mariadb),
+            DatabaseClient::Adminer => self.adminer_url(self.database_service()),
             DatabaseClient::Phpmyadmin => self.phpmyadmin_url(),
         }
     }
@@ -587,8 +615,8 @@ impl Core {
         deps.config.save(&cfg)
     }
 
-    /// Adminer con MariaDB (root) o con PostgreSQL (postgres), ambos sin
-    /// contraseña porque solo escuchan en 127.0.0.1.
+    /// Adminer con MariaDB o MySQL (root; si tiene contraseña, el envoltorio
+    /// la completa) o con PostgreSQL (postgres, sin contraseña).
     pub fn adminer_url(&self, engine: ServiceId) -> Result<String, AppError> {
         let deps = self.supervisor.deps();
         let cfg = deps.config.load()?;
@@ -653,86 +681,9 @@ impl Core {
         Ok(mailpit::web_url(cfg.mailpit_http_port))
     }
 
-    /// Entorno de la terminal: PHP activo, MariaDB, Nginx y Composer
-    /// delante del PATH del sistema, solo para esa consola.
-    pub fn terminal_env(&self) -> Result<HashMap<String, String>, AppError> {
-        let deps = self.supervisor.deps();
-        let ctx = self.supervisor.context()?;
-        let mut path: Vec<String> = Vec::new();
-        let web = match ctx.web() {
-            ServiceId::Apache => (ServiceId::Apache, "httpd"),
-            _ => (ServiceId::Nginx, "nginx"),
-        };
-        for (id, program) in [
-            (ServiceId::Php, "php"),
-            (ServiceId::Mariadb, "mariadb"),
-            web,
-        ] {
-            if let Some(dir) = ctx
-                .program(id, program)
-                .ok()
-                .as_deref()
-                .and_then(|p| p.parent())
-            {
-                path.push(slash(dir));
-            }
-        }
-        let phar = deps.paths.composer_phar();
-        if deps.fs.exists(&phar) {
-            let (template, file) = match deps.layout {
-                BinaryLayout::Portable => (templates::COMPOSER_BAT, "composer.bat"),
-                BinaryLayout::Homebrew => (templates::COMPOSER_SH, "composer"),
-            };
-            let script = templates::render(
-                template,
-                context! { app_name => deps.app_name, composer_phar => slash(&phar) },
-            )?;
-            let target = deps.paths.etc_shell().join(file);
-            write_if_changed(deps.fs.as_ref(), &target, &script)?;
-            deps.fs.set_executable(&target)?;
-            path.push(slash(&deps.paths.etc_shell()));
-        }
-        // Las rutas internas usan "/", pero en el PATH de Windows van con "\"
-        // y separadas por ";". La disposición indica la plataforma.
-        let windows = deps.layout == BinaryLayout::Portable;
-        let sep = if windows { ";" } else { ":" };
-        let mut joined: Vec<String> = path
-            .into_iter()
-            .map(|p| if windows { p.replace('/', "\\") } else { p })
-            .collect();
-        if !self.system_path.is_empty() {
-            joined.push(self.system_path.clone());
-        }
-        let mut env = HashMap::new();
-        env.insert("PATH".to_string(), joined.join(sep));
-        // `php` de la terminal usa el mismo php.ini que el servidor.
-        env.insert("PHPRC".to_string(), slash(&deps.paths.etc_php()));
-        env.insert(
-            "PHP_INI_SCAN_DIR".to_string(),
-            slash(&deps.paths.php_custom()),
-        );
-        if deps.layout == BinaryLayout::Homebrew {
-            // Así `mariadb -u root` entra sin indicar el socket.
-            env.insert(
-                "MYSQL_UNIX_PORT".to_string(),
-                slash(&deps.paths.mariadb_socket()),
-            );
-        }
-        Ok(env)
-    }
-
     /// Abre un archivo de configuración o log en el editor del sistema.
     pub fn open_in_editor(&self, path: &std::path::Path) -> Result<(), AppError> {
         self.shell.open_in_editor(path)
-    }
-
-    pub fn open_terminal(&self, cwd: Option<String>) -> Result<(), AppError> {
-        let cwd = match cwd {
-            Some(dir) => PathBuf::from(dir),
-            None => self.supervisor.deps().paths.www(),
-        };
-        let env = self.terminal_env()?;
-        self.shell.open_terminal(&cwd, &env)
     }
 }
 

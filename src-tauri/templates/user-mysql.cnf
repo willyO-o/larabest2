@@ -1,0 +1,6 @@
+# Ajustes propios de MySQL para {{ app_name }}.
+# Este archivo NO se regenera. Reinicia MySQL para aplicar los cambios.
+#
+# [mysqld]
+# max_allowed_packet = 256M
+# innodb_buffer_pool_size = 512M

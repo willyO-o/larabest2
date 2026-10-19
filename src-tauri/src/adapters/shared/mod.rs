@@ -8,6 +8,7 @@ pub mod fs;
 pub mod hosts_file;
 pub mod netstat;
 pub mod secrets;
+pub mod user_path;
 pub mod watcher;
 
 #[cfg(test)]
