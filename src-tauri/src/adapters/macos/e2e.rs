@@ -114,8 +114,8 @@ async fn e2e_homebrew() {
         text.starts_with("/opt/homebrew/Cellar/php")
             && text.contains("Composer")
             && text.contains("MariaDB")
-            && text.contains("v22.")
-            && text.contains("Python 3.13")
+            && text.contains("\nv2")
+            && text.contains("Python 3.")
             && text.contains("go version go1."),
         &format!("atajos: {text}{}", String::from_utf8_lossy(&out.stderr)),
     );

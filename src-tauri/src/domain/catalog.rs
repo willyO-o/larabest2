@@ -238,6 +238,7 @@ pub mod urls {
     pub const NODE_INDEX: &str = "https://nodejs.org/dist/index.json";
     pub const PYTHON_VERSIONS: &str = "https://api.nuget.org/v3-flatcontainer/python/index.json";
     pub const GO_RELEASES: &str = "https://go.dev/dl/?mode=json";
+    pub const GET_PIP: &str = "https://bootstrap.pypa.io/get-pip.py";
     pub const XDEBUG_LATEST: &str = "https://pecl.php.net/rest/r/xdebug/latest.txt";
     pub const VSCODE_ZIP: &str =
         "https://update.code.visualstudio.com/latest/win32-x64-archive/stable";

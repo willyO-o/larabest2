@@ -50,6 +50,8 @@ struct Shim {
     php_env: bool,
     /// En Windows `npm` y `npx` son `.cmd`: se llaman con `call`.
     batch: bool,
+    /// Argumentos que van antes de los del usuario (`-m pip`).
+    prefix: &'static str,
 }
 
 impl Core {
@@ -97,6 +99,7 @@ impl Core {
                         target,
                         php_env,
                         batch,
+                        prefix: "",
                     },
                 );
             }
@@ -132,11 +135,33 @@ impl Core {
                     .copied()
                     .find(|s| *s == name)
                     .expect("atajo conocido");
+                // pip como `python -m pip`: funciona aunque falte Scripts\pip.exe.
+                if rt == Runtime::Python && name == "pip" {
+                    let python = active.dir.join(program_name(deps.layout, rt, rt.program()));
+                    shims.insert(
+                        shim,
+                        Shim {
+                            target: python,
+                            php_env: false,
+                            batch: false,
+                            prefix: "-m pip ",
+                        },
+                    );
+                    continue;
+                }
                 let file = program_name(deps.layout, rt, name);
                 let target = program_dir(deps.layout, rt, &active.dir, name).join(file);
                 // npm, npx y corepack son .cmd en Windows: se llaman con call.
                 let batch = portable && rt == Runtime::Node && name != "node";
-                add(shim, Some(target), false, batch);
+                shims.insert(
+                    shim,
+                    Shim {
+                        target,
+                        php_env: false,
+                        batch,
+                        prefix: "",
+                    },
+                );
             }
         }
         // Solo lo que existe (pip puede faltar, `corepack` es opcional...).
@@ -176,7 +201,8 @@ impl Core {
                 }
                 let call = if shim.batch { "call " } else { "" };
                 s.push_str(&format!(
-                    "{call}\"{target}\" %*\r\nexit /b %ERRORLEVEL%\r\n"
+                    "{call}\"{target}\" {}%*\r\nexit /b %ERRORLEVEL%\r\n",
+                    shim.prefix
                 ));
                 s
             } else {
@@ -186,7 +212,7 @@ impl Core {
                         "export PHPRC=\"{php_rc}\"\nexport PHP_INI_SCAN_DIR=\"{scan_dir}\"\n"
                     ));
                 }
-                s.push_str(&format!("exec \"{target}\" \"$@\"\n"));
+                s.push_str(&format!("exec \"{target}\" {}\"$@\"\n", shim.prefix));
                 s
             };
             let file = file_of(name);

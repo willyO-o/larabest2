@@ -233,18 +233,8 @@ impl Core {
                 rt.label()
             )));
         }
-        if rt == Runtime::Python && !deps.fs.exists(&dest.join("Scripts").join(exe("pip"))) {
-            progress.step("Instalando pip");
-            let spec = crate::ports::ProcessSpec::new(&program, &dest)
-                .arg("-m")
-                .arg("ensurepip")
-                .arg("--default-pip")
-                .log_to(deps.paths.logs().join("python-install.log"));
-            // Sin pip Python sirve igual: no es un error.
-            let _ = deps
-                .runner
-                .run(&spec, std::time::Duration::from_secs(300))
-                .await;
+        if rt == Runtime::Python {
+            self.ensure_pip(progress, &program, &dest).await;
         }
         // La terminal y los atajos del PATH apuntan a la versión nueva.
         let mut cfg = deps.config.load()?;
@@ -252,6 +242,58 @@ impl Core {
         deps.config.save(&cfg)?;
         self.refresh_shims()?;
         Ok(format!("{} {version} instalado.", rt.label()))
+    }
+
+    /// pip para el Python recién descomprimido: `ensurepip` y, si no
+    /// alcanza, `get-pip.py`. Sin pip Python sirve igual: no es un error.
+    async fn ensure_pip(&self, progress: &Progress<'_>, python: &Path, dir: &Path) {
+        let deps = self.supervisor.deps();
+        let log = deps.paths.logs().join("python-install.log");
+        let timeout = std::time::Duration::from_secs(300);
+        let python_spec = |args: &[&str]| {
+            let mut spec = crate::ports::ProcessSpec::new(python, dir).log_to(&log);
+            for a in args {
+                spec = spec.arg(*a);
+            }
+            spec
+        };
+        let has_pip = || async {
+            deps.runner
+                .run(&python_spec(&["-m", "pip", "--version"]), timeout)
+                .await
+                .is_ok_and(|o| o.success())
+        };
+        if has_pip().await {
+            return;
+        }
+        progress.step("Instalando pip");
+        let _ = deps
+            .runner
+            .run(
+                &python_spec(&["-m", "ensurepip", "--upgrade", "--default-pip"]),
+                timeout,
+            )
+            .await;
+        if has_pip().await {
+            return;
+        }
+        let get_pip = deps.paths.downloads().join("get-pip.py");
+        if self
+            .downloader
+            .download(urls::GET_PIP, &get_pip)
+            .await
+            .is_ok()
+        {
+            let script = slash(&get_pip);
+            let _ = deps
+                .runner
+                .run(
+                    &python_spec(&[&script, "--no-warn-script-location"]),
+                    timeout,
+                )
+                .await;
+            let _ = deps.fs.remove_file(&get_pip);
+        }
     }
 
     /// Ruta del programa de una app de Agregar, si está instalada.
