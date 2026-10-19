@@ -70,5 +70,5 @@ jobs:
             tail -n 200 "$RUNNER_TEMP/e2e.log"
           } > "$RUNNER_TEMP/e2e-summary.txt" || true
           head -c 60000 "$RUNNER_TEMP/e2e-summary.txt" > "$RUNNER_TEMP/e2e-short.txt"
-          msg=$(sed -e 's/%/%25/g' "$RUNNER_TEMP/e2e-short.txt" | sed -e ':a;N;$!ba;s/\r//g;s/\n/%0A/g')
+          msg=$(awk '{ gsub(/\r/, ""); gsub(/%/, "%25"); printf "%s%%0A", $0 }' "$RUNNER_TEMP/e2e-short.txt")
           echo "::error title=e2e::${msg}"
