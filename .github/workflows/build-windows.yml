@@ -58,3 +58,8 @@ jobs:
           head -c 60000 "$RUNNER_TEMP/e2e-summary.txt" > "$RUNNER_TEMP/e2e-short.txt"
           msg=$(awk '{ gsub(/\r/, ""); gsub(/%/, "%25"); printf "%s%%0A", $0 }' "$RUNNER_TEMP/e2e-short.txt")
           echo "::error title=e2e::${msg}"
+      # Lo que la prueba solo avisa (Xdebug, el túnel de Compartir) queda
+      # como advertencia del job.
+      - if: always()
+        shell: bash
+        run: grep -h "AVISO" "$RUNNER_TEMP/e2e.log" | sed 's/^/::warning title=e2e::/' || true
