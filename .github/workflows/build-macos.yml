@@ -53,6 +53,8 @@ jobs:
       # mysql@8.4 choca al enlazar sus cabeceras con mariadb@11.4; la app usa
       # el Cellar, así que basta con que quede instalado.
       - run: brew install mysql@8.4 || ls "$(brew --cellar)/mysql@8.4"/*/bin/mysqld
+      # Lenguajes y el túnel de Compartir (Menú → Agregar en la app).
+      - run: brew install node@22 python@3.13 go cloudflared
       - run: set -o pipefail; cargo test --manifest-path src-tauri/Cargo.toml --lib -- --ignored --nocapture e2e_homebrew 2>&1 | tee "$RUNNER_TEMP/e2e.log"
         shell: bash
         env:

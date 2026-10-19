@@ -106,7 +106,7 @@ async fn e2e_windows() {
         .args([
             "/C",
             &format!(
-                "php {} && node --version && git --version",
+                "php {} && node --version && git --version && python --version && pip --version && go version",
                 script.display()
             ),
         ])
@@ -117,7 +117,12 @@ async fn e2e_windows() {
     let text = String::from_utf8_lossy(&out.stdout).replace('\\', "/");
     check(
         &w,
-        text.contains(" pdo") && text.contains("v2") && text.contains("git version"),
+        text.contains(" pdo")
+            && text.contains("v2")
+            && text.contains("git version")
+            && text.contains("Python 3.13")
+            && text.contains("pip ")
+            && text.contains("go version go1."),
         &format!("{text}{}", String::from_utf8_lossy(&out.stderr)),
     );
 
@@ -145,6 +150,7 @@ async fn e2e_windows() {
     // Apache (de Apache Lounge) en lugar de Nginx, con los php-cgi.
     e2e::apache_flow(&w).await;
 
+    e2e::extras_flow(&w).await;
     e2e::mysql_flow(&w).await;
     e2e::orphans_are_cleaned(&w).await;
 }

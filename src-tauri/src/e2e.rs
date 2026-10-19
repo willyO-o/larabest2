@@ -540,6 +540,73 @@ pub async fn mysql_flow(w: &World) {
     check(w, running(w, &[ServiceId::Mariadb]), "vuelta a MariaDB");
 }
 
+/// Lo nuevo de la segunda tanda: ajustes rápidos y Xdebug, un sitio desde
+/// Git (el esqueleto de Laravel: Composer, .env, APP_KEY y migraciones),
+/// perfiles y compartir por internet. Xdebug y el túnel dependen de
+/// servicios externos (PECL, Homebrew, Cloudflare): si fallan se avisa sin
+/// cortar la prueba.
+pub async fn extras_flow(w: &World) {
+    let ports = w.ports;
+    // Ajustes rápidos de PHP.
+    let mut settings = w.core.php_settings();
+    settings.memory_limit = "1G".into();
+    w.core.set_php_settings(settings).await.unwrap();
+    std::fs::write(
+        w.root.join("www").join("hola").join("ini.php"),
+        "<?php echo 'mem ' . ini_get('memory_limit') . ' ' . (extension_loaded('xdebug') ? 'xdebug-on' : 'xdebug-off');",
+    )
+    .unwrap();
+    let page = get_until("hola.test", ports.http, "/ini.php", false, "mem 1G").await;
+    check(w, page.contains("mem 1G"), &page);
+
+    match w.core.set_xdebug(true).await {
+        Ok(message) => {
+            let page = get_until("hola.test", ports.http, "/ini.php", false, "xdebug-on").await;
+            check(w, page.contains("xdebug-on"), &format!("{message}\n{page}"));
+            w.core.set_xdebug(false).await.unwrap();
+        }
+        Err(e) => eprintln!("AVISO Xdebug no se pudo agregar: {e}"),
+    }
+
+    // Un proyecto desde Git: el esqueleto de Laravel.
+    let created = w
+        .core
+        .create_site_from(
+            "desde-git",
+            crate::domain::SitePreset::Git,
+            Some("https://github.com/laravel/laravel.git"),
+        )
+        .await;
+    check(w, created.is_ok(), &format!("{created:?}"));
+    let env = std::fs::read_to_string(w.root.join("www").join("desde-git").join(".env")).unwrap();
+    check(
+        w,
+        env.contains("DB_DATABASE=desde_git") && !env.contains("APP_KEY=\n"),
+        &env,
+    );
+    let home = get_until("desde-git.test", ports.http, "/", false, "Laravel").await;
+    check(w, home.contains("200 OK"), &home);
+
+    // Perfiles.
+    w.core.save_profile("e2e").unwrap();
+    check(
+        w,
+        w.core.active_profile().as_deref() == Some("e2e"),
+        "el perfil guardado debe ser el activo",
+    );
+    let applied = w.core.apply_profile("e2e").await;
+    check(w, applied.is_ok(), &format!("{applied:?}"));
+
+    // Compartir por internet.
+    match w.core.share_site("hola").await {
+        Ok(url) => {
+            check(w, url.ends_with(".trycloudflare.com"), &url);
+            w.core.stop_share("hola").await;
+        }
+        Err(e) => eprintln!("AVISO no se pudo abrir el túnel: {e}"),
+    }
+}
+
 /// Si la app muere sin detener nada, al volver a abrirla limpia los
 /// procesos huérfanos por sus PID guardados.
 pub async fn orphans_are_cleaned(w: &World) {

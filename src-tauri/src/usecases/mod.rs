@@ -3,10 +3,13 @@
 mod backups;
 mod create_site;
 mod install;
-mod preferences;
 mod php_settings;
+mod preferences;
 mod procfile;
+mod profiles;
 pub mod runtimes;
+mod share;
+mod site_config;
 pub mod sites;
 mod ssl;
 pub mod terminal;
@@ -15,6 +18,7 @@ pub use create_site::{SiteTemplate, COMPOSER_URL, WORDPRESS_URL};
 pub use php_settings::{EXECUTION_TIMES, MEMORY_LIMITS, UPLOAD_SIZES};
 pub use preferences::PortSettings;
 pub use procfile::Status as ProcfileStatus;
+pub use share::Share;
 
 use std::collections::{BTreeSet, HashSet};
 use std::path::PathBuf;
@@ -71,6 +75,8 @@ pub enum ConfigTarget {
     Backups,
     Procfile,
     SiteTemplates,
+    PackagesConf,
+    Hosts,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
@@ -103,6 +109,8 @@ pub struct Core {
     user_path_cached: std::sync::Mutex<Option<bool>>,
     /// Procesos del Procfile en marcha: nombre y PID.
     procfile: std::sync::Mutex<Vec<procfile::Running>>,
+    /// Sitios compartidos por internet.
+    shares: std::sync::Mutex<Vec<share::Share>>,
     /// PATH del sistema, base del PATH propio de la terminal. Vacío en
     /// macOS: allí la terminal antepone el PATH propio al de la shell.
     system_path: String,
@@ -129,6 +137,7 @@ impl Core {
             user_path: adapters.user_path,
             user_path_cached: std::sync::Mutex::new(None),
             procfile: std::sync::Mutex::new(Vec::new()),
+            shares: std::sync::Mutex::new(Vec::new()),
             system_path,
             sites_lock: tokio::sync::Mutex::new(()),
             create_lock: tokio::sync::Mutex::new(()),
@@ -153,6 +162,7 @@ impl Core {
         }
         self.supervisor.cleanup_orphans().await;
         self.cleanup_procfile_orphans().await;
+        self.cleanup_share_orphans().await;
         // Atajos de etc/shell al día (por si se usan desde el PATH).
         let _ = self.refresh_shims();
         Ok(())
@@ -168,6 +178,7 @@ impl Core {
     /// Primero el Procfile (usa la pila), el respaldo si está elegido y
     /// luego los servicios.
     pub async fn stop_all(&self) -> Result<(), AppError> {
+        self.stop_all_shares().await;
         self.stop_procfile().await;
         self.backup_before_stop(self.database_service()).await;
         self.supervisor.stop_all().await
@@ -352,6 +363,38 @@ impl Core {
         deps.config.save(&cfg)
     }
 
+    pub fn editor(&self) -> crate::domain::Editor {
+        self.supervisor
+            .deps()
+            .config
+            .load()
+            .map(|c| c.editor)
+            .unwrap_or_default()
+    }
+
+    pub fn set_editor(&self, editor: crate::domain::Editor) -> Result<(), AppError> {
+        let deps = self.supervisor.deps();
+        let mut cfg = deps.config.load()?;
+        cfg.editor = editor;
+        deps.config.save(&cfg)
+    }
+
+    pub fn terminal_app(&self) -> crate::domain::TerminalApp {
+        self.supervisor
+            .deps()
+            .config
+            .load()
+            .map(|c| c.terminal)
+            .unwrap_or_default()
+    }
+
+    pub fn set_terminal_app(&self, app: crate::domain::TerminalApp) -> Result<(), AppError> {
+        let deps = self.supervisor.deps();
+        let mut cfg = deps.config.load()?;
+        cfg.terminal = app;
+        deps.config.save(&cfg)
+    }
+
     pub fn theme(&self) -> ThemePreference {
         self.supervisor
             .deps()
@@ -463,6 +506,11 @@ impl Core {
             ConfigTarget::Backups => self.backups_dir(),
             ConfigTarget::Procfile => self.procfile_path(),
             ConfigTarget::SiteTemplates => self.site_templates_path(),
+            ConfigTarget::PackagesConf => self.packages_conf_path(),
+            ConfigTarget::Hosts => Ok(PathBuf::from(match deps.layout {
+                BinaryLayout::Portable => "C:/Windows/System32/drivers/etc/hosts",
+                BinaryLayout::Homebrew => "/etc/hosts",
+            })),
             ConfigTarget::Ssl => {
                 fs.create_dir_all(&paths.etc_ssl())?;
                 Ok(paths.etc_ssl())
@@ -698,7 +746,9 @@ impl Core {
             .map(|c| c.editor)
             .unwrap_or_default();
         if editor == crate::domain::Editor::Vscode
-            && self.app_program(crate::domain::catalog::App::Vscode).is_some()
+            && self
+                .app_program(crate::domain::catalog::App::Vscode)
+                .is_some()
         {
             return self.launch_app(crate::domain::catalog::App::Vscode, &[slash(path)]);
         }

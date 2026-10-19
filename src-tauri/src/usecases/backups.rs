@@ -139,6 +139,62 @@ impl Core {
         Ok(format!("Se restauró {}.", slash(file)))
     }
 
+    /// Fecha del respaldo más reciente (por el nombre de su carpeta).
+    fn last_backup(&self) -> Option<chrono::NaiveDateTime> {
+        let deps = self.supervisor.deps();
+        deps.fs
+            .list_dirs(&deps.paths.backups())
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|name| {
+                let stamp = name.get(..17)?;
+                chrono::NaiveDateTime::parse_from_str(stamp, "%Y-%m-%d_%H%M%S").ok()
+            })
+            .max()
+    }
+
+    /// Respaldo automático (Preferencias → Respaldo automático): si el
+    /// motor está en marcha y el último respaldo es más viejo que el
+    /// intervalo elegido. La app lo consulta cada pocos minutos. Devuelve el
+    /// mensaje si respaldó.
+    pub async fn auto_backup_tick(&self) -> Option<Result<String, AppError>> {
+        let hours = self
+            .supervisor
+            .deps()
+            .config
+            .load()
+            .map(|c| c.backup_every_hours)
+            .unwrap_or(0);
+        if hours == 0 || self.supervisor.state(self.database_service()) != ServiceState::Running {
+            return None;
+        }
+        let now = chrono::Local::now().naive_local();
+        let due = match self.last_backup() {
+            Some(last) => now - last >= chrono::Duration::hours(hours.into()),
+            None => true,
+        };
+        if !due {
+            return None;
+        }
+        Some(self.backup_databases().await)
+    }
+
+    pub fn backup_every_hours(&self) -> u16 {
+        self.supervisor
+            .deps()
+            .config
+            .load()
+            .map(|c| c.backup_every_hours)
+            .unwrap_or(0)
+    }
+
+    pub fn set_backup_every_hours(&self, hours: u16) -> Result<(), AppError> {
+        let deps = self.supervisor.deps();
+        let mut cfg = deps.config.load()?;
+        cfg.backup_every_hours = hours;
+        deps.config.save(&cfg)
+    }
+
     pub fn backups_dir(&self) -> Result<PathBuf, AppError> {
         let deps = self.supervisor.deps();
         let dir = deps.paths.backups();
@@ -196,6 +252,36 @@ mod tests {
                 .unwrap();
         assert_eq!(folders.len(), 1);
         assert!(folders[0].ends_with("-mariadb"));
+    }
+
+    #[tokio::test]
+    async fn automatic_backup_runs_only_when_due() {
+        let h = Harness::new();
+        let core = h.core();
+        h.ports.set_listening(&[80, 3306, 9000, 9001, 9002, 9003]);
+        core.start_all().await.unwrap();
+        h.runner.set_run_output(CommandOutput {
+            code: Some(0),
+            stdout: "blog\n".into(),
+            stderr: String::new(),
+        });
+        assert!(core.auto_backup_tick().await.is_none(), "desactivado");
+        core.set_backup_every_hours(6).unwrap();
+        // Uno de hace un minuto: todavía no toca.
+        let recent = (chrono::Local::now() - chrono::Duration::minutes(1))
+            .format("%Y-%m-%d_%H%M%S-mariadb")
+            .to_string();
+        h.fs.create_dir_all(Path::new(&format!("{ROOT}/backups/{recent}")))
+            .unwrap();
+        assert!(core.auto_backup_tick().await.is_none());
+        // Uno de hace un día: sí.
+        h.fs.remove_dir_all(Path::new(&format!("{ROOT}/backups/{recent}")))
+            .unwrap();
+        h.fs.create_dir_all(Path::new(&format!(
+            "{ROOT}/backups/2020-01-01_000000-mariadb"
+        )))
+        .unwrap();
+        assert!(core.auto_backup_tick().await.unwrap().is_ok());
     }
 
     #[tokio::test]

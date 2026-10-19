@@ -102,7 +102,7 @@ async fn e2e_homebrew() {
     let out = tokio::process::Command::new("/bin/sh")
         .args([
             "-c",
-            "php -r 'echo PHP_BINARY;' && composer --version && mariadb --version",
+            "php -r 'echo PHP_BINARY;' && composer --version && mariadb --version && node --version && python --version && go version",
         ])
         .env("PATH", format!("{}:/usr/bin:/bin", shims.display()))
         .output()
@@ -113,7 +113,10 @@ async fn e2e_homebrew() {
         &w,
         text.starts_with("/opt/homebrew/Cellar/php")
             && text.contains("Composer")
-            && text.contains("MariaDB"),
+            && text.contains("MariaDB")
+            && text.contains("v22.")
+            && text.contains("Python 3.13")
+            && text.contains("go version go1."),
         &format!("atajos: {text}{}", String::from_utf8_lossy(&out.stderr)),
     );
 
@@ -141,6 +144,7 @@ async fn e2e_homebrew() {
     // Apache (brew install httpd) en lugar de Nginx, con php-fpm.
     e2e::apache_flow(&w).await;
 
+    e2e::extras_flow(&w).await;
     e2e::mysql_flow(&w).await;
     e2e::orphans_are_cleaned(&w).await;
     let _ = std::fs::remove_dir_all(&w.root);

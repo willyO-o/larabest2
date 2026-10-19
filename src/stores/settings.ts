@@ -52,9 +52,11 @@ export const useSettingsStore = defineStore('settings', () => {
   const getPorts = () => invoke<PortSettings>('settings_get_ports')
   /** Rechaza con el error del núcleo (para mostrarlo en el panel). */
   async function savePorts(ports: PortSettings) {
-    await invoke('settings_set_ports', { ports })
+    const message = await invoke<string>('settings_set_ports', { ports })
     await reload()
+    return message
   }
+  const saveProfile = (name: string) => invoke<string>('profiles_save', { name })
   async function saveRootPassword(password: string) {
     const message = await invoke<string>('settings_set_root_password', { password })
     await reload()
@@ -87,6 +89,7 @@ export const useSettingsStore = defineStore('settings', () => {
     getPorts,
     savePorts,
     saveRootPassword,
+    saveProfile,
     setTheme,
     loadPhpVersions,
     switchPhp,

@@ -98,8 +98,13 @@ pub fn issue_cert(ca: &Pem, domain: &str, app_name: &str) -> Result<Pem, AppErro
     let mut builder = CertificateBuilder::new(profile, serial()?, validity, subject, spki, &ca_key)
         .map_err(cert_error)?;
     let dns = Ia5String::new(domain).map_err(cert_error)?;
+    // También los subdominios (api.blog.test), como el ServerAlias del vhost.
+    let wildcard = Ia5String::new(&format!("*.{domain}")).map_err(cert_error)?;
     builder
-        .add_extension(&SubjectAltName(vec![GeneralName::DnsName(dns)]))
+        .add_extension(&SubjectAltName(vec![
+            GeneralName::DnsName(dns),
+            GeneralName::DnsName(wildcard),
+        ]))
         .map_err(cert_error)?;
     builder
         .add_extension(&ExtendedKeyUsage(vec![ID_KP_SERVER_AUTH]))
@@ -310,7 +315,7 @@ mod tests {
         let cert = Certificate::from_pem(leaf.cert.as_bytes()).unwrap();
 
         assert_eq!(cert.tbs_certificate.issuer, ca_cert.tbs_certificate.subject);
-        assert_eq!(san_dns(&cert), vec!["blog.test"]);
+        assert_eq!(san_dns(&cert), vec!["blog.test", "*.blog.test"]);
         assert!(leaf.key.starts_with("-----BEGIN PRIVATE KEY-----"));
 
         // La firma del certificado se verifica con la clave pública de la CA.

@@ -67,7 +67,9 @@ pub fn xdebug_path(ctx: &RenderContext) -> Option<PathBuf> {
     let install = ctx.install(ServiceId::Php).ok()?;
     match ctx.layout {
         BinaryLayout::Portable => {
-            let dll = PathBuf::from(&install.path).join("ext").join("php_xdebug.dll");
+            let dll = PathBuf::from(&install.path)
+                .join("ext")
+                .join("php_xdebug.dll");
             ctx.fs.exists(&dll).then_some(dll)
         }
         BinaryLayout::Homebrew => {

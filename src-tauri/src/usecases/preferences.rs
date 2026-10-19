@@ -132,7 +132,7 @@ impl Core {
     /// Guarda puertos y dominio y reinicia lo que estaba en marcha y cambió.
     /// Con otro dominio o puerto web se regeneran sitios, archivo hosts y
     /// certificados.
-    pub async fn set_port_settings(&self, ports: PortSettings) -> Result<(), AppError> {
+    pub async fn set_port_settings(&self, ports: PortSettings) -> Result<String, AppError> {
         let deps = self.supervisor.deps();
         let mut cfg = deps.config.load()?;
         let processes = match deps.layout {
@@ -142,8 +142,9 @@ impl Core {
         validate_ports(&ports, processes)?;
         let old = PortSettings::from_config(&cfg);
         if old == ports {
-            return Ok(());
+            return Ok("Sin cambios.".into());
         }
+        let old_sites = super::sites::scan_sites(deps.fs.as_ref(), &deps.paths, &cfg);
         let web = cfg.web_server.service();
         let mut affected: BTreeSet<ServiceId> = BTreeSet::new();
         if old.http != ports.http || old.https != ports.https || old.tld != ports.tld {
@@ -170,6 +171,21 @@ impl Core {
         ports.apply(&mut cfg);
         deps.config.save(&cfg)?;
 
+        // .env y wp-config.php de los sitios con el puerto y la URL nuevos.
+        let new_sites = super::sites::scan_sites(deps.fs.as_ref(), &deps.paths, &cfg);
+        let changes = super::site_config::SiteChanges {
+            db_port: (old.database != ports.database).then_some((old.database, ports.database)),
+            db_password: None,
+            urls: old_sites
+                .iter()
+                .filter_map(|o| {
+                    let n = new_sites.iter().find(|n| n.name == o.name)?;
+                    (n.url != o.url).then(|| (o.name.clone(), o.url.clone(), n.url.clone()))
+                })
+                .collect(),
+        };
+        let updated = self.update_sites(&old_sites, &changes);
+
         // Vhosts, archivo hosts y phpMyAdmin con los valores nuevos. Un
         // permiso cancelado del archivo hosts no impide lo demás.
         let synced = self.sync_sites().await;
@@ -183,7 +199,10 @@ impl Core {
             }
         }
         self.supervisor.emit_all();
-        synced.map(|_| ())
+        synced?;
+        Ok(super::site_config::describe(&updated)
+            .map(|m| format!("Guardado. {m}"))
+            .unwrap_or_else(|| "Guardado.".into()))
     }
 
     pub fn database_server(&self) -> DatabaseServer {
@@ -250,20 +269,29 @@ impl Core {
             )));
         }
         let ctx = self.supervisor.context()?;
+        let old_password = ctx.config.root_password(db).to_string();
         mariadb::set_root_password(&ctx, password).await?;
         let deps = self.supervisor.deps();
         let mut cfg = deps.config.load()?;
         cfg.set_root_password(db, password);
         deps.config.save(&cfg)?;
+        // Los sitios que usan root con la contraseña anterior pasan a la nueva.
+        let updated = self.update_sites(
+            &ctx.sites,
+            &super::site_config::SiteChanges {
+                db_password: Some((old_password, password.to_string())),
+                ..Default::default()
+            },
+        );
+        let note = super::site_config::describe(&updated)
+            .map(|m| format!(" {m}"))
+            .unwrap_or_default();
         // phpMyAdmin y Adminer se regeneran con la contraseña nueva.
         let _ = self.sync_sites().await;
         Ok(if password.is_empty() {
-            format!("root de {} ya no tiene contraseña.", db.label())
+            format!("root de {} ya no tiene contraseña.{note}", db.label())
         } else {
-            format!(
-                "Contraseña de root de {} cambiada. Los sitios creados antes la siguen teniendo vacía (o la anterior) en wp-config.php o .env.",
-                db.label()
-            )
+            format!("Contraseña de root de {} cambiada.{note}", db.label())
         })
     }
 

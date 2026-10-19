@@ -273,6 +273,25 @@ fn setup(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
             Err(e) => tray::show_error(&app, &e.to_string()),
         }
         tray::rebuild(&app);
+        // Consultar el PATH del usuario (en Windows lanza PowerShell) antes
+        // de que se abra el menú por primera vez.
+        {
+            let core = core.clone();
+            let _ = tauri::async_runtime::spawn_blocking(move || core.in_user_path()).await;
+        }
+        // Respaldo automático: se revisa cada 5 minutos.
+        {
+            let core = core.clone();
+            let app = app.clone();
+            tauri::async_runtime::spawn(async move {
+                loop {
+                    tokio::time::sleep(Duration::from_secs(300)).await;
+                    if let Some(Ok(_)) = core.auto_backup_tick().await {
+                        tray::rebuild(&app);
+                    }
+                }
+            });
+        }
         if core.auto_start() {
             let _ = core.start_all().await;
         }
@@ -334,6 +353,7 @@ pub fn run() {
             commands::settings_set_root_password,
             commands::sites_templates,
             commands::config_open,
+            commands::profiles_save,
             commands::app_ready,
             commands::window_fit,
         ])
@@ -353,9 +373,11 @@ pub fn run() {
                 api.prevent_exit();
                 let app = app.clone();
                 tauri::async_runtime::spawn(async move {
-                    // Plazo de seguridad: no dejar la app colgada al salir.
+                    // Plazo de seguridad: no dejar la app colgada al salir. Con
+                    // "respaldar al detener" se espera más.
                     let core = app.state::<AppState>().core.clone();
-                    let _ = tokio::time::timeout(Duration::from_secs(45), core.stop_all()).await;
+                    let limit = if core.backup_on_stop() { 300 } else { 45 };
+                    let _ = tokio::time::timeout(Duration::from_secs(limit), core.stop_all()).await;
                     app.exit(code.unwrap_or(0));
                 });
             }

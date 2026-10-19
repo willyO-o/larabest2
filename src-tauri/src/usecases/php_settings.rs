@@ -48,9 +48,7 @@ impl Core {
             !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit()) && v.len() <= 8
         };
         if !valid_size(&settings.memory_limit) || !valid_size(&settings.upload_max_filesize) {
-            return Err(AppError::InvalidInput(
-                "Usa tamaños como 512M o 1G.".into(),
-            ));
+            return Err(AppError::InvalidInput("Usa tamaños como 512M o 1G.".into()));
         }
         let deps = self.supervisor.deps();
         let mut cfg = deps.config.load()?;
@@ -227,9 +225,9 @@ mod tests {
         assert!(message.contains("9004"), "{message}");
         assert!(h.downloader.urls.lock().unwrap().iter().any(|u| u
             == "https://downloads.php.net/~windows/pecl/releases/xdebug/3.4.5/php_xdebug-3.4.5-8.4-nts-vs17-x64.zip"));
-        assert!(h
-            .fs
-            .exists(Path::new(&format!("{ROOT}/bin/php/8.4.6/ext/php_xdebug.dll"))));
+        assert!(h.fs.exists(Path::new(&format!(
+            "{ROOT}/bin/php/8.4.6/ext/php_xdebug.dll"
+        ))));
         let ini = h.fs.read(&format!("{ROOT}/etc/php/php.ini"));
         assert!(ini.contains(&format!(
             "zend_extension = \"{ROOT}/bin/php/8.4.6/ext/php_xdebug.dll\""

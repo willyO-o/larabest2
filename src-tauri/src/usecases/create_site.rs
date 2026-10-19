@@ -39,6 +39,44 @@ Drupal=composer create-project drupal/recommended-project %s\n\
 # MiProyecto=git clone https://github.com/usuario/proyecto.git %s\n\
 # MiPlantilla=https://example.com/plantilla.zip\n";
 
+/// URL de un repositorio que se puede pasar a `git clone` sin escapar.
+pub fn is_valid_repo_url(url: &str) -> bool {
+    let known = ["https://", "http://", "git@", "ssh://"]
+        .iter()
+        .any(|p| url.starts_with(p));
+    known
+        && url.len() <= 300
+        && !url.chars().any(|c| {
+            c.is_whitespace()
+                || matches!(
+                    c,
+                    '"' | '\'' | '`' | '&' | '|' | ';' | '<' | '>' | '^' | '%' | '$'
+                )
+        })
+}
+
+/// El primer volcado `.sql` del proyecto: en su raíz o en `database/`,
+/// `db/`, `sql/`, `database/dumps/`.
+pub fn find_sql_dump(fs: &dyn crate::ports::FileStore, dir: &Path) -> Option<std::path::PathBuf> {
+    ["", "database", "db", "sql", "database/dumps"]
+        .iter()
+        .map(|sub| {
+            if sub.is_empty() {
+                dir.to_path_buf()
+            } else {
+                dir.join(sub)
+            }
+        })
+        .find_map(|folder| {
+            let mut files = fs.list_files(&folder).unwrap_or_default();
+            files.sort();
+            files
+                .into_iter()
+                .find(|f| f.to_ascii_lowercase().ends_with(".sql"))
+                .map(|f| folder.join(f))
+        })
+}
+
 /// Una plantilla propia de `etc/sitios.conf`.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -144,6 +182,19 @@ impl Core {
         template: Option<&str>,
     ) -> Result<Site, AppError> {
         let template = match preset {
+            SitePreset::Git => {
+                let url = template.unwrap_or_default().trim();
+                if !is_valid_repo_url(url) {
+                    return Err(AppError::InvalidInput(
+                        "Escribe la URL del repositorio (https://… o git@…), sin espacios ni comillas."
+                            .into(),
+                    ));
+                }
+                Some(SiteTemplate {
+                    name: "Git".into(),
+                    action: format!("git clone \"{url}\" %s"),
+                })
+            }
             SitePreset::Template => {
                 let wanted = template.unwrap_or_default();
                 Some(
@@ -200,7 +251,7 @@ impl Core {
             SitePreset::Blank => self.create_blank(name, &dir, &progress),
             SitePreset::Wordpress => self.create_wordpress(name, &dir, &progress).await,
             SitePreset::Laravel => self.create_laravel(name, &dir, &progress).await,
-            SitePreset::Template => {
+            SitePreset::Template | SitePreset::Git => {
                 let template = template.as_ref().expect("plantilla resuelta arriba");
                 self.create_from_template(name, &dir, template, &progress)
                     .await
@@ -350,45 +401,8 @@ impl Core {
             )));
         }
 
-        let engine = ctx.database();
-        progress.step(format!("Configurando .env con {}", engine.label()));
-        let env_path = dir.join(".env");
-        let mut env = deps
-            .fs
-            .read_to_string(&env_path)
-            .or_else(|_| deps.fs.read_to_string(&dir.join(".env.example")))?;
-        let url = site_url(
-            &ctx.config,
-            &format!("{}.{}", name.to_ascii_lowercase(), ctx.config.tld),
-        );
-        let port = ctx.config.mariadb_port.to_string();
-        let mut values: Vec<(&str, String)> = vec![
-            ("APP_URL", url.trim_end_matches('/').to_string()),
-            ("DB_CONNECTION", engine.key().into()),
-            ("DB_HOST", "127.0.0.1".into()),
-            ("DB_PORT", port),
-            ("DB_DATABASE", db.clone()),
-            ("DB_USERNAME", "root".into()),
-            ("DB_PASSWORD", ctx.config.root_password(engine).to_string()),
-        ];
-        // Con Mailpit, el correo de Laravel se ve en su bandeja.
-        if ctx.is_enabled(ServiceId::Mailpit) {
-            values.extend([
-                ("MAIL_MAILER", "smtp".to_string()),
-                ("MAIL_HOST", "127.0.0.1".into()),
-                ("MAIL_PORT", ctx.config.mailpit_smtp_port.to_string()),
-            ]);
-        }
-        if ctx.is_enabled(ServiceId::Redis) {
-            values.extend([
-                ("REDIS_HOST", "127.0.0.1".to_string()),
-                ("REDIS_PORT", ctx.config.redis_port.to_string()),
-            ]);
-        }
-        for (key, value) in &values {
-            env = set_env(&env, key, value);
-        }
-        deps.fs.write(&env_path, &env)?;
+        progress.step(format!("Configurando .env con {}", ctx.database().label()));
+        self.write_laravel_env(&ctx, name, dir, &db)?;
 
         progress.step("Creando las tablas (php artisan migrate)");
         let migrate: Vec<String> = ["artisan", "migrate", "--force", "--no-interaction"]
@@ -410,6 +424,200 @@ impl Core {
         Ok(warning)
     }
 
+    /// `.env` de Laravel con la base de datos de la app, la URL del sitio y,
+    /// si están en la pila, Mailpit y Redis. Parte de `.env` o de
+    /// `.env.example`.
+    fn write_laravel_env(
+        &self,
+        ctx: &RenderContext,
+        name: &str,
+        dir: &Path,
+        db: &str,
+    ) -> Result<(), AppError> {
+        let deps = self.supervisor.deps();
+        let engine = ctx.database();
+        let env_path = dir.join(".env");
+        let mut env = deps
+            .fs
+            .read_to_string(&env_path)
+            .or_else(|_| deps.fs.read_to_string(&dir.join(".env.example")))?;
+        let url = site_url(
+            &ctx.config,
+            &format!("{}.{}", name.to_ascii_lowercase(), ctx.config.tld),
+        );
+        let mut values: Vec<(&str, String)> = vec![
+            ("APP_URL", url.trim_end_matches('/').to_string()),
+            ("DB_CONNECTION", engine.key().into()),
+            ("DB_HOST", "127.0.0.1".into()),
+            ("DB_PORT", ctx.config.mariadb_port.to_string()),
+            ("DB_DATABASE", db.to_string()),
+            ("DB_USERNAME", "root".into()),
+            ("DB_PASSWORD", ctx.config.root_password(engine).to_string()),
+        ];
+        // Con Mailpit, el correo de Laravel se ve en su bandeja.
+        if ctx.is_enabled(ServiceId::Mailpit) {
+            values.extend([
+                ("MAIL_MAILER", "smtp".to_string()),
+                ("MAIL_HOST", "127.0.0.1".into()),
+                ("MAIL_PORT", ctx.config.mailpit_smtp_port.to_string()),
+            ]);
+        }
+        if ctx.is_enabled(ServiceId::Redis) {
+            values.extend([
+                ("REDIS_HOST", "127.0.0.1".to_string()),
+                ("REDIS_PORT", ctx.config.redis_port.to_string()),
+            ]);
+        }
+        for (key, value) in &values {
+            env = set_env(&env, key, value);
+        }
+        deps.fs.write(&env_path, &env)
+    }
+
+    /// Después de clonar o de una plantilla: deja el proyecto listo para
+    /// abrirlo, como el Quick app de Laragon con un proyecto existente.
+    /// Composer si falta `vendor/`; en Laravel `.env`, `APP_KEY` y la base
+    /// (con su `.sql` si el repositorio trae uno, o con las migraciones);
+    /// en WordPress `wp-config.php`; en otros, importa el `.sql` que haya.
+    /// Devuelve avisos (nada aquí impide que el sitio exista).
+    async fn prepare_project(
+        &self,
+        name: &str,
+        dir: &Path,
+        db: Option<&str>,
+        progress: &Progress<'_>,
+    ) -> Vec<String> {
+        let deps = self.supervisor.deps();
+        let fs = deps.fs.as_ref();
+        let log = deps.paths.logs().join("sites.log");
+        let mut notes = Vec::new();
+        let Ok(ctx) = self.supervisor.context() else {
+            return notes;
+        };
+        let php_args = |args: &[&str]| args.iter().map(|a| a.to_string()).collect::<Vec<_>>();
+
+        if fs.exists(&dir.join("composer.json")) && !fs.exists(&dir.join("vendor")) {
+            let phar = deps.paths.composer_phar();
+            if !fs.exists(&phar) {
+                progress.step("Descargando Composer");
+                if let Err(e) = self.downloader.download(COMPOSER_URL, &phar).await {
+                    notes.push(format!("No se pudo descargar Composer: {e}"));
+                }
+            }
+            if fs.exists(&phar) {
+                progress.step("Instalando dependencias (composer install)");
+                let args = php_args(&[
+                    &slash(&phar),
+                    "install",
+                    "--no-interaction",
+                    "--no-progress",
+                ]);
+                match php::cli_spec(&ctx, &args, dir) {
+                    Ok(spec) => match ctx
+                        .runner
+                        .run(&spec.log_to(&log), CREATE_PROJECT_TIMEOUT)
+                        .await
+                    {
+                        Ok(out) if out.success() => {}
+                        Ok(out) => notes.push(format!(
+                            "composer install falló; ejecútalo en la terminal.\n{}",
+                            tail(&out.text())
+                        )),
+                        Err(e) => notes.push(format!("composer install falló: {e}")),
+                    },
+                    Err(e) => notes.push(e.to_string()),
+                }
+            }
+        }
+
+        let laravel = fs.exists(&dir.join("artisan"));
+        if laravel
+            && db.is_some()
+            && (fs.exists(&dir.join(".env.example")) || fs.exists(&dir.join(".env")))
+        {
+            progress.step("Configurando .env");
+            let had_env = fs.exists(&dir.join(".env"));
+            if let Err(e) = self.write_laravel_env(&ctx, name, dir, db.unwrap_or_default()) {
+                notes.push(format!("No se pudo escribir .env: {e}"));
+            }
+            let key_empty = fs
+                .read_to_string(&dir.join(".env"))
+                .ok()
+                .and_then(|env| super::site_config::get_env(&env, "APP_KEY"))
+                .map_or(true, |k| k.is_empty());
+            if !had_env || key_empty {
+                if let Ok(spec) = php::cli_spec(
+                    &ctx,
+                    &php_args(&["artisan", "key:generate", "--force"]),
+                    dir,
+                ) {
+                    let _ = ctx.runner.run(&spec.log_to(&log), ARTISAN_TIMEOUT).await;
+                }
+            }
+        }
+
+        if fs.exists(&dir.join("wp-config-sample.php")) {
+            if let (false, Some(db)) = (fs.exists(&dir.join("wp-config.php")), db) {
+                progress.step("Escribiendo wp-config.php");
+                let keys: Vec<String> = (0..8).map(|_| self.secrets.random_string(64)).collect();
+                match templates::render(
+                    templates::WP_CONFIG,
+                    context! {
+                        app_name => deps.app_name,
+                        db_name => db,
+                        db_port => ctx.config.mariadb_port,
+                        db_password => ctx.config.root_password(ctx.database()),
+                        db_label => ctx.database().label(),
+                        keys => keys,
+                    },
+                ) {
+                    Ok(config) => {
+                        let _ = fs.write(&dir.join("wp-config.php"), &config);
+                    }
+                    Err(e) => notes.push(e.to_string()),
+                }
+            }
+        }
+
+        let Some(db) = db else {
+            return notes;
+        };
+        if let Some(dump) = find_sql_dump(fs, dir) {
+            progress.step(format!("Importando {} en la base {db}", slash(&dump)));
+            match mariadb::import_spec(&ctx, db, &dump) {
+                Ok(spec) => match ctx.runner.run(&spec, CREATE_PROJECT_TIMEOUT).await {
+                    Ok(out) if out.success() => {
+                        notes.push(format!("Base de datos {db} importada de {}.", slash(&dump)))
+                    }
+                    Ok(out) => notes.push(format!(
+                        "No se pudo importar {}:\n{}",
+                        slash(&dump),
+                        tail(&out.text())
+                    )),
+                    Err(e) => notes.push(format!("No se pudo importar {}: {e}", slash(&dump))),
+                },
+                Err(e) => notes.push(e.to_string()),
+            }
+        } else if laravel {
+            progress.step("Creando las tablas (php artisan migrate)");
+            if let Ok(spec) = php::cli_spec(
+                &ctx,
+                &php_args(&["artisan", "migrate", "--force", "--no-interaction"]),
+                dir,
+            ) {
+                match ctx.runner.run(&spec.log_to(&log), ARTISAN_TIMEOUT).await {
+                    Ok(out) if out.success() => {}
+                    Ok(out) => notes.push(format!(
+                        "Las migraciones fallaron; ejecuta «php artisan migrate» en la terminal.\n{}",
+                        tail(&out.text())
+                    )),
+                    Err(e) => notes.push(format!("Las migraciones fallaron: {e}")),
+                }
+            }
+        }
+        notes
+    }
+
     /// Plantilla propia: un comando de Composer, la URL de un `.zip` o
     /// cualquier comando (por ejemplo `git clone`) con `%s` como nombre.
     /// También crea una base de datos con el nombre del sitio.
@@ -425,13 +633,19 @@ impl Core {
         let www = deps.paths.www();
         // La base de datos ayuda pero no es indispensable.
         let mut notes = Vec::new();
-        match self.database_ready(&db, progress).await {
-            Ok(ctx) => notes.push(format!(
-                "Base de datos {db} creada en {} (usuario root).",
-                ctx.database().label()
-            )),
-            Err(e) => notes.push(format!("No se creó la base de datos: {e}")),
-        }
+        let db_ok = match self.database_ready(&db, progress).await {
+            Ok(ctx) => {
+                notes.push(format!(
+                    "Base de datos {db} creada en {} (usuario root).",
+                    ctx.database().label()
+                ));
+                true
+            }
+            Err(e) => {
+                notes.push(format!("No se creó la base de datos: {e}"));
+                false
+            }
+        };
         let action = template.action.replace("%s", name);
         let log = deps.paths.logs().join("sites.log");
         let lower = action.to_ascii_lowercase();
@@ -477,15 +691,23 @@ impl Core {
                 )));
             }
         } else {
-            progress.step(format!(
-                "Ejecutando la plantilla {} (puede tardar)",
-                template.name
-            ));
+            let git = action.starts_with("git ");
+            progress.step(if git {
+                "Clonando el repositorio".to_string()
+            } else {
+                format!("Ejecutando la plantilla {} (puede tardar)", template.name)
+            });
             let spec = self.shell_spec("sitios", name, &action, &www)?.log_to(&log);
             let out = deps.runner.run(&spec, CREATE_PROJECT_TIMEOUT).await?;
             if !out.success() {
+                let hint = if git {
+                    "\n¿Está Git instalado? Agrégalo en Menú → Agregar → Git."
+                } else {
+                    ""
+                };
                 return Err(AppError::Process(format!(
-                    "La plantilla falló:\n{}",
+                    "{} falló:\n{}{hint}",
+                    if git { "git clone" } else { "La plantilla" },
                     tail(&out.text())
                 )));
             }
@@ -496,6 +718,10 @@ impl Core {
                 slash(dir)
             )));
         }
+        let prepared = self
+            .prepare_project(name, dir, db_ok.then_some(db.as_str()), progress)
+            .await;
+        notes.extend(prepared);
         Ok(Some(notes.join("\n")))
     }
 
@@ -557,6 +783,94 @@ impl Core {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn repo_urls_and_sql_dumps() {
+        use crate::ports::FileStore;
+        assert!(is_valid_repo_url("https://github.com/usuario/tienda.git"));
+        assert!(is_valid_repo_url("git@github.com:usuario/tienda.git"));
+        assert!(!is_valid_repo_url("https://x.com/a b"));
+        assert!(!is_valid_repo_url("https://x.com/a\" & calc"));
+        assert!(!is_valid_repo_url("C:/proyectos/tienda"));
+        let fs = crate::testing::FakeFs::default();
+        let dir = Path::new("C:/APP/www/tienda");
+        fs.write(&dir.join("README.md"), "").unwrap();
+        assert_eq!(find_sql_dump(&fs, dir), None);
+        fs.write(&dir.join("database/tienda.sql"), "").unwrap();
+        assert_eq!(
+            slash(&find_sql_dump(&fs, dir).unwrap()),
+            "C:/APP/www/tienda/database/tienda.sql"
+        );
+    }
+
+    #[tokio::test]
+    async fn git_preset_clones_installs_and_imports_the_dump() {
+        use crate::ports::{CommandOutput, FileStore};
+        use crate::testing::{Harness, ROOT};
+        let h = Harness::new();
+        h.ports.set_listening(&[80, 3306, 9000, 9001, 9002, 9003]);
+        h.fs.write(
+            Path::new(&format!(
+                "{ROOT}/bin/php/8.4.6/{}",
+                crate::drivers::exe("php")
+            )),
+            "",
+        )
+        .unwrap();
+        h.fs.write(Path::new(&format!("{ROOT}/bin/composer/composer.phar")), "")
+            .unwrap();
+        let fs = h.fs.clone();
+        h.runner.on_run(Box::new(move |spec| {
+            if spec.exe_name() == "cmd.exe" {
+                // git clone: el repositorio trae composer.json, .env.example y un volcado.
+                let dir = format!("{ROOT}/www/tienda");
+                fs.write(Path::new(&format!("{dir}/composer.json")), "{}")
+                    .unwrap();
+                fs.write(Path::new(&format!("{dir}/artisan")), "").unwrap();
+                fs.write(
+                    Path::new(&format!("{dir}/.env.example")),
+                    "APP_KEY=\nDB_CONNECTION=sqlite\n",
+                )
+                .unwrap();
+                fs.write(
+                    Path::new(&format!("{dir}/database/tienda.sql")),
+                    "CREATE TABLE x;",
+                )
+                .unwrap();
+            }
+            Some(CommandOutput {
+                code: Some(0),
+                stdout: String::new(),
+                stderr: String::new(),
+            })
+        }));
+        let core = h.core();
+        assert!(core
+            .create_site_from("tienda", SitePreset::Git, Some("https://x.com/a b"))
+            .await
+            .is_err());
+        core.create_site_from(
+            "tienda",
+            SitePreset::Git,
+            Some("https://github.com/u/tienda.git"),
+        )
+        .await
+        .unwrap();
+        let script = h.fs.read(&format!("{ROOT}/tmp/sitios/tienda.cmd"));
+        assert!(script.contains("git clone \"https://github.com/u/tienda.git\" tienda"));
+        let ran: Vec<String> = h.runner.ran().iter().map(|s| s.args.join(" ")).collect();
+        assert!(
+            ran.iter().any(|a| a.contains("composer.phar install")),
+            "{ran:?}"
+        );
+        assert!(ran.iter().any(|a| a.contains("artisan key:generate")));
+        assert!(ran.iter().any(|a| a.contains("--database=tienda")
+            && a.contains("source C:/APP/www/tienda/database/tienda.sql")));
+        // Con volcado no se migra.
+        assert!(!ran.iter().any(|a| a.contains("artisan migrate")));
+        let env = h.fs.read(&format!("{ROOT}/www/tienda/.env"));
+        assert!(env.contains("DB_DATABASE=tienda"));
+    }
 
     #[test]
     fn parses_site_templates() {

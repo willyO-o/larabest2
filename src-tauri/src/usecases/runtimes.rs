@@ -155,13 +155,16 @@ impl Core {
         let label = progress.package.label;
         if deps.layout == BinaryLayout::Homebrew {
             let formula = rt.brew_formula(branch);
-            let installed = self.brew_install(progress, &["install", &formula], None).await;
+            let installed = self
+                .brew_install(progress, &["install", &formula], None)
+                .await;
             if self.runtime_versions(rt).is_empty() {
                 installed?;
             }
             self.refresh_shims()?;
             return Ok(format!("{label} instalado con Homebrew."));
         }
+        let overridden = self.package_override(progress.package.id);
         progress.step(format!("Buscando la última versión de {label}"));
         let unreadable = |source: &str| {
             AppError::Process(format!(
@@ -169,33 +172,39 @@ impl Core {
             ))
         };
         // (versión, URL, carpeta del zip que se extrae)
-        let (version, url, folder) = match rt {
-            Runtime::Git => {
-                let page = self.fetch_text(urls::GIT_LATEST).await?;
-                let (v, u) = catalog::github_tag(&page)
-                    .and_then(|tag| catalog::mingit_from_tag(&tag))
-                    .ok_or_else(|| unreadable("GitHub"))?;
-                (v, u, None)
-            }
-            Runtime::Node => {
-                let json = self.fetch_text(urls::NODE_INDEX).await?;
-                let tag =
-                    runtimes::node_release(&json, branch).ok_or_else(|| unreadable("nodejs.org"))?;
-                let url = urls::node_zip(&tag);
-                (tag.trim_start_matches('v').to_string(), url, None)
-            }
-            Runtime::Python => {
-                let json = self.fetch_text(urls::PYTHON_VERSIONS).await?;
-                let v = runtimes::python_release(&json, branch)
-                    .ok_or_else(|| unreadable("nuget.org"))?;
-                let url = urls::python_nupkg(&v);
-                // El paquete nuget trae Python completo en tools/.
-                (v, url, Some("tools"))
-            }
-            Runtime::Go => {
-                let json = self.fetch_text(urls::GO_RELEASES).await?;
-                let (v, file) = runtimes::go_release(&json).ok_or_else(|| unreadable("go.dev"))?;
-                (v, urls::go_zip(&file), None)
+        let python_folder = (rt == Runtime::Python).then_some("tools");
+        let (version, url, folder) = if let Some((v, u)) = overridden {
+            (v, u, python_folder)
+        } else {
+            match rt {
+                Runtime::Git => {
+                    let page = self.fetch_text(urls::GIT_LATEST).await?;
+                    let (v, u) = catalog::github_tag(&page)
+                        .and_then(|tag| catalog::mingit_from_tag(&tag))
+                        .ok_or_else(|| unreadable("GitHub"))?;
+                    (v, u, None)
+                }
+                Runtime::Node => {
+                    let json = self.fetch_text(urls::NODE_INDEX).await?;
+                    let tag = runtimes::node_release(&json, branch)
+                        .ok_or_else(|| unreadable("nodejs.org"))?;
+                    let url = urls::node_zip(&tag);
+                    (tag.trim_start_matches('v').to_string(), url, None)
+                }
+                Runtime::Python => {
+                    let json = self.fetch_text(urls::PYTHON_VERSIONS).await?;
+                    let v = runtimes::python_release(&json, branch)
+                        .ok_or_else(|| unreadable("nuget.org"))?;
+                    let url = urls::python_nupkg(&v);
+                    // El paquete nuget trae Python completo en tools/.
+                    (v, url, Some("tools"))
+                }
+                Runtime::Go => {
+                    let json = self.fetch_text(urls::GO_RELEASES).await?;
+                    let (v, file) =
+                        runtimes::go_release(&json).ok_or_else(|| unreadable("go.dev"))?;
+                    (v, urls::go_zip(&file), None)
+                }
             }
         };
         let dest = deps.paths.bin().join(rt.key()).join(&version);
@@ -251,7 +260,11 @@ impl Core {
         let fs = deps.fs.as_ref();
         match deps.layout {
             BinaryLayout::Portable => {
-                let program = deps.paths.bin().join(app.key()).join(app.portable_program());
+                let program = deps
+                    .paths
+                    .bin()
+                    .join(app.key())
+                    .join(app.portable_program());
                 fs.exists(&program).then_some(program)
             }
             BinaryLayout::Homebrew => match app.mac_app() {
@@ -400,9 +413,15 @@ mod tests {
             .map(|v| v.version)
             .collect();
         assert_eq!(versions, vec!["24.11.0", "22.21.0"]);
-        assert_eq!(core.runtime_active(Runtime::Node).unwrap().version, "24.11.0");
+        assert_eq!(
+            core.runtime_active(Runtime::Node).unwrap().version,
+            "24.11.0"
+        );
         core.set_runtime_version(Runtime::Node, "22.21.0").unwrap();
-        assert_eq!(core.runtime_active(Runtime::Node).unwrap().version, "22.21.0");
+        assert_eq!(
+            core.runtime_active(Runtime::Node).unwrap().version,
+            "22.21.0"
+        );
         assert!(core.set_runtime_version(Runtime::Node, "18.0.0").is_err());
         let env = core.terminal_env().unwrap();
         assert!(env["PATH"].contains("C:\\APP\\bin\\node\\22.21.0;"));

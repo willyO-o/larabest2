@@ -283,7 +283,7 @@ mod tests {
         assert!(render_sites(&f.ctx, &sites).unwrap());
 
         let blog = f.fs.read("C:/APP/etc/nginx/sites/blog.conf");
-        assert!(blog.contains("server_name blog.test;"));
+        assert!(blog.contains("server_name blog.test *.blog.test;"));
         assert!(blog.contains(r#"root "C:/APP/www/blog";"#));
         assert!(blog.contains("fastcgi_pass php_upstream;"));
         assert!(blog.contains(r#"include "C:/APP/etc/nginx/custom/blog.conf*";"#));
@@ -334,7 +334,7 @@ mod tests {
         render_sites(&f.ctx, &[]).unwrap();
 
         let conf = f.fs.read("C:/APP/etc/nginx/sites/adminer.conf");
-        assert!(conf.contains("server_name adminer.test;"));
+        assert!(conf.contains("server_name adminer.test *.adminer.test;"));
         assert!(conf.contains(r#"root "C:/APP/etc/adminer";"#));
         let wrapper = f.fs.read("C:/APP/etc/adminer/index.php");
         assert!(wrapper.contains(r#"include "C:/APP/bin/adminer/adminer.php";"#));

@@ -342,9 +342,10 @@ Requiere el script `"tauri": "tauri"` en `package.json`. Si el push que incluye 
 | 2. Enseñanza | Windows | Crear sitio WordPress o Laravel con un clic; SSL automático; acceso a configuraciones y logs |
 | 3. macOS | macOS | Adaptadores de macOS; `php-fpm`; binarios desde Homebrew |
 | 4. Extras | Ambas | Descarga de versiones desde la app; respaldos; Mailpit; Redis |
+| 6. Lenguajes y extras | Ambas | Node.js, Python, Go y Git con versiones (`Runtime`, `usecases/runtimes.rs`); PHP 8.2–8.5; ajustes rápidos de PHP y Xdebug; sitio desde Git con preparación del proyecto; compartir con cloudflared; perfiles de pila; respaldos automáticos; VS Code y DBeaver; `etc/paquetes.conf` y "Agregar todo" |
 | 5. Paridad con Laragon | Ambas | MySQL como alternativa a MariaDB; contraseña de root; panel de puertos y dominio; iniciar con el sistema y minimizado; Node.js y Git; atajos en `etc/shell` y PATH opcional; Procfile; plantillas propias (`etc/sitios.conf`); respaldar y restaurar |
 
-Fuera de alcance: compartir sitios por túnel, cambio de versión de Node o Python, actualización automática. No adelantar trabajo de una fase posterior sin que se pida.
+Fuera de alcance: actualización automática de la app, Memcached (no hay versión oficial para Windows). No adelantar trabajo de una fase posterior sin que se pida.
 
 ## Pendiente de decidir
 

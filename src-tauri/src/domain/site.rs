@@ -25,6 +25,9 @@ pub enum SitePreset {
     Laravel,
     /// Una plantilla propia de `etc/sitios.conf` (Symfony, CodeIgniter...).
     Template,
+    /// Clonar un repositorio Git y prepararlo (Composer, `.env`, base de
+    /// datos con su `.sql` o migraciones).
+    Git,
 }
 
 impl SitePreset {
@@ -34,6 +37,7 @@ impl SitePreset {
             SitePreset::Wordpress => "WordPress",
             SitePreset::Laravel => "Laravel",
             SitePreset::Template => "Plantilla propia",
+            SitePreset::Git => "Desde Git",
         }
     }
 

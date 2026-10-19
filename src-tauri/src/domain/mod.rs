@@ -12,9 +12,9 @@ mod site;
 mod version;
 
 pub use config::{
-    ActiveVersions, AppConfig, DatabaseClient, DatabaseServer, Editor, OptionalServices, PhpSettings,
-    RootPasswords, StackProfile, TerminalApp,
-    ThemePreference, WebServer, DEFAULT_PHP_EXTENSIONS,
+    ActiveVersions, AppConfig, DatabaseClient, DatabaseServer, Editor, OptionalServices,
+    PhpSettings, RootPasswords, StackProfile, TerminalApp, ThemePreference, WebServer,
+    DEFAULT_PHP_EXTENSIONS,
 };
 pub use dotenv::set_env;
 pub use hosts::{decode_request, encode_request, merge_block, parse_block, HostEntry};

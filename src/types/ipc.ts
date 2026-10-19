@@ -39,7 +39,7 @@ export interface Site {
   inHosts: boolean
 }
 
-export type SitePreset = 'blank' | 'wordpress' | 'laravel' | 'template'
+export type SitePreset = 'blank' | 'wordpress' | 'laravel' | 'git' | 'template'
 
 /** Plantilla propia de `etc/sitios.conf` (`sites_templates`). */
 export interface SiteTemplate {
@@ -105,7 +105,7 @@ export interface PortSettings {
 }
 
 /** Paneles que el menú pide abrir en la ventana (`ui:panel`). */
-export type Panel = 'ports' | 'password'
+export type Panel = 'ports' | 'password' | 'profile'
 
 export type AppErrorKind =
   | 'io'

@@ -25,6 +25,11 @@ const PRESETS = computed<{ value: SitePreset; label: string; hint: string }[]>((
     hint: `Crea el proyecto con Composer, lo conecta a ${dbLabel.value} y crea las tablas.`,
   },
   {
+    value: 'git',
+    label: 'Git',
+    hint: 'Clona un repositorio y lo deja listo: Composer, .env, base de datos con su .sql o migraciones.',
+  },
+  {
     value: 'template',
     label: 'Otra…',
     hint: 'Una plantilla de etc/sitios.conf: Symfony, CodeIgniter, Drupal o las tuyas.',
@@ -37,6 +42,11 @@ const presetButtons = ref<HTMLButtonElement[]>([])
 const name = ref('')
 const preset = ref<SitePreset>('blank')
 const template = ref<string | null>(null)
+const repo = ref('')
+const REPO = /^(https?:\/\/|git@|ssh:\/\/)[^\s"'`&|;<>^%$]+$/
+const repoError = computed(() =>
+  repo.value && !REPO.test(repo.value) ? 'Una URL https://… o git@…, sin espacios ni comillas.' : null,
+)
 
 const VALID = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$/
 
@@ -62,7 +72,8 @@ const canCreate = computed(
     !!name.value &&
     !nameError.value &&
     !sites.creating &&
-    (preset.value !== 'template' || !!currentTemplate.value),
+    (preset.value !== 'template' || !!currentTemplate.value) &&
+    (preset.value !== 'git' || (!!repo.value && !repoError.value)),
 )
 
 // Al elegir "Otra…" se preselecciona la primera plantilla.
@@ -115,8 +126,10 @@ watch(
 )
 
 function submit() {
-  if (canCreate.value)
-    sites.create(name.value, preset.value, preset.value === 'template' ? template.value : null)
+  if (!canCreate.value) return
+  const extra =
+    preset.value === 'template' ? template.value : preset.value === 'git' ? repo.value.trim() : null
+  sites.create(name.value, preset.value, extra)
 }
 
 /** Esc cierra el formulario, pero no mientras se crea el sitio. */
@@ -175,7 +188,7 @@ async function backToForm() {
 
       <div class="field">
         <span id="preset-label" class="field-label">Plantilla</span>
-        <div class="segmented segmented-4" role="radiogroup" aria-labelledby="preset-label">
+        <div class="segmented segmented-5" role="radiogroup" aria-labelledby="preset-label">
           <button
             v-for="(p, i) in PRESETS"
             :key="p.value"
@@ -191,6 +204,16 @@ async function backToForm() {
             {{ p.label }}
           </button>
         </div>
+        <input
+          v-if="preset === 'git'"
+          v-model.trim="repo"
+          class="field-input"
+          aria-label="URL del repositorio"
+          :aria-invalid="!!repoError"
+          placeholder="https://github.com/usuario/proyecto.git"
+          autocomplete="off"
+          spellcheck="false"
+        />
         <div v-if="preset === 'template'" class="template-row">
           <select
             v-model="template"
@@ -207,7 +230,9 @@ async function backToForm() {
         <span class="field-hint" :title="currentTemplate?.action">{{
           preset === 'template'
             ? (currentTemplate?.action ?? 'No hay plantillas: agrégalas en etc/sitios.conf.')
-            : currentPreset.hint
+            : preset === 'git' && repoError
+              ? repoError
+              : currentPreset.hint
         }}</span>
       </div>
 
@@ -271,7 +296,9 @@ async function backToForm() {
         </template>
         <span v-else class="sheet-note">
           {{
-            creation.preset === 'laravel' || creation.preset === 'template'
+            creation.preset === 'laravel' ||
+            creation.preset === 'template' ||
+            creation.preset === 'git'
               ? 'Composer puede tardar varios minutos.'
               : 'No cierres la aplicación hasta que termine.'
           }}

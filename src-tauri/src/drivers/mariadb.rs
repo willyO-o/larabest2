@@ -124,6 +124,27 @@ fn valid_database(db: &str) -> bool {
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
 }
 
+/// Ejecuta un `.sql` dentro de la base `db` (importar el volcado de un
+/// proyecto).
+pub fn import_spec(
+    ctx: &RenderContext,
+    db: &str,
+    file: &std::path::Path,
+) -> Result<ProcessSpec, AppError> {
+    if !valid_database(db) || slash(file).contains('\'') {
+        return Err(AppError::InvalidInput(format!(
+            "No se puede importar {} en {db}.",
+            slash(file)
+        )));
+    }
+    let id = ctx.database();
+    Ok(client(ctx, id, programs(id).client)?
+        .arg(format!("--database={db}"))
+        .arg("--default-character-set=utf8mb4")
+        .arg("-e")
+        .arg(format!("source {}", slash(file))))
+}
+
 /// `CREATE DATABASE` con el cliente del motor elegido. El nombre debe venir
 /// ya validado (`domain::database_name`).
 pub fn create_database_spec(ctx: &RenderContext, db: &str) -> Result<ProcessSpec, AppError> {

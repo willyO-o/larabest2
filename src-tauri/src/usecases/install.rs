@@ -208,8 +208,14 @@ impl Core {
     ) -> Result<String, AppError> {
         let deps = self.supervisor.deps();
         let label = progress.package.label;
-        progress.step(format!("Buscando la última versión de {label}"));
-        let (version, url) = self.resolve_zip(service, branch).await?;
+        let (version, url) = match self.package_override(progress.package.id) {
+            // Descarga propia de etc/paquetes.conf.
+            Some((version, url)) => (version, url),
+            None => {
+                progress.step(format!("Buscando la última versión de {label}"));
+                self.resolve_zip(service, branch).await?
+            }
+        };
         let dest = deps.paths.bin_service(service).join(&version);
         let layout = BinaryLayout::Portable;
         let marker = dest.join(program_subpath(
@@ -400,6 +406,69 @@ impl Core {
         Ok(format!("{label} instalado."))
     }
 
+    /// `etc/paquetes.conf`: descargas propias para Agregar (como el
+    /// `packages.conf` de Laragon). Se crea la primera vez con ejemplos.
+    pub fn packages_conf_path(&self) -> Result<PathBuf, AppError> {
+        let deps = self.supervisor.deps();
+        let path = deps.paths.etc().join("paquetes.conf");
+        if !deps.fs.exists(&path) {
+            deps.fs
+                .write(&path, &PACKAGES_CONF.replace("{app}", &deps.app_name))?;
+        }
+        Ok(path)
+    }
+
+    /// Versión y URL propias de un paquete, si `etc/paquetes.conf` tiene
+    /// `id=URL` (solo zips de Windows).
+    pub(super) fn package_override(&self, id: &str) -> Option<(String, String)> {
+        let deps = self.supervisor.deps();
+        if deps.layout != BinaryLayout::Portable {
+            return None;
+        }
+        let text = deps
+            .fs
+            .read_to_string(&deps.paths.etc().join("paquetes.conf"))
+            .ok()?;
+        let url = parse_overrides(&text)
+            .into_iter()
+            .find(|(key, _)| key == id)?
+            .1;
+        let version = catalog::version_in(&url).unwrap_or_else(|| "propia".into());
+        Some((version, url))
+    }
+
+    /// "Agregar todo lo que falta": los servicios, herramientas y lenguajes
+    /// del catálogo que no estén (sin los programas de escritorio).
+    pub async fn install_missing(&self) -> Result<String, AppError> {
+        let mut added = Vec::new();
+        let mut failed = Vec::new();
+        for package in catalog::PACKAGES {
+            if !package.in_add_all() || self.package_status(&package).is_some() {
+                continue;
+            }
+            match self.install_package(package.id).await {
+                Ok(_) => added.push(package.label),
+                Err(e) => failed.push(format!("{}: {e}", package.label)),
+            }
+        }
+        if !failed.is_empty() {
+            return Err(AppError::Process(format!(
+                "Se agregó: {}.\nNo se pudo agregar:\n{}",
+                if added.is_empty() {
+                    "nada".into()
+                } else {
+                    added.join(", ")
+                },
+                failed.join("\n")
+            )));
+        }
+        Ok(if added.is_empty() {
+            "Ya estaba todo agregado.".into()
+        } else {
+            format!("Se agregó: {}.", added.join(", "))
+        })
+    }
+
     /// Para el menú: lo instalado de cada paquete ("8.4.13", "instalado").
     pub fn package_status(&self, package: &Package) -> Option<String> {
         let deps = self.supervisor.deps();
@@ -432,9 +501,45 @@ impl Core {
     }
 }
 
+const PACKAGES_CONF: &str = "# Descargas propias para Menú → Agregar de {app} (como el packages.conf de\n\
+# Laragon). Una por línea: id=URL de un .zip para Windows. La versión se toma\n\
+# del nombre del archivo. Sirve para fijar una versión vieja o usar un espejo.\n\
+#\n\
+# Ids: php-8.5 php-8.4 php-8.3 php-8.2 nginx apache mariadb-11.4 mysql-8.4\n\
+#      postgresql-17 redis mongodb mailpit node-24 node-22 python-3.13 go git\n\
+#\n\
+# php-8.3=https://windows.php.net/downloads/releases/archives/php-8.3.20-nts-Win32-vs16-x64.zip\n\
+# mariadb-11.4=https://archive.mariadb.org/mariadb-11.4.5/winx64-packages/mariadb-11.4.5-winx64.zip\n";
+
+/// Líneas `id=URL` de `etc/paquetes.conf`.
+pub fn parse_overrides(text: &str) -> Vec<(String, String)> {
+    text.lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .filter_map(|l| {
+            let (id, url) = l.split_once('=')?;
+            let url = url.trim();
+            (url.starts_with("https://") || url.starts_with("http://"))
+                .then(|| (id.trim().to_string(), url.to_string()))
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn overrides_come_from_packages_conf() {
+        let list = parse_overrides(PACKAGES_CONF);
+        assert!(list.is_empty(), "solo ejemplos comentados");
+        let list = parse_overrides(
+            "# x\nphp-8.3 = https://x/php-8.3.20-nts-Win32-vs16-x64.zip\nmal=ftp://x\n",
+        );
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].0, "php-8.3");
+        assert_eq!(catalog::version_in(&list[0].1).as_deref(), Some("8.3.20"));
+    }
 
     #[test]
     fn brew_formulas_follow_the_chosen_versions() {

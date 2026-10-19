@@ -16,6 +16,8 @@ La interfaz sigue la estructura de Laragon (ventana compacta, una fila por servi
 
 **Agregar desde el menú:** versiones de PHP, Nginx, Apache, MariaDB, MySQL y los servicios opcionales, más Adminer, phpMyAdmin, Composer, Node.js y Git, con un clic. Ver [Agregar programas desde el menú](#agregar-programas-desde-el-menú).
 
+**Lenguajes, Git y compartir:** Node.js, Python y Go con varias versiones; PHP 8.2 a 8.5; ajustes rápidos de PHP y Xdebug con un clic; crear un sitio desde un repositorio Git (con Composer, `.env` y su base de datos); compartir un sitio por internet; perfiles de pila; respaldos automáticos; VS Code y DBeaver. Ver [Segunda tanda](#segunda-tanda-lenguajes-git-compartir-y-perfiles).
+
 **Paridad con Laragon:** MySQL en lugar de MariaDB, contraseña de root, puertos y dominio desde la ventana, iniciar con el sistema y minimizado, atajos de línea de comandos y opción de agregarlos al PATH, Procfile, plantillas propias de *Crear sitio* y respaldos de las bases de datos. Ver [Paridad con Laragon](#paridad-con-laragon).
 
 ## Menú contextual
@@ -49,7 +51,7 @@ Las extensiones marcadas en el menú se guardan en `app.json` y PHP se reinicia 
 
 | Paquete | Windows | macOS |
 | --- | --- | --- |
-| PHP 8.4 y 8.3 | última versión de la rama desde `windows.php.net` (NTS x64) | `brew install php@8.4` / `php@8.3` |
+| PHP 8.5, 8.4, 8.3 y 8.2 | última versión de la rama desde `windows.php.net` (NTS x64) | `brew install php` (8.5) / `php@8.4` / `php@8.3` / `php@8.2` |
 | Nginx | versión estable de `nginx.org` | `brew install nginx` |
 | Apache | build de Apache Lounge para Windows x64, desde su réplica en `fossies.org` (la misma que usa Scoop; `apachelounge.com` bloquea algunas descargas automáticas) | `brew install httpd` |
 | MariaDB 11.4 | última 11.4 de `archive.mariadb.org` | `brew install mariadb@11.4` |
@@ -59,8 +61,15 @@ Las extensiones marcadas en el menú se guardan en `app.json` y PHP se reinicia 
 | MongoDB | `fastdl.mongodb.org` | tap `mongodb/brew` y `brew install mongodb-community` |
 | Mailpit | `axllent/mailpit` (GitHub) | `brew install mailpit` |
 | Adminer, phpMyAdmin, Composer | sus descargas oficiales, en `bin\` | igual |
-| Node.js (LTS) | zip de `nodejs.org` en `bin\node\<versión>\` | `brew install node` |
+| Node.js 24 y 22 (LTS) | zip de `nodejs.org` en `bin\node\<versión>\` | `brew install node@24` / `node@22` |
+| Python 3.13 | paquete de `nuget.org` (Python completo, con pip) en `bin\python\<versión>\` | `brew install python@3.13` |
+| Go | zip de `go.dev` en `bin\go\<versión>\` | `brew install go` |
 | Git | MinGit de `git-for-windows` (GitHub) en `bin\git\<versión>\` | `brew install git` |
+| VS Code | zip portable en `bin\vscode\` (su configuración queda en `bin\vscode\data`) | `brew install --cask visual-studio-code` |
+| DBeaver | zip de `dbeaver.io` en `bin\dbeaver\` | `brew install --cask dbeaver-community` |
+| cloudflared | `cloudflared-windows-amd64.exe` de GitHub en `bin\cloudflared\` | `brew install cloudflared` |
+
+**Agregar todo lo que falta** baja de una vez los servicios, herramientas y lenguajes que no estén (sin VS Code ni DBeaver). **Configurar descargas (paquetes.conf)** abre `etc\paquetes.conf`, como el `packages.conf` de Laragon: una línea `id=URL` de un `.zip` reemplaza la descarga de ese paquete en Windows (por ejemplo para fijar una versión vieja o usar un espejo); la versión se toma del nombre del archivo.
 
 En Windows cada versión queda en su carpeta (`bin\php\8.4.13\`), así que conviven varias y se elige en **Menú → PHP → Versión**. El menú muestra al lado lo que ya está instalado; volver a agregar algo baja la versión más nueva de esa rama si la hay. El progreso aparece en la línea de estado y, al terminar, la fila del servicio ya muestra la versión nueva. En macOS hace falta tener Homebrew (<https://brew.sh>); la app solo ejecuta `brew install`.
 
@@ -132,6 +141,51 @@ Un comando de Composer usa el PHP y el Composer de la app (se descarga si falta)
 - **Preferencias → Respaldar las bases de datos al detener**: lo mismo antes de detener el motor (con su botón, **Detener todo** o al salir). Si falla, el motor se detiene igual y el error queda en `logs\backups.log`.
 - Se conservan los 10 respaldos más recientes (`backupKeep` en `app.json`; 0 los conserva todos).
 - **Restaurar un respaldo (.sql)…** ejecuta un `.sql` con el cliente del motor, después de confirmar: los respaldos de la app traen su `CREATE DATABASE`, así que reemplazan las tablas de esas bases.
+
+## Segunda tanda: lenguajes, Git, compartir y perfiles
+
+### Node.js, Python y Go con varias versiones
+
+**Agregar → Node.js 24 / Node.js 22 / Python 3.13 / Go / Git** baja cada versión a su carpeta y **Menú → Lenguajes** elige la activa de cada uno, igual que con PHP. La Terminal y los atajos de `etc\shell` (`node`, `npm`, `npx`, `corepack`, `python`, `pip`, `go`, `gofmt`, `git`) usan siempre la elegida. En macOS se usan las fórmulas de Homebrew (`node@22`, `python@3.13`…), que no están en el PATH de la shell: la app las pone delante.
+
+### Ajustes rápidos de PHP y Xdebug
+
+**Menú → PHP → Ajustes rápidos**: mostrar errores (`display_errors`), memoria (`memory_limit`), subida máxima (`upload_max_filesize` y `post_max_size`) y tiempo máximo (`max_execution_time`). Van al `php.ini` generado y PHP se reinicia solo; `user.ini` sigue teniendo prioridad.
+
+**Xdebug**: al marcarlo la primera vez se descarga para la versión activa de PHP (en Windows la DLL de PECL en su `ext\`; en macOS `brew install shivammathur/extensions/xdebug@<rama>`) y se carga como `zend_extension` con `xdebug.mode = debug,develop` y `start_with_request = yes`. El IDE escucha en el puerto 9003, salvo que PHP lo use (los 4 `php-cgi` de Windows usan 9000–9003): entonces en el 9004; el menú muestra cuál. En VS Code, la extensión *PHP Debug* con `"port": 9004`.
+
+### Crear un sitio desde Git
+
+**Nuevo sitio → Git** (o **Menú → www → Crear sitio → Clonar desde Git…**) con la URL de un repositorio (`https://…` o `git@…`). La app:
+
+1. Crea la base de datos con el nombre del sitio.
+2. Clona el repositorio en `www\<sitio>` (con el Git de **Agregar** o el del sistema).
+3. Si hay `composer.json` y falta `vendor\`, ejecuta `composer install`.
+4. En Laravel escribe `.env` desde `.env.example` (base de datos, URL, Mailpit y Redis) y genera `APP_KEY`.
+5. Si el repositorio trae un volcado `.sql` (en su raíz, `database\`, `db\`, `sql\` o `database\dumps\`) lo importa; si no, en Laravel ejecuta `php artisan migrate`.
+6. En WordPress (con `wp-config-sample.php`) escribe `wp-config.php`.
+
+Lo mismo se aplica a las plantillas propias de `etc\sitios.conf`.
+
+### Compartir por internet
+
+**Agrega cloudflared** y en **Menú → www → Compartir por internet** marca un sitio: la app abre un túnel rápido de Cloudflare (sin cuenta) y muestra una dirección `https://<algo>.trycloudflare.com` que cualquiera puede abrir. El túnel llega a tu servidor web con el dominio del sitio, así que funcionan los vhosts. Se corta al desmarcarlo, con **Dejar de compartir todo**, al detener todo o al salir. En Laravel, los enlaces que use `APP_URL` siguen apuntando a `.test`.
+
+### Perfiles de pila
+
+**Menú → Preferencias → Perfiles → Guardar la pila actual como perfil…** guarda el servidor web, el motor de base de datos y la versión de cada servicio y lenguaje con un nombre ("Clase PHP 8.3 + MySQL"). Elegir un perfil cambia todo de una vez (reinicia solo lo que cambió); lo que ya no esté instalado se avisa.
+
+### Respaldos automáticos
+
+**Menú → Preferencias → Respaldo automático**: cada hora, cada 6 horas o cada día, mientras MariaDB o MySQL estén en marcha. Usa los mismos respaldos que **Respaldar ahora** (y la misma limpieza de los viejos). Con **Respaldar al detener**, la app espera hasta 5 minutos al salir para que termine.
+
+### Más
+
+- **Editor** (Preferencias → Editor): las configuraciones y los logs se abren con el Bloc de notas (TextEdit en macOS) o con VS Code.
+- **Terminal** (Preferencias → Terminal, Windows): Símbolo del sistema, PowerShell o Windows Terminal (con pestañas).
+- **Herramientas → VS Code (abre www)**, **DBeaver** y **Archivo hosts (solo lectura)**.
+- **Subdominios**: cada sitio responde también en `*.sitio.test` (por ejemplo `api.tienda.test`; agrega el subdominio al archivo hosts) y su certificado HTTPS los cubre.
+- Al cambiar el **puerto de la base de datos**, la **contraseña de root**, el **puerto web** o el **dominio**, la app actualiza los `.env` y `wp-config.php` de los sitios que todavía usan los valores anteriores (root en 127.0.0.1) y avisa cuáles cambió.
 
 ## Apache en lugar de Nginx
 
@@ -383,6 +437,12 @@ Prepara `bin\` como se describe arriba y crea `www\blog\index.php` con `<?php ph
 - [ ] **Preferencias → Agregar php, composer, mysql… al PATH**: en una consola nueva de PowerShell, fuera de la app, `php -v`, `composer -V` y `mariadb --version` usan la versión activa; al cambiar de PHP en el menú, `php -v` cambia sin tocar el PATH. Desmarcarlo lo quita.
 - [ ] **Herramientas → Procfile → Editar Procfile**, agrega `srv: php -S 127.0.0.1:8000 -t blog` y **Iniciar todo**: `http://127.0.0.1:8000` responde y el submenú dice «srv: en marcha». **Detener todo** lo detiene.
 - [ ] **Nuevo sitio → Otra… → Symfony** con el nombre `api`: Composer crea `www\api` y `http://api.test` muestra la página de Symfony.
+- [ ] **Agregar → Node.js 22** y **Node.js 24**; **Menú → Lenguajes → Node.js → 22.x**: en la Terminal, `node -v` muestra 22. Igual con Python (`python --version`, `pip --version`) y Go (`go version`).
+- [ ] **PHP → Ajustes rápidos → Memoria → 1G**: `phpinfo()` muestra 1G. **Xdebug** se descarga y `phpinfo()` lo muestra; VS Code con *PHP Debug* se detiene en un punto de interrupción.
+- [ ] **Nuevo sitio → Git** con `https://github.com/laravel/laravel.git` y el nombre `clon`: `http://clon.test` muestra Laravel y la base `clon` tiene sus tablas.
+- [ ] **Agregar → cloudflared** y **www → Compartir por internet → blog.test**: se abre `https://…trycloudflare.com` con el sitio, también desde el celular. Desmarcarlo lo corta.
+- [ ] **Preferencias → Perfiles → Guardar…** con "Clase", cambia a PHP 8.3 y Apache, y elige **Clase**: vuelve todo como estaba.
+- [ ] **Preferencias → Respaldo automático → Cada hora** con MariaDB en marcha: en unos minutos aparece un respaldo en `backups\`.
 - [ ] **MariaDB → Respaldar las bases de datos ahora**: aparece `backups\<fecha>-mariadb\` con un `.sql` por base. Borra una tabla en Adminer y **Restaurar un respaldo** la trae de vuelta.
 
 ## macOS

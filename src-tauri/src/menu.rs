@@ -9,12 +9,13 @@ use tauri::{AppHandle, Emitter, Manager, Wry};
 
 use crate::commands::{open_path, open_url};
 use crate::domain::catalog;
+use crate::domain::catalog::App;
 use crate::domain::{
-    BinaryLayout, DatabaseClient, DatabaseServer, ServiceId, ServiceState, ThemePreference,
-    WebServer,
+    slash, BinaryLayout, DatabaseClient, DatabaseServer, Editor, Runtime, ServiceId, ServiceState,
+    TerminalApp, ThemePreference, WebServer,
 };
 use crate::error::AppError;
-use crate::usecases::ConfigTarget;
+use crate::usecases::{ConfigTarget, EXECUTION_TIMES, MEMORY_LIMITS, UPLOAD_SIZES};
 use crate::{settings, tray, AppState};
 use tauri_plugin_autostart::ManagerExt;
 
@@ -121,6 +122,7 @@ pub fn build(app: &AppHandle, from_tray: bool) -> tauri::Result<Menu<Wry>> {
         text(app, "create:blank", "En blanco…")?,
         text(app, "create:wordpress", "WordPress…")?,
         text(app, "create:laravel", "Laravel…")?,
+        text(app, "create:git", "Clonar desde Git…")?,
         sep(app)?,
     ];
     for template in core.site_templates() {
@@ -136,6 +138,30 @@ pub fn build(app: &AppHandle, from_tray: bool) -> tauri::Result<Menu<Wry>> {
         "Editar plantillas (sitios.conf)",
     )?);
     www.push(Box::new(submenu(app, "Crear sitio", create)?));
+    // Compartir por internet con un túnel de Cloudflare.
+    let shares = core.shares();
+    let mut share = Vec::new();
+    if sites.is_empty() {
+        share.push(disabled(app, "(no hay sitios)")?);
+    }
+    for site in &sites {
+        let shared = shares.iter().find(|s| s.site == site.name);
+        let label = match shared {
+            Some(s) => format!("{}  →  {}", site.domain, s.url),
+            None => site.domain.clone(),
+        };
+        share.push(check(
+            app,
+            &format!("share:{}", site.name),
+            &label,
+            shared.is_some(),
+        )?);
+    }
+    if !shares.is_empty() {
+        share.push(sep(app)?);
+        share.push(text(app, "share_stop_all", "Dejar de compartir todo")?);
+    }
+    www.push(Box::new(submenu(app, "Compartir por internet", share)?));
     www.push(open(app, "www", "Abrir carpeta www")?);
     www.push(text(
         app,
@@ -201,6 +227,72 @@ pub fn build(app: &AppHandle, from_tray: bool) -> tauri::Result<Menu<Wry>> {
         }
         _ => extensions.push(disabled(app, "(sin PHP instalado)")?),
     }
+    // Ajustes rápidos de PHP, como los de Laragon.
+    let settings = core.php_settings();
+    let mut memory = Vec::new();
+    for value in MEMORY_LIMITS {
+        memory.push(check(
+            app,
+            &format!("phpset:memory:{value}"),
+            value,
+            settings.memory_limit == value,
+        )?);
+    }
+    let mut upload = Vec::new();
+    for value in UPLOAD_SIZES {
+        upload.push(check(
+            app,
+            &format!("phpset:upload:{value}"),
+            value,
+            settings.upload_max_filesize == value,
+        )?);
+    }
+    let mut time = Vec::new();
+    for value in EXECUTION_TIMES {
+        let label = if value == 0 {
+            "sin límite".to_string()
+        } else {
+            format!("{value} s")
+        };
+        time.push(check(
+            app,
+            &format!("phpset:time:{value}"),
+            &label,
+            settings.max_execution_time == value,
+        )?);
+    }
+    let xdebug_label = if core.xdebug_installed() {
+        format!(
+            "Xdebug (el IDE escucha en el puerto {})",
+            core.xdebug_port()
+        )
+    } else {
+        "Xdebug (se descarga al activarlo)".to_string()
+    };
+    let quick = vec![
+        check(
+            app,
+            "phpset:errors",
+            "Mostrar errores (display_errors)",
+            settings.display_errors,
+        )?,
+        Box::new(submenu(
+            app,
+            &format!("Memoria (memory_limit: {})", settings.memory_limit),
+            memory,
+        )?) as Item,
+        Box::new(submenu(
+            app,
+            &format!(
+                "Subida máxima (upload_max_filesize: {})",
+                settings.upload_max_filesize
+            ),
+            upload,
+        )?) as Item,
+        Box::new(submenu(app, "Tiempo máximo (max_execution_time)", time)?) as Item,
+        sep(app)?,
+        check(app, "phpset:xdebug", &xdebug_label, settings.xdebug)?,
+    ];
     let php = vec![
         versions(
             app,
@@ -208,6 +300,7 @@ pub fn build(app: &AppHandle, from_tray: bool) -> tauri::Result<Menu<Wry>> {
             ServiceId::Php,
             active(ServiceId::Php).as_deref(),
         )?,
+        Box::new(submenu(app, "Ajustes rápidos", quick)?) as Item,
         open(app, "phpUserIni", "php.ini (ajustes propios)")?,
         Box::new(submenu(app, "Extensiones", extensions)?) as Item,
         sep(app)?,
@@ -287,6 +380,30 @@ pub fn build(app: &AppHandle, from_tray: bool) -> tauri::Result<Menu<Wry>> {
         optional.push(submenu(app, id.label(), items)?);
     }
 
+    // Lenguajes: Node.js, Python, Go y Git con su versión.
+    let mut languages = Vec::new();
+    for rt in Runtime::ALL {
+        let list = core.runtime_versions(rt);
+        let active = core.runtime_active(rt).map(|v| v.version);
+        let mut items = Vec::new();
+        if list.is_empty() {
+            items.push(disabled(app, &format!("(Agregar → {})", rt.label()))?);
+        }
+        for v in &list {
+            items.push(check(
+                app,
+                &format!("rtver:{}:{}", rt.key(), v.version),
+                &v.version,
+                active.as_deref() == Some(v.version.as_str()),
+            )?);
+        }
+        let label = match &active {
+            Some(v) => format!("{} {v}", rt.label()),
+            None => rt.label().to_string(),
+        };
+        languages.push(submenu(app, &label, items)?);
+    }
+
     let mut logs = vec![
         open(app, error_log, &format!("{}: errores", web.label()))?,
         open(app, access_log, &format!("{}: accesos", web.label()))?,
@@ -337,6 +454,10 @@ pub fn build(app: &AppHandle, from_tray: bool) -> tauri::Result<Menu<Wry>> {
     }
     tools.push(sep(app)?);
     tools.push(Box::new(submenu(app, "Procfile", procfile)?));
+    tools.push(sep(app)?);
+    tools.push(text(app, "app:vscode", "VS Code (abre www)")?);
+    tools.push(text(app, "app:dbeaver", "DBeaver (base de datos)")?);
+    tools.push(open(app, "hosts", "Archivo hosts (solo lectura)")?);
 
     // Preferencias → Servicios: qué opcionales forman parte de la pila.
     let mut services = Vec::new();
@@ -368,6 +489,13 @@ pub fn build(app: &AppHandle, from_tray: bool) -> tauri::Result<Menu<Wry>> {
         };
         add.push(text(app, &format!("add:{}", package.id), &label)?);
     }
+    add.push(sep(app)?);
+    add.push(text(app, "add_all", "Agregar todo lo que falta")?);
+    add.push(open(
+        app,
+        "packagesConf",
+        "Configurar descargas (paquetes.conf)",
+    )?);
 
     let theme = core.theme();
     let themes = vec![
@@ -425,10 +553,88 @@ pub fn build(app: &AppHandle, from_tray: bool) -> tauri::Result<Menu<Wry>> {
         "Windows"
     };
     let autostart = app.autolaunch().is_enabled().unwrap_or(false);
+    let every = core.backup_every_hours();
+    let mut auto_backup = Vec::new();
+    for (hours, label) in [
+        (0, "Desactivado"),
+        (1, "Cada hora"),
+        (6, "Cada 6 horas"),
+        (24, "Cada día"),
+    ] {
+        auto_backup.push(check(
+            app,
+            &format!("backupevery:{hours}"),
+            label,
+            every == hours,
+        )?);
+    }
+    let editor = core.editor();
+    let editors = vec![
+        check(
+            app,
+            "editor:system",
+            if cfg!(target_os = "macos") {
+                "TextEdit"
+            } else {
+                "Bloc de notas"
+            },
+            editor == Editor::System,
+        )?,
+        check(app, "editor:vscode", "VS Code", editor == Editor::Vscode)?,
+    ];
+    let terminal = core.terminal_app();
+    let terminals = vec![
+        check(
+            app,
+            "terminal:cmd",
+            "Símbolo del sistema (cmd)",
+            terminal == TerminalApp::Cmd,
+        )?,
+        check(
+            app,
+            "terminal:powershell",
+            "PowerShell",
+            terminal == TerminalApp::Powershell,
+        )?,
+        check(
+            app,
+            "terminal:wt",
+            "Windows Terminal",
+            terminal == TerminalApp::Wt,
+        )?,
+    ];
+    let current_profile = core.active_profile();
+    let saved = core.profiles();
+    let mut profiles = Vec::new();
+    if saved.is_empty() {
+        profiles.push(disabled(app, "(no hay perfiles guardados)")?);
+    }
+    for p in &saved {
+        profiles.push(check(
+            app,
+            &format!("profile:{}", p.name),
+            &p.name,
+            current_profile.as_deref() == Some(p.name.as_str()),
+        )?);
+    }
+    profiles.push(sep(app)?);
+    profiles.push(text(
+        app,
+        "panel:profile",
+        "Guardar la pila actual como perfil…",
+    )?);
+    if !saved.is_empty() {
+        let mut delete = Vec::new();
+        for p in &saved {
+            delete.push(text(app, &format!("profile-del:{}", p.name), &p.name)?);
+        }
+        profiles.push(Box::new(submenu(app, "Borrar un perfil", delete)?));
+    }
     let prefs = vec![
         Box::new(submenu(app, "Tema", themes)?) as Item,
         Box::new(submenu(app, "Servidor web", web_servers)?) as Item,
         Box::new(submenu(app, "Base de datos", databases)?) as Item,
+        Box::new(submenu(app, "Perfiles", profiles)?) as Item,
         Box::new(submenu(app, "Servicios", services)?) as Item,
         Box::new(submenu(app, "Botón Base de datos", clients)?) as Item,
         text(app, "panel:ports", "Puertos y dominio…")?,
@@ -463,11 +669,18 @@ pub fn build(app: &AppHandle, from_tray: bool) -> tauri::Result<Menu<Wry>> {
             "Respaldar las bases de datos al detener",
             core.backup_on_stop(),
         )?,
+        Box::new(submenu(app, "Respaldo automático", auto_backup)?) as Item,
+        Box::new(submenu(app, "Editor", editors)?) as Item,
         sep(app)?,
         check(
             app,
             "ssl_toggle",
-            "HTTPS para los sitios .test",
+            &format!(
+                "HTTPS para los sitios .{}",
+                core.port_settings()
+                    .map(|p| p.tld)
+                    .unwrap_or_else(|_| "test".into())
+            ),
             core.ssl_enabled(),
         )?,
         open(app, "ssl", "Carpeta de certificados")?,
@@ -475,6 +688,15 @@ pub fn build(app: &AppHandle, from_tray: bool) -> tauri::Result<Menu<Wry>> {
         text(app, "choose_root", "Cambiar carpeta raíz…")?,
         open(app, "appJson", "Abrir app.json")?,
     ];
+
+    let mut prefs = prefs;
+    if !cfg!(target_os = "macos") {
+        // Justo después de "Editor" (le siguen seis elementos).
+        let at = prefs.len().saturating_sub(6);
+        prefs.insert(at, Box::new(submenu(app, "Terminal", terminals)?));
+    } else {
+        drop(terminals);
+    }
 
     let mut builder = MenuBuilder::new(app)
         .item(&MenuItem::with_id(
@@ -495,7 +717,15 @@ pub fn build(app: &AppHandle, from_tray: bool) -> tauri::Result<Menu<Wry>> {
         .item(&submenu(app, "www", www)?)
         .item(&submenu(app, web.label(), web_menu)?)
         .item(&submenu(app, "PHP", php)?)
-        .item(&submenu(app, db.label(), database)?);
+        .item(&submenu(app, db.label(), database)?)
+        .item(&submenu(
+            app,
+            "Lenguajes",
+            languages
+                .iter()
+                .map(|m| Box::new(m.clone()) as Item)
+                .collect(),
+        )?);
     for menu in &optional {
         builder = builder.item(menu);
     }
@@ -588,6 +818,15 @@ async fn run(app: &AppHandle, id: &str) -> Result<(), AppError> {
             }
             return Ok(());
         }
+        "share_stop_all" => {
+            core.stop_all_shares().await;
+            return Ok(());
+        }
+        "add_all" => {
+            let message = core.install_missing().await?;
+            tray::show_info(app, &message);
+            return Ok(());
+        }
         "procfile_restart" => {
             core.stop_procfile().await;
             return core.start_procfile().await;
@@ -614,6 +853,81 @@ async fn run(app: &AppHandle, id: &str) -> Result<(), AppError> {
         tray::show_main(app);
         let _ = app.emit("ui:create-site", preset);
         return Ok(());
+    }
+    if let Some(name) = id.strip_prefix("share:") {
+        if core.shares().iter().any(|s| s.site == name) {
+            core.stop_share(name).await;
+            return Ok(());
+        }
+        let url = core.share_site(name).await?;
+        open_url(app, &url)?;
+        tray::show_info(
+            app,
+            &format!(
+                "{name} se ve en internet en:\n{url}\n\nCualquiera con el enlace puede verlo. Se corta al dejar de compartir, al detener todo o al salir."
+            ),
+        );
+        return Ok(());
+    }
+    if let Some(rest) = id.strip_prefix("phpset:") {
+        let mut settings = core.php_settings();
+        match rest.split_once(':') {
+            Some(("memory", v)) => settings.memory_limit = v.into(),
+            Some(("upload", v)) => settings.upload_max_filesize = v.into(),
+            Some(("time", v)) => {
+                settings.max_execution_time =
+                    v.parse().map_err(|_| AppError::InvalidInput(id.into()))?
+            }
+            _ if rest == "errors" => settings.display_errors = !settings.display_errors,
+            _ if rest == "xdebug" => {
+                let message = core.set_xdebug(!settings.xdebug).await?;
+                tray::show_info(app, &message);
+                return Ok(());
+            }
+            _ => return Err(AppError::InvalidInput(id.into())),
+        }
+        return core.set_php_settings(settings).await;
+    }
+    if let Some(rest) = id.strip_prefix("rtver:") {
+        let (key, version) = rest
+            .split_once(':')
+            .ok_or_else(|| AppError::InvalidInput(id.into()))?;
+        let rt: Runtime = serde_json::from_value(serde_json::Value::String(key.into()))
+            .map_err(|_| AppError::InvalidInput(id.into()))?;
+        return core.set_runtime_version(rt, version);
+    }
+    if let Some(name) = id.strip_prefix("app:") {
+        return match name {
+            "vscode" => core.launch_app(App::Vscode, &[slash(&core.root().join("www"))]),
+            _ => core.launch_app(App::Dbeaver, &[]),
+        };
+    }
+    if let Some(hours) = id.strip_prefix("backupevery:") {
+        return core.set_backup_every_hours(
+            hours
+                .parse()
+                .map_err(|_| AppError::InvalidInput(id.into()))?,
+        );
+    }
+    if let Some(editor) = id.strip_prefix("editor:") {
+        let editor: Editor = serde_json::from_value(serde_json::Value::String(editor.into()))
+            .map_err(|_| AppError::InvalidInput(id.into()))?;
+        return core.set_editor(editor);
+    }
+    if let Some(terminal) = id.strip_prefix("terminal:") {
+        let terminal: TerminalApp =
+            serde_json::from_value(serde_json::Value::String(terminal.into()))
+                .map_err(|_| AppError::InvalidInput(id.into()))?;
+        return core.set_terminal_app(terminal);
+    }
+    if let Some(name) = id.strip_prefix("profile:") {
+        let message = core.apply_profile(name).await?;
+        let _ = app.emit("settings:changed", ());
+        tray::show_info(app, &message);
+        return Ok(());
+    }
+    if let Some(name) = id.strip_prefix("profile-del:") {
+        return core.delete_profile(name);
     }
     if let Some(template) = id.strip_prefix("create-tpl:") {
         tray::show_main(app);

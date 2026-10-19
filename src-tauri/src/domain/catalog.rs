@@ -333,6 +333,29 @@ fn as_text(v: &Value) -> Option<String> {
     }
 }
 
+/// La primera versión (`8.3.20`, `11.4.5`) en el nombre de archivo de una
+/// URL.
+pub fn version_in(url: &str) -> Option<String> {
+    let file = url.rsplit('/').next()?;
+    let bytes: Vec<char> = file.chars().collect();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i].is_ascii_digit() {
+            let start = i;
+            while i < bytes.len() && (bytes[i].is_ascii_digit() || bytes[i] == '.') {
+                i += 1;
+            }
+            let candidate: String = bytes[start..i].iter().collect();
+            let candidate = candidate.trim_end_matches('.');
+            if candidate.contains('.') {
+                return Some(candidate.to_string());
+            }
+        }
+        i += 1;
+    }
+    None
+}
+
 /// `releases.json` de windows.php.net: versión y zip NTS x64 de una rama.
 pub fn php_release(json: &str, branch: &str) -> Option<(String, String)> {
     let doc: Value = serde_json::from_str(json).ok()?;

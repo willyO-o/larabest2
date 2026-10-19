@@ -13,8 +13,8 @@ use std::path::{Path, PathBuf};
 
 use minijinja::context;
 
-use super::Core;
 use super::runtimes::{program_dir, program_name};
+use super::Core;
 use crate::domain::{slash, BinaryLayout, Runtime, ServiceId};
 use crate::drivers::{mariadb, templates, RenderContext};
 use crate::error::AppError;

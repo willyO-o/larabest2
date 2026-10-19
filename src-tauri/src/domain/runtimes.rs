@@ -162,7 +162,11 @@ pub fn go_release(json: &str) -> Option<(String, String)> {
         if r.get("stable") != Some(&Value::Bool(true)) {
             return None;
         }
-        let version = r.get("version")?.as_str()?.trim_start_matches("go").to_string();
+        let version = r
+            .get("version")?
+            .as_str()?
+            .trim_start_matches("go")
+            .to_string();
         let file = r.get("files")?.as_array()?.iter().find_map(|f| {
             let field = |k: &str| f.get(k).and_then(Value::as_str);
             (field("os") == Some("windows")
@@ -203,7 +207,8 @@ mod tests {
         assert_eq!(node_release(node, "").as_deref(), Some("v24.11.0"));
         assert_eq!(node_release(node, "20"), None);
 
-        let nuget = r#"{"versions": ["3.12.10", "3.13.8", "3.13.9", "3.14.0", "3.15.0-a1", "3.13.10"]}"#;
+        let nuget =
+            r#"{"versions": ["3.12.10", "3.13.8", "3.13.9", "3.14.0", "3.15.0-a1", "3.13.10"]}"#;
         assert_eq!(python_release(nuget, "3.13").as_deref(), Some("3.13.10"));
         assert_eq!(python_release(nuget, "3.15"), None);
 

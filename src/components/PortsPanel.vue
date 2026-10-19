@@ -11,6 +11,8 @@ const first = ref<HTMLInputElement[]>([])
 const form = ref<PortSettings | null>(null)
 const saving = ref(false)
 const error = ref<string | null>(null)
+/** Aviso al guardar (por ejemplo, los .env de sitios actualizados). */
+const done = ref<string | null>(null)
 
 const open = computed(() => settings.panel === 'ports')
 const dbLabel = computed(() => (settings.settings?.database === 'mysql' ? 'MySQL' : 'MariaDB'))
@@ -51,6 +53,7 @@ watch(open, async (value) => {
     return
   }
   error.value = null
+  done.value = null
   try {
     form.value = await settings.getPorts()
   } catch (e) {
@@ -76,8 +79,10 @@ async function save() {
   saving.value = true
   error.value = null
   try {
-    await settings.savePorts({ ...form.value })
-    settings.panel = null
+    const message = await settings.savePorts({ ...form.value })
+    // Si solo se guardó, se cierra; si se actualizaron sitios, se avisa.
+    if (message === 'Guardado.' || message === 'Sin cambios.') settings.panel = null
+    else done.value = message
   } catch (e) {
     error.value = (e as { message?: string })?.message ?? String(e)
   } finally {
@@ -96,7 +101,7 @@ async function save() {
         </button>
       </header>
 
-      <div v-if="form" class="ports-grid">
+      <div v-if="form && !done" class="ports-grid">
         <label v-for="f in FIELDS" :key="f.key" class="field field-compact">
           <span class="field-label">{{ f.label }}</span>
           <input
@@ -127,9 +132,13 @@ async function save() {
         </label>
       </div>
 
+      <p v-if="done" class="sheet-alert is-ok" role="status">{{ done }}</p>
       <p v-if="error" class="sheet-alert is-error" role="alert">{{ error }}</p>
 
-      <footer class="sheet-foot">
+      <footer v-if="done" class="sheet-foot">
+        <button type="button" class="sheet-btn sheet-btn-main" @click="close">Listo</button>
+      </footer>
+      <footer v-else class="sheet-foot">
         <span class="sheet-note">
           {{ tldError ?? 'Lo que esté en marcha y cambie se reinicia solo.' }}
         </span>

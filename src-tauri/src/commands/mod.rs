@@ -115,9 +115,21 @@ pub async fn settings_set_ports(
     app: AppHandle,
     state: State<'_, AppState>,
     ports: PortSettings,
-) -> Result<(), AppError> {
+) -> Result<String, AppError> {
     let result = state.core.set_port_settings(ports).await;
     let _ = app.emit("settings:changed", ());
+    tray::rebuild(&app);
+    result
+}
+
+/// Guarda la pila actual como perfil (Preferencias → Perfiles).
+#[tauri::command]
+pub async fn profiles_save(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    name: String,
+) -> Result<String, AppError> {
+    let result = state.core.save_profile(&name);
     tray::rebuild(&app);
     result
 }
