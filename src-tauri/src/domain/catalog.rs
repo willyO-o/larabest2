@@ -135,9 +135,10 @@ pub mod urls {
         "https://downloads.mariadb.org/rest-api/mariadb/all-releases/?olderReleases=false";
     pub const POSTGRESQL_VERSIONS: &str = "https://www.postgresql.org/versions.json";
     pub const MONGODB_CURRENT: &str = "https://downloads.mongodb.org/current.json";
-    pub const REDIS_LATEST: &str =
-        "https://api.github.com/repos/redis-windows/redis-windows/releases/latest";
-    pub const MAILPIT_LATEST: &str = "https://api.github.com/repos/axllent/mailpit/releases/latest";
+    /// Páginas `releases/latest` de GitHub (no la API: sin cuenta solo
+    /// permite 60 consultas por hora y por IP, poco para un aula o el CI).
+    pub const REDIS_LATEST: &str = "https://github.com/redis-windows/redis-windows/releases/latest";
+    pub const MAILPIT_LATEST: &str = "https://github.com/axllent/mailpit/releases/latest";
     /// Réplica en fossies.org de los binarios de Apache Lounge (la que usa
     /// Scoop): apachelounge.com bloquea algunas descargas automáticas.
     pub const APACHE_INDEX: &str = "https://fossies.org/windows/www/";
@@ -146,7 +147,13 @@ pub mod urls {
     /// estable de la última versión de MySQL de una rama.
     pub const MYSQL_FORMULA: &str = "https://formulae.brew.sh/api/formula/mysql@8.4.json";
     pub const NODE_INDEX: &str = "https://nodejs.org/dist/index.json";
-    pub const GIT_LATEST: &str = "https://api.github.com/repos/git-for-windows/git/releases/latest";
+    pub const GIT_LATEST: &str = "https://github.com/git-for-windows/git/releases/latest";
+
+    pub fn mingit_zip(tag: &str, version: &str) -> String {
+        format!(
+            "https://github.com/git-for-windows/git/releases/download/{tag}/MinGit-{version}-64-bit.zip"
+        )
+    }
     pub const PHPMYADMIN: &str =
         "https://www.phpmyadmin.net/downloads/phpMyAdmin-latest-all-languages.zip";
 
@@ -368,29 +375,33 @@ pub fn node_lts(json: &str) -> Option<String> {
     })
 }
 
-/// Último release de Git para Windows: la versión y el zip de MinGit de
-/// 64 bits (sin la variante "busybox").
-pub fn mingit_latest(json: &str) -> Option<(String, String)> {
-    let doc: Value = serde_json::from_str(json).ok()?;
-    let tag = doc.get("tag_name")?.as_str()?;
-    let version = tag
-        .trim_start_matches('v')
-        .split(".windows")
-        .next()?
-        .to_string();
-    let url = doc.get("assets")?.as_array()?.iter().find_map(|a| {
-        let name = a.get("name")?.as_str()?;
-        (name.starts_with("MinGit-") && name.ends_with("-64-bit.zip") && !name.contains("busybox"))
-            .then(|| a.get("browser_download_url")?.as_str().map(str::to_string))
-            .flatten()
-    })?;
+/// Git para Windows a partir de su etiqueta (`v2.51.0.windows.1`): la
+/// versión de MinGit (`2.51.0`, o `2.51.0.2` si es la segunda compilación)
+/// y su zip de 64 bits.
+pub fn mingit_from_tag(tag: &str) -> Option<(String, String)> {
+    let rest = tag.strip_prefix('v')?;
+    let (base, build) = rest.split_once(".windows.")?;
+    let version = match build {
+        "1" => base.to_string(),
+        n if !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()) => format!("{base}.{n}"),
+        _ => return None,
+    };
+    let url = urls::mingit_zip(tag, &version);
     Some((version, url))
 }
 
-/// Último release de GitHub (`/releases/latest`): su etiqueta.
-pub fn github_tag(json: &str) -> Option<String> {
-    let doc: Value = serde_json::from_str(json).ok()?;
-    doc.get("tag_name")?.as_str().map(str::to_string)
+/// Último release de GitHub: su etiqueta, de la página `releases/latest`
+/// (enlaces `/releases/tag/<etiqueta>`) o de la respuesta JSON de la API.
+pub fn github_tag(text: &str) -> Option<String> {
+    if let Ok(doc) = serde_json::from_str::<Value>(text) {
+        return doc.get("tag_name")?.as_str().map(str::to_string);
+    }
+    let start = text.find("/releases/tag/")? + "/releases/tag/".len();
+    let tag: String = text[start..]
+        .chars()
+        .take_while(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_'))
+        .collect();
+    (!tag.is_empty()).then_some(tag)
 }
 
 #[cfg(test)]
@@ -510,15 +521,17 @@ mod tests {
             {"version": "v24.9.0", "lts": "Krypton", "files": ["win-x64-zip", "linux-x64"]}
         ]"#;
         assert_eq!(node_lts(node).as_deref(), Some("v24.9.0"));
-        let git = r#"{"tag_name": "v2.51.0.windows.1", "assets": [
-            {"name": "Git-2.51.0-64-bit.exe", "browser_download_url": "https://x/Git.exe"},
-            {"name": "MinGit-2.51.0-busybox-64-bit.zip", "browser_download_url": "https://x/bb.zip"},
-            {"name": "MinGit-2.51.0-64-bit.zip", "browser_download_url": "https://x/MinGit.zip"}
-        ]}"#;
         assert_eq!(
-            mingit_latest(git),
-            Some(("2.51.0".into(), "https://x/MinGit.zip".into()))
+            mingit_from_tag("v2.51.0.windows.1"),
+            Some((
+                "2.51.0".into(),
+                "https://github.com/git-for-windows/git/releases/download/v2.51.0.windows.1/MinGit-2.51.0-64-bit.zip".into()
+            ))
         );
+        assert_eq!(mingit_from_tag("v2.51.0.windows.2").unwrap().0, "2.51.0.2");
+        assert_eq!(mingit_from_tag("2.51.0"), None);
+        let page = r#"<a href="/git-for-windows/git/releases/tag/v2.51.0.windows.1" data-view-component="true">"#;
+        assert_eq!(github_tag(page).as_deref(), Some("v2.51.0.windows.1"));
     }
 
     #[test]

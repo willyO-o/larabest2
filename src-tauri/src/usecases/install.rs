@@ -360,8 +360,10 @@ impl Core {
         };
         let (version, url) = match tool {
             Tool::Git => {
-                let json = self.fetch_text(urls::GIT_LATEST).await?;
-                catalog::mingit_latest(&json).ok_or_else(|| unreadable("GitHub"))?
+                let page = self.fetch_text(urls::GIT_LATEST).await?;
+                catalog::github_tag(&page)
+                    .and_then(|tag| catalog::mingit_from_tag(&tag))
+                    .ok_or_else(|| unreadable("GitHub"))?
             }
             _ => {
                 let json = self.fetch_text(urls::NODE_INDEX).await?;
