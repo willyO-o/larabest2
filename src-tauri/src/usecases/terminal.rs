@@ -14,20 +14,16 @@ use std::path::{Path, PathBuf};
 use minijinja::context;
 
 use super::Core;
-use crate::domain::catalog::Tool;
-use crate::domain::{compare_versions, slash, BinaryLayout, ServiceId};
-use crate::drivers::{exe, mariadb, templates, RenderContext};
+use super::runtimes::{program_dir, program_name};
+use crate::domain::{slash, BinaryLayout, Runtime, ServiceId};
+use crate::drivers::{mariadb, templates, RenderContext};
 use crate::error::AppError;
-use crate::ports::{write_if_changed, FileStore};
-
-/// Carpetas de `bin` de Homebrew, donde `brew install node git` deja sus
-/// programas.
-const BREW_BINS: [&str; 2] = ["/opt/homebrew/bin", "/usr/local/bin"];
+use crate::ports::write_if_changed;
 
 /// Atajos que la app administra en `etc/shell/` (sin extensión). Un atajo
 /// de esta lista que ya no corresponde (por ejemplo `mariadb` al pasar a
 /// MySQL) se borra.
-const SHIMS: [&str; 13] = [
+const SHIMS: [&str; 18] = [
     "php",
     "composer",
     "mariadb",
@@ -39,30 +35,14 @@ const SHIMS: [&str; 13] = [
     "node",
     "npm",
     "npx",
+    "corepack",
+    "python",
+    "pip",
+    "go",
+    "gofmt",
     "git",
     "httpd",
 ];
-
-/// Carpeta con el ejecutable de Node.js o Git dentro de `dir` (una versión
-/// descomprimida): `node.exe` en la raíz o `cmd/git.exe` (MinGit).
-pub fn cli_dir_in(fs: &dyn FileStore, dir: &Path, tool: Tool) -> Option<PathBuf> {
-    let dir = match tool {
-        Tool::Git => dir.join("cmd"),
-        _ => dir.to_path_buf(),
-    };
-    let program = match tool {
-        Tool::Git => "git",
-        _ => "node",
-    };
-    fs.exists(&dir.join(exe(program))).then_some(dir)
-}
-
-fn tool_key(tool: Tool) -> &'static str {
-    match tool {
-        Tool::Git => "git",
-        _ => "node",
-    }
-}
 
 /// Un atajo: el programa real y si necesita el `php.ini` de la app.
 struct Shim {
@@ -73,28 +53,6 @@ struct Shim {
 }
 
 impl Core {
-    /// Carpeta del Node.js o Git instalado: la versión más nueva de
-    /// `bin/node` o `bin/git` (Windows) o la de Homebrew (macOS).
-    pub fn cli_tool_dir(&self, tool: Tool) -> Option<PathBuf> {
-        let deps = self.supervisor.deps();
-        let fs = deps.fs.as_ref();
-        let key = tool_key(tool);
-        match deps.layout {
-            BinaryLayout::Homebrew => BREW_BINS
-                .iter()
-                .map(PathBuf::from)
-                .find(|dir| fs.exists(&dir.join(key))),
-            BinaryLayout::Portable => {
-                let base = deps.paths.bin().join(key);
-                let mut versions = fs.list_dirs(&base).unwrap_or_default();
-                versions.sort_by(|a, b| compare_versions(b, a));
-                versions
-                    .iter()
-                    .find_map(|v| cli_dir_in(fs, &base.join(v), tool))
-            }
-        }
-    }
-
     /// Carpetas de las versiones activas, en el orden en que van en el PATH.
     fn program_dirs(&self, ctx: &RenderContext) -> Vec<PathBuf> {
         let db = ctx.database();
@@ -114,13 +72,14 @@ impl Core {
                 .and_then(|p| p.parent().map(Path::to_path_buf))
         })
         .collect();
-        // Node.js y Git de la app; en macOS los de Homebrew ya suelen estar
-        // en el PATH de la shell, pero así quedan delante.
-        if ctx.layout == BinaryLayout::Portable {
-            for tool in [Tool::Node, Tool::Git] {
-                if let Some(dir) = self.cli_tool_dir(tool) {
-                    dirs.push(dir);
+        // La versión elegida de Node.js, Python, Go y Git (en macOS las
+        // fórmulas versionadas de Homebrew no están en el PATH de la shell).
+        for rt in Runtime::ALL {
+            if let Some(active) = self.runtime_active(rt) {
+                if ctx.layout == BinaryLayout::Portable && rt == Runtime::Python {
+                    dirs.push(active.dir.join("Scripts"));
                 }
+                dirs.push(active.dir);
             }
         }
         dirs
@@ -162,29 +121,25 @@ impl Core {
             );
         }
         let portable = deps.layout == BinaryLayout::Portable;
-        let node = self.cli_tool_dir(Tool::Node);
-        add(
-            "node",
-            node.as_ref().map(|d| d.join(exe("node"))),
-            false,
-            false,
-        );
-        for name in ["npm", "npx"] {
-            let file = if portable {
-                format!("{name}.cmd")
-            } else {
-                name.to_string()
+        for rt in Runtime::ALL {
+            let Some(active) = self.runtime_active(rt) else {
+                continue;
             };
-            add(name, node.as_ref().map(|d| d.join(file)), false, portable);
+            let names = std::iter::once(rt.program()).chain(rt.extra_programs().iter().copied());
+            for name in names {
+                let shim = SHIMS
+                    .iter()
+                    .copied()
+                    .find(|s| *s == name)
+                    .expect("atajo conocido");
+                let file = program_name(deps.layout, rt, name);
+                let target = program_dir(deps.layout, rt, &active.dir, name).join(file);
+                // npm, npx y corepack son .cmd en Windows: se llaman con call.
+                let batch = portable && rt == Runtime::Node && name != "node";
+                add(shim, Some(target), false, batch);
+            }
         }
-        add(
-            "git",
-            self.cli_tool_dir(Tool::Git).map(|d| d.join(exe("git"))),
-            false,
-            false,
-        );
-        // En Windows solo lo que existe; con Homebrew las rutas salen de las
-        // fórmulas instaladas.
+        // Solo lo que existe (pip puede faltar, `corepack` es opcional...).
         shims.retain(|_, shim| !portable || deps.fs.exists(&shim.target));
         shims
     }
@@ -344,7 +299,14 @@ impl Core {
             None => self.supervisor.deps().paths.www(),
         };
         let env = self.terminal_env()?;
-        self.shell.open_terminal(&cwd, &env)
+        let app = self
+            .supervisor
+            .deps()
+            .config
+            .load()
+            .map(|c| c.terminal)
+            .unwrap_or_default();
+        self.shell.open_terminal_with(&cwd, &env, app)
     }
 
     /// `true` si los atajos de `etc/shell` están en el PATH del usuario.
@@ -381,6 +343,8 @@ impl Core {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::drivers::exe;
+    use crate::ports::FileStore;
     use crate::testing::{Harness, MAC_ROOT, ROOT};
 
     #[tokio::test]
@@ -410,7 +374,7 @@ mod tests {
             .fs
             .exists(Path::new(&format!("{ROOT}/etc/shell/mariadb.bat"))));
         assert!(!h.fs.exists(Path::new(&format!("{ROOT}/etc/shell/git.bat"))));
-        assert!(core.cli_tool_dir(Tool::Node).is_some());
+        assert!(core.runtime_active(Runtime::Node).is_some());
         let env = core.terminal_env().unwrap();
         assert!(env["PATH"].contains("C:\\APP\\bin\\node\\24.9.0;"));
     }

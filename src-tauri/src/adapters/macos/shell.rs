@@ -178,6 +178,14 @@ impl ShellLauncher for MacShellLauncher {
             .map(|_| ())
             .map_err(|e| AppError::io(format!("No se pudo abrir {}", slash(path)), e))
     }
+
+    fn launch(&self, program: &Path, args: &[String]) -> Result<(), AppError> {
+        std::process::Command::new(program)
+            .args(args)
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| AppError::io(format!("No se pudo abrir {}", slash(program)), e))
+    }
 }
 
 /// PATH del usuario en macOS: un bloque marcado en `~/.zprofile` (zsh, la

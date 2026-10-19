@@ -60,6 +60,11 @@ impl FakeFs {
 }
 
 impl FileStore for FakeFs {
+    fn copy(&self, from: &Path, to: &Path) -> Result<(), AppError> {
+        let content = self.read_to_string(from)?;
+        self.write(to, &content)
+    }
+
     fn read_to_string(&self, path: &Path) -> Result<String, AppError> {
         self.files
             .lock()
@@ -531,6 +536,8 @@ impl HostsManager for FakeHosts {
 pub struct FakeShell {
     pub opened: Mutex<Vec<(String, HashMap<String, String>)>>,
     pub edited: Mutex<Vec<String>>,
+    /// Programas lanzados con `launch`: programa y argumentos.
+    pub launched: Mutex<Vec<(String, Vec<String>)>>,
 }
 
 impl ShellLauncher for FakeShell {
@@ -541,6 +548,14 @@ impl ShellLauncher for FakeShell {
 
     fn open_in_editor(&self, path: &Path) -> Result<(), AppError> {
         self.edited.lock().unwrap().push(slash(path));
+        Ok(())
+    }
+
+    fn launch(&self, program: &Path, args: &[String]) -> Result<(), AppError> {
+        self.launched
+            .lock()
+            .unwrap()
+            .push((slash(program), args.to_vec()));
         Ok(())
     }
 }

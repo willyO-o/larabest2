@@ -17,12 +17,12 @@ use crate::ports::ProcessSpec;
 const BREW_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 const BREW_PATHS: [&str; 2] = ["/opt/homebrew/bin/brew", "/usr/local/bin/brew"];
 
-struct Progress<'a> {
+pub(super) struct Progress<'a> {
     core: &'a Core,
-    package: Package,
+    pub(super) package: Package,
 }
 
-impl Progress<'_> {
+impl<'a> Progress<'a> {
     fn emit(&self, step: impl Into<String>, state: ProgressState, detail: Option<String>) {
         self.core
             .supervisor
@@ -37,7 +37,23 @@ impl Progress<'_> {
             });
     }
 
-    fn step(&self, step: impl Into<String>) {
+    pub(super) fn new(core: &'a Core, package: Package) -> Self {
+        Progress { core, package }
+    }
+
+    pub(super) fn done(&self, message: &str) {
+        self.emit("Listo", ProgressState::Done, Some(message.to_string()));
+    }
+
+    pub(super) fn failed(&self, message: &str) {
+        self.emit(
+            "No se pudo agregar",
+            ProgressState::Failed,
+            Some(message.to_string()),
+        );
+    }
+
+    pub(super) fn step(&self, step: impl Into<String>) {
         self.emit(step, ProgressState::Running, None);
     }
 }
@@ -46,6 +62,8 @@ impl Progress<'_> {
 fn brew_formula(service: ServiceId, branch: &str) -> String {
     match service {
         ServiceId::Apache => "httpd".into(),
+        // La rama más nueva es la fórmula `php` sin versión.
+        ServiceId::Php if branch == catalog::PHP_LATEST => "php".into(),
         ServiceId::Php => format!("php@{branch}"),
         ServiceId::Mariadb => format!("mariadb@{branch}"),
         ServiceId::Mysql => format!("mysql@{branch}"),
@@ -76,6 +94,10 @@ impl Core {
                 BinaryLayout::Homebrew => self.install_brew(&progress, service, branch).await,
             },
             PackageKind::Tool(tool) => self.install_tool(&progress, tool).await,
+            PackageKind::Runtime { runtime, branch } => {
+                self.install_runtime(&progress, runtime, branch).await
+            }
+            PackageKind::App(app) => self.install_app(&progress, app).await,
         };
         match result {
             Ok(message) => {
@@ -96,7 +118,7 @@ impl Core {
     }
 
     /// Descarga un texto pequeño (JSON o HTML) de una fuente de versiones.
-    async fn fetch_text(&self, url: &str) -> Result<String, AppError> {
+    pub(super) async fn fetch_text(&self, url: &str) -> Result<String, AppError> {
         let deps = self.supervisor.deps();
         let file = deps.paths.downloads().join("index.txt");
         self.downloader.download(url, &file).await?;
@@ -231,7 +253,7 @@ impl Core {
         Ok(format!("{} {version} instalado.", service.label()))
     }
 
-    async fn extract(
+    pub(super) async fn extract(
         &self,
         archive: &Path,
         dest: &Path,
@@ -257,8 +279,9 @@ impl Core {
         branch: &str,
     ) -> Result<String, AppError> {
         let formula = brew_formula(service, branch);
+        let tap = (service == ServiceId::Mongodb).then_some("mongodb/brew");
         let installed = self
-            .brew_install(progress, &formula, service == ServiceId::Mongodb)
+            .brew_install(progress, &["install", &formula], tap)
             .await;
         let version = self
             .versions(service)?
@@ -275,13 +298,14 @@ impl Core {
         })
     }
 
-    /// `brew install <fórmula>`; con `mongodb_tap`, antes agrega el tap de
-    /// MongoDB.
-    async fn brew_install(
+    /// `brew <args>` (por ejemplo `install php@8.4` o `install --cask
+    /// visual-studio-code`); con `tap`, antes lo agrega y lo marca de
+    /// confianza.
+    pub(super) async fn brew_install(
         &self,
         progress: &Progress<'_>,
-        formula: &str,
-        mongodb_tap: bool,
+        args: &[&str],
+        tap: Option<&str>,
     ) -> Result<(), AppError> {
         let deps = self.supervisor.deps();
         let brew = BREW_PATHS
@@ -308,104 +332,33 @@ impl Core {
             spec
         };
         let runner = deps.runner.as_ref();
-        if mongodb_tap {
-            progress.step("Agregando el tap de MongoDB");
-            runner
-                .run(&brew_spec(&["tap", "mongodb/brew"]), BREW_TIMEOUT)
-                .await?;
+        if let Some(tap) = tap {
+            progress.step(format!("Agregando el tap {tap}"));
+            runner.run(&brew_spec(&["tap", tap]), BREW_TIMEOUT).await?;
             // Homebrew 5 pide confiar en los tap de terceros; antes no existe.
-            let _ = runner
-                .run(&brew_spec(&["trust", "mongodb/brew"]), BREW_TIMEOUT)
-                .await;
+            let _ = runner.run(&brew_spec(&["trust", tap]), BREW_TIMEOUT).await;
         }
-        progress.step(format!(
-            "brew install {formula} (puede tardar varios minutos)"
-        ));
-        let out = runner
-            .run(&brew_spec(&["install", formula]), BREW_TIMEOUT)
-            .await?;
+        let command = format!("brew {}", args.join(" "));
+        progress.step(format!("{command} (puede tardar varios minutos)"));
+        let out = runner.run(&brew_spec(args), BREW_TIMEOUT).await?;
         if !out.success() {
             let text = out.text();
             let lines: Vec<&str> = text.lines().collect();
             return Err(AppError::Process(format!(
-                "brew install {formula} falló:\n{}",
+                "{command} falló:\n{}",
                 lines[lines.len().saturating_sub(8)..].join("\n")
             )));
         }
         Ok(())
     }
 
-    /// Node.js y Git: el zip oficial en `bin/node/<versión>/` o
-    /// `bin/git/<versión>/` en Windows; `brew install` en macOS.
-    async fn install_cli_tool(
-        &self,
-        progress: &Progress<'_>,
-        tool: Tool,
-    ) -> Result<String, AppError> {
-        let deps = self.supervisor.deps();
-        let label = progress.package.label;
-        let key = match tool {
-            Tool::Git => "git",
-            _ => "node",
-        };
-        if deps.layout == BinaryLayout::Homebrew {
-            self.brew_install(progress, key, false).await?;
-            return Ok(format!("{label} instalado con Homebrew."));
-        }
-        progress.step(format!("Buscando la última versión de {label}"));
-        let unreadable = |source: &str| {
-            AppError::Process(format!(
-                "No se encontró la versión en {source}. Vuelve a intentarlo más tarde."
-            ))
-        };
-        let (version, url) = match tool {
-            Tool::Git => {
-                let page = self.fetch_text(urls::GIT_LATEST).await?;
-                catalog::github_tag(&page)
-                    .and_then(|tag| catalog::mingit_from_tag(&tag))
-                    .ok_or_else(|| unreadable("GitHub"))?
-            }
-            _ => {
-                let json = self.fetch_text(urls::NODE_INDEX).await?;
-                let tag = catalog::node_lts(&json).ok_or_else(|| unreadable("nodejs.org"))?;
-                let url = urls::node_zip(&tag);
-                (tag.trim_start_matches('v').to_string(), url)
-            }
-        };
-        let base = deps.paths.bin().join(key);
-        let dest = base.join(&version);
-        if super::terminal::cli_dir_in(deps.fs.as_ref(), &dest, tool).is_some() {
-            return Ok(format!("{label} {version} ya estaba instalado."));
-        }
-        progress.step(format!("Descargando {label} {version}"));
-        let zip = deps.paths.downloads().join(format!("{key}-{version}.zip"));
-        self.downloader.download(&url, &zip).await?;
-        progress.step(format!("Extrayendo en {}", slash(&dest)));
-        let extracted = self.extract(&zip, &dest, None).await;
-        let _ = deps.fs.remove_file(&zip);
-        extracted?;
-        if super::terminal::cli_dir_in(deps.fs.as_ref(), &dest, tool).is_none() {
-            let _ = deps.fs.remove_dir_all(&dest);
-            return Err(AppError::Process(format!(
-                "El archivo descargado de {url} no es un {label} válido."
-            )));
-        }
-        // La terminal y los atajos del PATH apuntan a la versión nueva.
-        self.refresh_shims()?;
-        Ok(format!("{label} {version} instalado."))
-    }
-
     /// Adminer, phpMyAdmin y Composer se descargan igual en las dos
     /// plataformas.
     async fn install_tool(&self, progress: &Progress<'_>, tool: Tool) -> Result<String, AppError> {
-        if matches!(tool, Tool::Node | Tool::Git) {
-            return self.install_cli_tool(progress, tool).await;
-        }
         let deps = self.supervisor.deps();
         let label = progress.package.label;
         progress.step(format!("Descargando {label}"));
         match tool {
-            Tool::Node | Tool::Git => unreachable!("se instalan arriba"),
             Tool::Adminer => {
                 self.downloader
                     .download(urls::ADMINER, &deps.paths.adminer_php())
@@ -415,6 +368,7 @@ impl Core {
                 self.downloader
                     .download(super::COMPOSER_URL, &deps.paths.composer_phar())
                     .await?;
+                self.refresh_shims()?;
             }
             Tool::Phpmyadmin => {
                 let zip = deps.paths.downloads().join("phpmyadmin.zip");
@@ -465,12 +419,15 @@ impl Core {
                         tools::installed(deps.fs.as_ref(), &deps.paths, tools::PHPMYADMIN)
                     }
                     Tool::Composer => deps.fs.exists(&deps.paths.composer_phar()),
-                    Tool::Node | Tool::Git => {
-                        return self.cli_tool_dir(tool).map(|_| "instalado".to_string())
-                    }
                 };
                 installed.then(|| "instalado".to_string())
             }
+            PackageKind::Runtime { runtime, branch } => self
+                .runtime_versions(runtime)
+                .into_iter()
+                .find(|v| branch.is_empty() || v.version.starts_with(&format!("{branch}.")))
+                .map(|v| v.version),
+            PackageKind::App(app) => self.app_program(app).map(|_| "instalado".to_string()),
         }
     }
 }

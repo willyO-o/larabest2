@@ -23,6 +23,66 @@ impl ShellLauncher for WindowsShellLauncher {
             .map_err(|e| AppError::io(format!("No se pudo abrir la terminal en {}", slash(cwd)), e))
     }
 
+    /// PowerShell o Windows Terminal. Windows Terminal puede abrir la
+    /// pestaña en un proceso que ya estaba abierto (sin heredar el
+    /// entorno), así que el entorno va en un `.cmd` que se ejecuta al abrir.
+    fn open_terminal_with(
+        &self,
+        cwd: &Path,
+        env: &HashMap<String, String>,
+        app: crate::domain::TerminalApp,
+    ) -> Result<(), AppError> {
+        use crate::domain::TerminalApp;
+        let fail = |e: std::io::Error| {
+            AppError::io(format!("No se pudo abrir la terminal en {}", slash(cwd)), e)
+        };
+        match app {
+            TerminalApp::Cmd => self.open_terminal(cwd, env),
+            TerminalApp::Powershell => std::process::Command::new(
+                system32()
+                    .join("WindowsPowerShell")
+                    .join("v1.0")
+                    .join("powershell.exe"),
+            )
+            .arg("-NoExit")
+            .current_dir(cwd)
+            .envs(env)
+            .creation_flags(CREATE_NEW_CONSOLE)
+            .spawn()
+            .map(|_| ())
+            .map_err(fail),
+            TerminalApp::Wt => {
+                let script = std::env::temp_dir().join("larabest-terminal.cmd");
+                let mut text = String::from("@echo off\r\n");
+                for (key, value) in env {
+                    text.push_str(&format!("set \"{key}={value}\"\r\n"));
+                }
+                text.push_str(&format!("cd /d \"{}\"\r\n", cwd.display()));
+                std::fs::write(&script, text).map_err(fail)?;
+                let launched = std::process::Command::new("wt.exe")
+                    .arg("-d")
+                    .arg(cwd)
+                    .arg(system32().join("cmd.exe"))
+                    .arg("/k")
+                    .arg(&script)
+                    .spawn();
+                match launched {
+                    Ok(_) => Ok(()),
+                    // Sin Windows Terminal, la consola de siempre.
+                    Err(_) => self.open_terminal(cwd, env),
+                }
+            }
+        }
+    }
+
+    fn launch(&self, program: &Path, args: &[String]) -> Result<(), AppError> {
+        std::process::Command::new(program)
+            .args(args)
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| AppError::io(format!("No se pudo abrir {}", slash(program)), e))
+    }
+
     /// El Bloc de notas entiende los saltos de línea de Unix desde Windows 10
     /// 1809.
     fn open_in_editor(&self, path: &Path) -> Result<(), AppError> {

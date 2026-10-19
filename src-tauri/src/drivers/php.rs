@@ -55,6 +55,42 @@ fn fpm_spec(ctx: &RenderContext) -> Result<ProcessSpec, AppError> {
     )
 }
 
+/// Rama de una versión de PHP ("8.4.13" → "8.4").
+pub fn branch(version: &str) -> String {
+    version.split('.').take(2).collect::<Vec<_>>().join(".")
+}
+
+/// Xdebug descargado para la versión activa de PHP: `ext/php_xdebug.dll`
+/// en Windows; en macOS el `xdebug.so` de la fórmula
+/// `shivammathur/extensions/xdebug@<rama>`.
+pub fn xdebug_path(ctx: &RenderContext) -> Option<PathBuf> {
+    let install = ctx.install(ServiceId::Php).ok()?;
+    match ctx.layout {
+        BinaryLayout::Portable => {
+            let dll = PathBuf::from(&install.path).join("ext").join("php_xdebug.dll");
+            ctx.fs.exists(&dll).then_some(dll)
+        }
+        BinaryLayout::Homebrew => {
+            let formula = format!("xdebug@{}", branch(&install.version));
+            ["/opt/homebrew/Cellar", "/usr/local/Cellar"]
+                .iter()
+                .map(|c| PathBuf::from(c).join(&formula))
+                .flat_map(|dir| {
+                    let kegs = ctx.fs.list_dirs(&dir).unwrap_or_default();
+                    kegs.into_iter().map(move |k| dir.join(k).join("xdebug.so"))
+                })
+                .find(|so| ctx.fs.exists(so))
+        }
+    }
+}
+
+/// Puerto donde el IDE espera a Xdebug: 9003 si PHP no lo usa; si no, el
+/// siguiente libre después de los de PHP.
+pub fn xdebug_port(ctx: &RenderContext) -> u16 {
+    let used = ctx.php_ports();
+    (9003..u16::MAX).find(|p| !used.contains(p)).unwrap_or(9003)
+}
+
 /// `php` de línea de comandos de la versión activa, con el mismo `php.ini`
 /// y los ajustes propios que usa el servidor (por ejemplo para Composer).
 pub fn cli_spec(
@@ -147,7 +183,21 @@ impl ServiceDriver for PhpDriver {
                 ext_dir => portable.then(|| format!("{}/ext", install.path)),
                 logs => slash(&ctx.paths.logs()),
                 tmp => slash(&ctx.paths.tmp()),
-                extensions => ctx.config.php_extensions(),
+                // Xdebug va como zend_extension, nunca como extension.
+                extensions => ctx
+                    .config
+                    .php_extensions()
+                    .into_iter()
+                    .filter(|e| e != "xdebug")
+                    .collect::<Vec<_>>(),
+                settings => ctx.config.php_settings,
+                xdebug => ctx
+                    .config
+                    .php_settings
+                    .xdebug
+                    .then(|| xdebug_path(ctx).map(|p| slash(&p)))
+                    .flatten(),
+                xdebug_port => xdebug_port(ctx),
                 sendmail => sendmail,
                 smtp_port => portable.then_some(smtp_port),
             },

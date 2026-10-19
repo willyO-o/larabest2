@@ -5,7 +5,7 @@
 use serde::Serialize;
 use serde_json::Value;
 
-use super::{ProgressState, ServiceId};
+use super::{ProgressState, Runtime, ServiceId};
 
 /// Carga de `install:progress` mientras se agrega un paquete.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -39,6 +39,69 @@ pub enum PackageKind {
     },
     /// Herramienta que se copia en `bin/`.
     Tool(Tool),
+    /// Un lenguaje o herramienta de línea de comandos con versiones
+    /// (`bin/node/<versión>/`). `branch` como en `Service`.
+    Runtime {
+        runtime: Runtime,
+        branch: &'static str,
+    },
+    /// Programa de escritorio o auxiliar (VS Code, DBeaver, cloudflared).
+    App(App),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum App {
+    /// Editor; en Windows en modo portable dentro de `bin/vscode`.
+    Vscode,
+    /// Cliente de bases de datos de escritorio (como HeidiSQL en Laragon).
+    Dbeaver,
+    /// Túnel para compartir un sitio por internet (Compartir).
+    Cloudflared,
+}
+
+impl App {
+    pub fn key(self) -> &'static str {
+        match self {
+            App::Vscode => "vscode",
+            App::Dbeaver => "dbeaver",
+            App::Cloudflared => "cloudflared",
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            App::Vscode => "VS Code",
+            App::Dbeaver => "DBeaver",
+            App::Cloudflared => "cloudflared",
+        }
+    }
+
+    /// Ejecutable dentro de `bin/<app>/` en Windows.
+    pub fn portable_program(self) -> &'static str {
+        match self {
+            App::Vscode => "Code.exe",
+            App::Dbeaver => "dbeaver.exe",
+            App::Cloudflared => "cloudflared.exe",
+        }
+    }
+
+    /// Homebrew: `(cask, nombre)`. Las apps de escritorio son cask.
+    pub fn brew(self) -> (bool, &'static str) {
+        match self {
+            App::Vscode => (true, "visual-studio-code"),
+            App::Dbeaver => (true, "dbeaver-community"),
+            App::Cloudflared => (false, "cloudflared"),
+        }
+    }
+
+    /// Aplicación de macOS (para `open -a`).
+    pub fn mac_app(self) -> Option<&'static str> {
+        match self {
+            App::Vscode => Some("Visual Studio Code"),
+            App::Dbeaver => Some("DBeaver"),
+            App::Cloudflared => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,10 +109,6 @@ pub enum Tool {
     Adminer,
     Phpmyadmin,
     Composer,
-    /// Node.js y npm para la terminal (Vite, Laravel Breeze...).
-    Node,
-    /// Git para la terminal (en Windows, MinGit).
-    Git,
 }
 
 const fn service(
@@ -67,21 +126,65 @@ const fn service(
 
 impl Package {
     /// Grupo en el menú Agregar: 0 la pila base, 1 los servicios
-    /// opcionales y 2 las herramientas.
+    /// opcionales, 2 las herramientas web, 3 los lenguajes y 4 los
+    /// programas de escritorio.
     pub fn group(&self) -> u8 {
         match self.kind {
             PackageKind::Service { service, .. } if service.is_optional() => 1,
             PackageKind::Service { .. } => 0,
             PackageKind::Tool(_) => 2,
+            PackageKind::Runtime { .. } => 3,
+            PackageKind::App(_) => 4,
         }
+    }
+
+    /// "Agregar todo" deja fuera los programas de escritorio (pesan y no
+    /// hacen falta para servir sitios).
+    pub fn in_add_all(&self) -> bool {
+        !matches!(self.kind, PackageKind::App(_))
     }
 }
 
+const fn runtime(
+    id: &'static str,
+    label: &'static str,
+    runtime: Runtime,
+    branch: &'static str,
+) -> Package {
+    Package {
+        id,
+        label,
+        kind: PackageKind::Runtime { runtime, branch },
+    }
+}
+
+const fn tool(id: &'static str, label: &'static str, tool: Tool) -> Package {
+    Package {
+        id,
+        label,
+        kind: PackageKind::Tool(tool),
+    }
+}
+
+const fn app(id: &'static str, label: &'static str, app: App) -> Package {
+    Package {
+        id,
+        label,
+        kind: PackageKind::App(app),
+    }
+}
+
+/// La rama de PHP más nueva: en Homebrew es la fórmula `php` sin versión.
+pub const PHP_LATEST: &str = "8.5";
+
 /// El catálogo, en el orden del menú. Las versiones elegidas para la app:
-/// PHP 8.3 y 8.4, MariaDB 11.4 (LTS) y PostgreSQL 17.
-pub const PACKAGES: [Package; 15] = [
+/// PHP 8.2 a 8.5, MariaDB 11.4 (LTS), MySQL 8.4 (LTS), PostgreSQL 17,
+/// Node.js 24 y 22 (LTS), Python 3.13.
+pub const PACKAGES: [Package; 23] = [
+    service("php-8.5", "PHP 8.5", ServiceId::Php, "8.5"),
     service("php-8.4", "PHP 8.4", ServiceId::Php, "8.4"),
     service("php-8.3", "PHP 8.3", ServiceId::Php, "8.3"),
+    service("php-8.2", "PHP 8.2", ServiceId::Php, "8.2"),
     service("nginx", "Nginx", ServiceId::Nginx, ""),
     service("apache", "Apache", ServiceId::Apache, ""),
     service("mariadb-11.4", "MariaDB 11.4", ServiceId::Mariadb, "11.4"),
@@ -95,31 +198,17 @@ pub const PACKAGES: [Package; 15] = [
     service("redis", "Redis", ServiceId::Redis, ""),
     service("mongodb", "MongoDB", ServiceId::Mongodb, ""),
     service("mailpit", "Mailpit", ServiceId::Mailpit, ""),
-    Package {
-        id: "adminer",
-        label: "Adminer",
-        kind: PackageKind::Tool(Tool::Adminer),
-    },
-    Package {
-        id: "phpmyadmin",
-        label: "phpMyAdmin",
-        kind: PackageKind::Tool(Tool::Phpmyadmin),
-    },
-    Package {
-        id: "composer",
-        label: "Composer",
-        kind: PackageKind::Tool(Tool::Composer),
-    },
-    Package {
-        id: "node",
-        label: "Node.js (LTS)",
-        kind: PackageKind::Tool(Tool::Node),
-    },
-    Package {
-        id: "git",
-        label: "Git",
-        kind: PackageKind::Tool(Tool::Git),
-    },
+    tool("adminer", "Adminer", Tool::Adminer),
+    tool("phpmyadmin", "phpMyAdmin", Tool::Phpmyadmin),
+    tool("composer", "Composer", Tool::Composer),
+    runtime("node-24", "Node.js 24 (LTS)", Runtime::Node, "24"),
+    runtime("node-22", "Node.js 22 (LTS)", Runtime::Node, "22"),
+    runtime("python-3.13", "Python 3.13", Runtime::Python, "3.13"),
+    runtime("go", "Go", Runtime::Go, ""),
+    runtime("git", "Git", Runtime::Git, ""),
+    app("vscode", "VS Code", App::Vscode),
+    app("dbeaver", "DBeaver", App::Dbeaver),
+    app("cloudflared", "cloudflared (Compartir)", App::Cloudflared),
 ];
 
 pub fn find(id: &str) -> Option<Package> {
@@ -147,6 +236,35 @@ pub mod urls {
     /// estable de la última versión de MySQL de una rama.
     pub const MYSQL_FORMULA: &str = "https://formulae.brew.sh/api/formula/mysql@8.4.json";
     pub const NODE_INDEX: &str = "https://nodejs.org/dist/index.json";
+    pub const PYTHON_VERSIONS: &str = "https://api.nuget.org/v3-flatcontainer/python/index.json";
+    pub const GO_RELEASES: &str = "https://go.dev/dl/?mode=json";
+    pub const XDEBUG_LATEST: &str = "https://pecl.php.net/rest/r/xdebug/latest.txt";
+    pub const VSCODE_ZIP: &str =
+        "https://update.code.visualstudio.com/latest/win32-x64-archive/stable";
+    pub const DBEAVER_ZIP: &str =
+        "https://dbeaver.io/files/dbeaver-ce-latest-win32.win32.x86_64.zip";
+    pub const CLOUDFLARED_EXE: &str =
+        "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe";
+
+    /// Paquete nuget de Python: un zip con la instalación completa en
+    /// `tools/`.
+    pub fn python_nupkg(version: &str) -> String {
+        format!("https://api.nuget.org/v3-flatcontainer/python/{version}/python.{version}.nupkg")
+    }
+
+    pub fn go_zip(file: &str) -> String {
+        format!("https://go.dev/dl/{file}")
+    }
+
+    /// DLL de Xdebug para Windows (PECL): primero la réplica nueva de
+    /// downloads.php.net y después la de windows.php.net.
+    pub fn xdebug_zips(version: &str, php_branch: &str, vs: &str) -> [String; 2] {
+        let file = format!("php_xdebug-{version}-{php_branch}-nts-{vs}-x64.zip");
+        [
+            format!("https://downloads.php.net/~windows/pecl/releases/xdebug/{version}/{file}"),
+            format!("https://windows.php.net/downloads/pecl/releases/xdebug/{version}/{file}"),
+        ]
+    }
     pub const GIT_LATEST: &str = "https://github.com/git-for-windows/git/releases.atom";
 
     pub fn mingit_zip(tag: &str, version: &str) -> String {
@@ -512,7 +630,11 @@ mod tests {
     #[test]
     fn packages_are_grouped_for_the_menu() {
         let groups: Vec<u8> = PACKAGES.iter().map(Package::group).collect();
-        assert_eq!(groups, vec![0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 2]);
+        assert_eq!(
+            groups,
+            vec![0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 3, 3, 3, 3, 3, 4, 4, 4]
+        );
+        assert!(groups.windows(2).all(|w| w[0] <= w[1]));
     }
 
     #[test]

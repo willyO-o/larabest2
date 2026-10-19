@@ -4,12 +4,15 @@ mod backups;
 mod create_site;
 mod install;
 mod preferences;
+mod php_settings;
 mod procfile;
+pub mod runtimes;
 pub mod sites;
 mod ssl;
 pub mod terminal;
 
 pub use create_site::{SiteTemplate, COMPOSER_URL, WORDPRESS_URL};
+pub use php_settings::{EXECUTION_TIMES, MEMORY_LIMITS, UPLOAD_SIZES};
 pub use preferences::PortSettings;
 pub use procfile::Status as ProcfileStatus;
 
@@ -301,7 +304,10 @@ impl Core {
                     .strip_prefix("php_")
                     .and_then(|n| n.strip_suffix(".dll"))
                 {
-                    names.insert(name.to_string());
+                    // Xdebug se activa en Ajustes rápidos (zend_extension).
+                    if name != "xdebug" {
+                        names.insert(name.to_string());
+                    }
                 }
             }
         }
@@ -682,7 +688,20 @@ impl Core {
     }
 
     /// Abre un archivo de configuración o log en el editor del sistema.
+    /// Con Preferencias → Editor → VS Code (si está), en VS Code.
     pub fn open_in_editor(&self, path: &std::path::Path) -> Result<(), AppError> {
+        let editor = self
+            .supervisor
+            .deps()
+            .config
+            .load()
+            .map(|c| c.editor)
+            .unwrap_or_default();
+        if editor == crate::domain::Editor::Vscode
+            && self.app_program(crate::domain::catalog::App::Vscode).is_some()
+        {
+            return self.launch_app(crate::domain::catalog::App::Vscode, &[slash(path)]);
+        }
         self.shell.open_in_editor(path)
     }
 }

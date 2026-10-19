@@ -39,6 +39,15 @@ impl FileStore for StdFileStore {
             .map_err(|e| AppError::io(format!("No se pudo escribir {}", slash(path)), e))
     }
 
+    fn copy(&self, from: &Path, to: &Path) -> Result<(), AppError> {
+        if let Some(parent) = to.parent() {
+            self.create_dir_all(parent)?;
+        }
+        std::fs::copy(from, to)
+            .map(|_| ())
+            .map_err(|e| AppError::io(format!("No se pudo copiar {}", slash(from)), e))
+    }
+
     fn exists(&self, path: &Path) -> bool {
         path.exists()
     }

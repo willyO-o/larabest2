@@ -145,6 +145,19 @@ pub trait ShellLauncher: Send + Sync {
     /// Abre un archivo de texto (configuración o log) en el editor del
     /// sistema: `.conf` y `.cnf` no tienen programa asociado.
     fn open_in_editor(&self, path: &Path) -> Result<(), AppError>;
+    /// Abre la terminal elegida en Preferencias (en Windows: cmd,
+    /// PowerShell o Windows Terminal). Por defecto, la de siempre.
+    fn open_terminal_with(
+        &self,
+        cwd: &Path,
+        env: &HashMap<String, String>,
+        _app: crate::domain::TerminalApp,
+    ) -> Result<(), AppError> {
+        self.open_terminal(cwd, env)
+    }
+    /// Lanza un programa de escritorio (VS Code, DBeaver) sin esperarlo y
+    /// sin atarlo a la app: sigue abierto aunque se cierre la app.
+    fn launch(&self, program: &Path, args: &[String]) -> Result<(), AppError>;
 }
 
 /// PATH del usuario (fuera de la app). Solo se toca si se pide desde
@@ -176,6 +189,8 @@ pub trait FileStore: Send + Sync {
     fn remove_file(&self, path: &Path) -> Result<(), AppError>;
     /// Borra una carpeta con todo su contenido (no falla si no existe).
     fn remove_dir_all(&self, path: &Path) -> Result<(), AppError>;
+    /// Copia un archivo (también binario), creando la carpeta destino.
+    fn copy(&self, from: &Path, to: &Path) -> Result<(), AppError>;
     /// Marca un script como ejecutable (en Windows no hace falta).
     fn set_executable(&self, _path: &Path) -> Result<(), AppError> {
         Ok(())

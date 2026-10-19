@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use super::ServiceId;
+use super::{RuntimeVersions, ServiceId};
 
 /// Versión elegida por servicio. `None` significa "la más reciente instalada".
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -130,6 +130,68 @@ impl DatabaseServer {
     }
 }
 
+/// Ajustes rápidos de PHP (Menú → PHP → Ajustes rápidos), como los de
+/// Laragon. Van al `php.ini` generado; `user.ini` sigue teniendo prioridad.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct PhpSettings {
+    pub display_errors: bool,
+    pub memory_limit: String,
+    /// También fija `post_max_size`.
+    pub upload_max_filesize: String,
+    /// Segundos; 0 es sin límite.
+    pub max_execution_time: u32,
+    /// Cargar Xdebug (si está descargado para la versión activa).
+    pub xdebug: bool,
+}
+
+impl Default for PhpSettings {
+    fn default() -> Self {
+        PhpSettings {
+            display_errors: true,
+            memory_limit: "512M".into(),
+            upload_max_filesize: "64M".into(),
+            max_execution_time: 120,
+            xdebug: false,
+        }
+    }
+}
+
+/// Con qué se abren las configuraciones y los logs.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Editor {
+    /// Bloc de notas en Windows, TextEdit en macOS.
+    #[default]
+    System,
+    /// VS Code (el de Agregar o el instalado).
+    Vscode,
+}
+
+/// Qué abre el botón Terminal en Windows (en macOS siempre Terminal.app).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TerminalApp {
+    #[default]
+    Cmd,
+    Powershell,
+    /// Windows Terminal (`wt.exe`), con pestañas.
+    Wt,
+}
+
+/// Un perfil de pila guardado: servidor web, motor de base de datos y
+/// versiones (Preferencias → Perfiles).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StackProfile {
+    pub name: String,
+    pub web_server: WebServer,
+    pub database_server: DatabaseServer,
+    pub versions: ActiveVersions,
+    #[serde(default)]
+    pub runtimes: RuntimeVersions,
+}
+
 /// Contraseña de root de MariaDB y de MySQL: cada motor tiene sus datos.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -205,6 +267,14 @@ pub struct AppConfig {
     pub backup_on_stop: bool,
     /// Respaldos que se conservan; los más viejos se borran.
     pub backup_keep: u16,
+    /// Respaldo automático cada tantas horas con el motor en marcha (0: no).
+    pub backup_every_hours: u16,
+    /// Versión activa de Node.js, Python, Go y Git.
+    pub runtimes: RuntimeVersions,
+    pub php_settings: PhpSettings,
+    pub editor: Editor,
+    pub terminal: TerminalApp,
+    pub profiles: Vec<StackProfile>,
 }
 
 impl Default for AppConfig {
@@ -234,6 +304,12 @@ impl Default for AppConfig {
             root_passwords: RootPasswords::default(),
             backup_on_stop: false,
             backup_keep: 10,
+            backup_every_hours: 0,
+            runtimes: RuntimeVersions::default(),
+            php_settings: PhpSettings::default(),
+            editor: Editor::System,
+            terminal: TerminalApp::Cmd,
+            profiles: Vec::new(),
         }
     }
 }
