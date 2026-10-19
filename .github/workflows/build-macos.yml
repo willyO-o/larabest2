@@ -50,7 +50,8 @@ jobs:
       - run: >-
           brew install nginx httpd php@8.3 php@8.4 mariadb@11.4 postgresql@17
           redis mailpit mongodb/brew/mongodb-community
-      - run: cargo test --manifest-path src-tauri/Cargo.toml --lib -- --ignored --nocapture e2e_homebrew
+      - run: set -o pipefail; cargo test --manifest-path src-tauri/Cargo.toml --lib -- --ignored --nocapture e2e_homebrew 2>&1 | tee "$RUNNER_TEMP/e2e.log"
+        shell: bash
         env:
           LARABEST_E2E_ROOT: ${{ runner.temp }}/larabest-e2e
       - if: failure()
@@ -58,3 +59,16 @@ jobs:
           tail -n 60 "$RUNNER_TEMP"/larabest-e2e/logs/* || true
           # También los puertos de procesos de otros usuarios (root).
           sudo lsof -nP -iTCP -sTCP:LISTEN || true
+      # El log del job no siempre se puede leer desde fuera: el motivo del
+      # fallo queda también como anotación del job.
+      - if: failure()
+        shell: bash
+        run: |
+          {
+            grep -m 5 -A 30 -E "panicked|^error" "$RUNNER_TEMP/e2e.log"
+            echo "---- últimas líneas"
+            tail -n 200 "$RUNNER_TEMP/e2e.log"
+          } > "$RUNNER_TEMP/e2e-summary.txt" || true
+          head -c 60000 "$RUNNER_TEMP/e2e-summary.txt" > "$RUNNER_TEMP/e2e-short.txt"
+          msg=$(sed -e 's/%/%25/g' "$RUNNER_TEMP/e2e-short.txt" | sed -e ':a;N;$!ba;s/\r//g;s/\n/%0A/g')
+          echo "::error title=e2e::${msg}"
