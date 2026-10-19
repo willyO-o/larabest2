@@ -62,7 +62,7 @@ pub fn branch(version: &str) -> String {
 
 /// Xdebug descargado para la versión activa de PHP: `ext/php_xdebug.dll`
 /// en Windows; en macOS el `xdebug.so` de la fórmula
-/// `shivammathur/extensions/xdebug@<rama>`.
+/// `xdebug.so` que deja `pecl install xdebug` para su rama.
 pub fn xdebug_path(ctx: &RenderContext) -> Option<PathBuf> {
     let install = ctx.install(ServiceId::Php).ok()?;
     match ctx.layout {
@@ -73,17 +73,27 @@ pub fn xdebug_path(ctx: &RenderContext) -> Option<PathBuf> {
             ctx.fs.exists(&dll).then_some(dll)
         }
         BinaryLayout::Homebrew => {
-            let formula = format!("xdebug@{}", branch(&install.version));
-            ["/opt/homebrew/Cellar", "/usr/local/Cellar"]
+            // `pecl install xdebug` con el PHP de Homebrew lo deja en
+            // lib/php/pecl/<API de módulos de esa rama>/.
+            let api = module_api(&branch(&install.version))?;
+            ["/opt/homebrew/lib/php/pecl", "/usr/local/lib/php/pecl"]
                 .iter()
-                .map(|c| PathBuf::from(c).join(&formula))
-                .flat_map(|dir| {
-                    let kegs = ctx.fs.list_dirs(&dir).unwrap_or_default();
-                    kegs.into_iter().map(move |k| dir.join(k).join("xdebug.so"))
-                })
+                .map(|base| PathBuf::from(base).join(api).join("xdebug.so"))
                 .find(|so| ctx.fs.exists(so))
         }
     }
+}
+
+/// `PHP_EXTENSION_DIR` de cada rama (API de módulos de Zend): dónde deja
+/// pecl las extensiones del PHP de Homebrew.
+pub fn module_api(branch: &str) -> Option<&'static str> {
+    Some(match branch {
+        "8.2" => "20220829",
+        "8.3" => "20230831",
+        "8.4" => "20240924",
+        "8.5" => "20250925",
+        _ => return None,
+    })
 }
 
 /// Puerto donde el IDE espera a Xdebug: 9003 si PHP no lo usa; si no, el

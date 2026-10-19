@@ -152,7 +152,7 @@ Un comando de Composer usa el PHP y el Composer de la app (se descarga si falta)
 
 **Menú → PHP → Ajustes rápidos**: mostrar errores (`display_errors`), memoria (`memory_limit`), subida máxima (`upload_max_filesize` y `post_max_size`) y tiempo máximo (`max_execution_time`). Van al `php.ini` generado y PHP se reinicia solo; `user.ini` sigue teniendo prioridad.
 
-**Xdebug**: al marcarlo la primera vez se descarga para la versión activa de PHP (en Windows la DLL de PECL en su `ext\`; en macOS `brew install shivammathur/extensions/xdebug@<rama>`) y se carga como `zend_extension` con `xdebug.mode = debug,develop` y `start_with_request = yes`. El IDE escucha en el puerto 9003, salvo que PHP lo use (los 4 `php-cgi` de Windows usan 9000–9003): entonces en el 9004; el menú muestra cuál. En VS Code, la extensión *PHP Debug* con `"port": 9004`.
+**Xdebug**: al marcarlo la primera vez se descarga para la versión activa de PHP (en Windows la DLL de PECL en su `ext\`; en macOS `pecl install xdebug` con el PHP de Homebrew, que lo compila: tarda un par de minutos y usa autoconf) y se carga como `zend_extension` con `xdebug.mode = debug,develop` y `start_with_request = yes`. El IDE escucha en el puerto 9003, salvo que PHP lo use (los 4 `php-cgi` de Windows usan 9000–9003): entonces en el 9004; el menú muestra cuál. En VS Code, la extensión *PHP Debug* con `"port": 9004`.
 
 ### Crear un sitio desde Git
 
@@ -438,7 +438,7 @@ Prepara `bin\` como se describe arriba y crea `www\blog\index.php` con `<?php ph
 - [ ] **Herramientas → Procfile → Editar Procfile**, agrega `srv: php -S 127.0.0.1:8000 -t blog` y **Iniciar todo**: `http://127.0.0.1:8000` responde y el submenú dice «srv: en marcha». **Detener todo** lo detiene.
 - [ ] **Nuevo sitio → Otra… → Symfony** con el nombre `api`: Composer crea `www\api` y `http://api.test` muestra la página de Symfony.
 - [ ] **Agregar → Node.js 22** y **Node.js 24**; **Menú → Lenguajes → Node.js → 22.x**: en la Terminal, `node -v` muestra 22. Igual con Python (`python --version`, `pip --version`) y Go (`go version`).
-- [ ] **PHP → Ajustes rápidos → Memoria → 1G**: `phpinfo()` muestra 1G. **Xdebug** se descarga y `phpinfo()` lo muestra; VS Code con *PHP Debug* se detiene en un punto de interrupción.
+- [ ] **PHP → Ajustes rápidos → Memoria → 1G**: `phpinfo()` muestra 1G. **Xdebug** se descarga (en macOS se compila con pecl) y `phpinfo()` lo muestra; VS Code con *PHP Debug* se detiene en un punto de interrupción.
 - [ ] **Nuevo sitio → Git** con `https://github.com/laravel/laravel.git` y el nombre `clon`: `http://clon.test` muestra Laravel y la base `clon` tiene sus tablas.
 - [ ] **Agregar → cloudflared** y **www → Compartir por internet → blog.test**: se abre `https://…trycloudflare.com` con el sitio, también desde el celular. Desmarcarlo lo corta.
 - [ ] **Preferencias → Perfiles → Guardar…** con "Clase", cambia a PHP 8.3 y Apache, y elige **Clase**: vuelve todo como estaba.

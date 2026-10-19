@@ -95,7 +95,7 @@ impl Core {
     }
 
     /// Windows: la DLL de PECL para la rama de PHP activa, en su `ext/`.
-    /// macOS: `brew install shivammathur/extensions/xdebug@<rama>`.
+    /// macOS: `pecl install xdebug` con el PHP de Homebrew.
     async fn install_xdebug(&self) -> Result<(), AppError> {
         let deps = self.supervisor.deps();
         let ctx = self.supervisor.context()?;
@@ -110,14 +110,32 @@ impl Core {
         let result = async {
             match deps.layout {
                 BinaryLayout::Homebrew => {
-                    let formula = format!("shivammathur/extensions/xdebug@{branch}");
-                    let installed = self
-                        .brew_install(&progress, &["install", &formula], Some("shivammathur/extensions"))
-                        .await;
+                    // pecl compila Xdebug para el PHP de Homebrew; necesita
+                    // autoconf (phpize).
+                    let _ = self.brew_install(&progress, &["install", "autoconf"], None).await;
+                    let pecl = ctx.program(ServiceId::Php, "pecl")?;
+                    let brew_bin = ["/opt/homebrew/bin", "/usr/local/bin"]
+                        .iter()
+                        .find(|b| deps.fs.exists(&PathBuf::from(b).join("brew")))
+                        .copied()
+                        .unwrap_or("/opt/homebrew/bin");
+                    let php_bin = pecl.parent().map(slash).unwrap_or_default();
+                    progress.step(format!("pecl install xdebug para PHP {branch} (compila, puede tardar)"));
+                    let spec = crate::ports::ProcessSpec::new(&pecl, deps.paths.root())
+                        .arg("install")
+                        .arg("xdebug")
+                        .env("PATH", format!("{php_bin}:{brew_bin}:/usr/bin:/bin:/usr/sbin:/sbin"))
+                        .log_to(deps.paths.logs().join("xdebug-install.log"));
+                    let out = deps
+                        .runner
+                        .run(&spec, std::time::Duration::from_secs(15 * 60))
+                        .await?;
                     if php::xdebug_path(&self.supervisor.context()?).is_none() {
-                        installed?;
-                        return Err(AppError::NotFound(format!(
-                            "No se encontró xdebug.so después de brew install {formula}."
+                        let text = out.text();
+                        let lines: Vec<&str> = text.lines().collect();
+                        return Err(AppError::Process(format!(
+                            "pecl install xdebug no dejó xdebug.so para PHP {branch}:\n{}",
+                            lines[lines.len().saturating_sub(8)..].join("\n")
                         )));
                     }
                     Ok(())
