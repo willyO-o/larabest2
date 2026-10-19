@@ -12,6 +12,32 @@ use crate::ports::{write_if_changed, ProcessRunner, ProcessSpec};
 
 pub struct MongodbDriver;
 
+/// Mensaje `OP_MSG` con `{shutdown: 1, $db: "admin"}`: apaga MongoDB en
+/// orden. Desde 127.0.0.1 y sin usuarios no pide autenticación.
+pub fn shutdown_message() -> Vec<u8> {
+    let mut doc = Vec::new();
+    doc.push(0x10); // int32
+    doc.extend_from_slice(b"shutdown\0");
+    doc.extend_from_slice(&1i32.to_le_bytes());
+    doc.push(0x02); // string
+    doc.extend_from_slice(b"$db\0");
+    doc.extend_from_slice(&6i32.to_le_bytes());
+    doc.extend_from_slice(b"admin\0");
+    doc.push(0x00);
+    let mut bson = ((doc.len() + 4) as i32).to_le_bytes().to_vec();
+    bson.extend(doc);
+
+    let mut body = 0u32.to_le_bytes().to_vec(); // flagBits
+    body.push(0); // sección de tipo 0: el documento
+    body.extend(bson);
+    let mut msg = ((body.len() + 16) as i32).to_le_bytes().to_vec();
+    msg.extend_from_slice(&1i32.to_le_bytes()); // requestID
+    msg.extend_from_slice(&0i32.to_le_bytes()); // responseTo
+    msg.extend_from_slice(&2013i32.to_le_bytes()); // OP_MSG
+    msg.extend(body);
+    msg
+}
+
 #[async_trait]
 impl ServiceDriver for MongodbDriver {
     fn id(&self) -> ServiceId {
@@ -70,14 +96,23 @@ impl ServiceDriver for MongodbDriver {
             .log_to(ctx.paths.logs().join("mongodb-console.log"))]
     }
 
-    /// MongoDB cierra en orden con SIGTERM o Ctrl+C. Forzarlo no daña los
-    /// datos (tiene journal), pero obliga a recuperarse al arrancar.
+    /// Primero el comando `shutdown` por su puerto (en Windows el Ctrl+C no
+    /// siempre le llega); si no termina, SIGTERM o Ctrl+C. Forzarlo no daña
+    /// los datos (tiene journal), pero obliga a recuperarse al arrancar.
     async fn stop(
         &self,
         ctx: &RenderContext,
         pids: &[u32],
         runner: &dyn ProcessRunner,
     ) -> Result<(), AppError> {
+        let ports = ctx.ports.clone();
+        let port = ctx.config.mongodb_port;
+        let sent = tokio::task::spawn_blocking(move || ports.send_tcp(port, &shutdown_message()))
+            .await
+            .unwrap_or(false);
+        if sent && wait_for_exit(runner, pids, ctx.stop_grace).await {
+            return Ok(());
+        }
         if pids.iter().any(|&pid| runner.interrupt(pid))
             && wait_for_exit(runner, pids, ctx.stop_grace).await
         {
@@ -101,6 +136,20 @@ impl ServiceDriver for MongodbDriver {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shutdown_is_a_well_formed_op_msg() {
+        let msg = shutdown_message();
+        let len = i32::from_le_bytes(msg[0..4].try_into().unwrap()) as usize;
+        assert_eq!(len, msg.len());
+        assert_eq!(i32::from_le_bytes(msg[12..16].try_into().unwrap()), 2013);
+        let doc = &msg[21..];
+        let doc_len = i32::from_le_bytes(doc[0..4].try_into().unwrap()) as usize;
+        assert_eq!(doc_len, doc.len());
+        assert_eq!(*doc.last().unwrap(), 0);
+        assert!(doc.windows(9).any(|w| w == b"shutdown\0"));
+        assert!(doc.windows(6).any(|w| w == b"admin\0"));
+    }
     use crate::drivers::exe;
     use crate::drivers::test_support::fixture;
 

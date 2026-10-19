@@ -116,6 +116,23 @@ pub trait PortChecker: Send + Sync {
     fn who_uses(&self, port: u16) -> Option<String>;
     /// `true` si algo acepta conexiones TCP en 127.0.0.1:`port`.
     fn is_listening(&self, port: u16) -> bool;
+    /// Envía `payload` por TCP a 127.0.0.1:`port` y cierra (por ejemplo el
+    /// comando `shutdown` de MongoDB). `true` si se pudo enviar.
+    fn send_tcp(&self, port: u16, payload: &[u8]) -> bool {
+        use std::io::Write;
+        let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+        let Ok(mut stream) = std::net::TcpStream::connect_timeout(&addr, Duration::from_secs(2))
+        else {
+            return false;
+        };
+        let _ = stream.set_write_timeout(Some(Duration::from_secs(2)));
+        let sent = stream.write_all(payload).is_ok();
+        // Se espera un momento la respuesta (o el cierre al apagarse).
+        let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
+        let mut buf = [0u8; 256];
+        let _ = std::io::Read::read(&mut stream, &mut buf);
+        sent
+    }
 }
 
 pub trait BinaryProvider: Send + Sync {

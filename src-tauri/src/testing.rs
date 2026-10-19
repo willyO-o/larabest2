@@ -341,6 +341,8 @@ pub struct FakePorts {
     /// Puertos ocupados solo durante las próximas N consultas.
     busy_for: Mutex<HashMap<u16, u32>>,
     listening: Mutex<HashSet<u16>>,
+    /// Lo enviado con `send_tcp`: puerto y bytes.
+    pub sent: Mutex<Vec<(u16, Vec<u8>)>>,
 }
 
 impl FakePorts {
@@ -374,6 +376,11 @@ impl PortChecker for FakePorts {
 
     fn is_listening(&self, port: u16) -> bool {
         self.listening.lock().unwrap().contains(&port)
+    }
+
+    fn send_tcp(&self, port: u16, payload: &[u8]) -> bool {
+        self.sent.lock().unwrap().push((port, payload.to_vec()));
+        true
     }
 }
 
