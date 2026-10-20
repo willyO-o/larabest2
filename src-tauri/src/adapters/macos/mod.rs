@@ -11,6 +11,7 @@ mod ports;
 mod process;
 mod shell;
 mod trust;
+mod user_path;
 
 pub use download::CurlDownloader;
 pub use homebrew::HomebrewBinaryProvider;
@@ -19,3 +20,4 @@ pub use ports::MacPortChecker;
 pub use process::UnixProcessRunner;
 pub use shell::MacShellLauncher;
 pub use trust::KeychainTrustStore;
+pub use user_path::MacUserPath;

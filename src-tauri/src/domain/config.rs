@@ -164,6 +164,9 @@ pub struct AppConfig {
     pub mailpit_smtp_port: u16,
     /// ...y lo muestra en la web en este.
     pub mailpit_http_port: u16,
+    /// Programas activos (PHP, MariaDB, servidor web, Composer) en el PATH
+    /// del usuario, al día con cada cambio de versión.
+    pub user_path: bool,
 }
 
 impl Default for AppConfig {
@@ -188,6 +191,7 @@ impl Default for AppConfig {
             mongodb_port: 27017,
             mailpit_smtp_port: 1025,
             mailpit_http_port: 8025,
+            user_path: false,
         }
     }
 }

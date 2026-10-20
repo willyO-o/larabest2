@@ -61,6 +61,17 @@ pub fn parse_block(content: &str, app_name: &str) -> Vec<HostEntry> {
 /// Devuelve el archivo hosts con el bloque de la app reemplazado. Fuera del
 /// bloque no cambia nada. Sin entradas, el bloque se elimina.
 pub fn merge_block(original: &str, app_name: &str, entries: &[HostEntry]) -> String {
+    let lines: Vec<String> = entries
+        .iter()
+        .map(|e| format!("{} {}", e.ip, e.host))
+        .collect();
+    replace_block(original, app_name, &lines)
+}
+
+/// Reemplaza el bloque entre los marcadores de la app por `lines`. Sirve
+/// para cualquier archivo que use `#` como comentario (hosts, perfil de la
+/// shell). Sin líneas, el bloque se elimina.
+pub(crate) fn replace_block(original: &str, app_name: &str, lines: &[String]) -> String {
     let eol = if original.contains("\r\n") {
         "\r\n"
     } else {
@@ -90,14 +101,15 @@ pub fn merge_block(original: &str, app_name: &str, entries: &[HostEntry]) -> Str
     if !out.is_empty() {
         out.push_str(eol);
     }
-    if !entries.is_empty() {
+    if !lines.is_empty() {
         if !out.is_empty() {
             out.push_str(eol);
         }
         out.push_str(&begin_marker(app_name));
         out.push_str(eol);
-        for e in entries {
-            out.push_str(&format!("{} {}{eol}", e.ip, e.host));
+        for line in lines {
+            out.push_str(line);
+            out.push_str(eol);
         }
         out.push_str(&end_marker(app_name));
         out.push_str(eol);

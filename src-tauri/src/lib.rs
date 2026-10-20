@@ -27,6 +27,7 @@ use adapters::shared::{config::JsonConfigStore, fs::StdFileStore, watcher::watch
 use domain::{BinaryLayout, Paths, ServiceStatus, Site, SiteProgress};
 use ports::{
     BinaryProvider, Downloader, EventSink, HostsManager, PortChecker, ProcessRunner, ShellLauncher,
+    UserPathManager,
 };
 use supervisor::{Deps, Supervisor, Timings};
 use usecases::{Core, CoreAdapters};
@@ -69,6 +70,7 @@ struct Platform {
     ports: Arc<dyn PortChecker>,
     shell: Arc<dyn ShellLauncher>,
     hosts: Arc<dyn HostsManager>,
+    user_path: Arc<dyn UserPathManager>,
     downloader: Arc<dyn Downloader>,
     trust: Arc<dyn TrustStore>,
     /// Base del PATH de la terminal (ver `Core::new`).
@@ -90,6 +92,7 @@ fn platform(app_name: &str, paths: &Paths) -> Platform {
             &paths.tmp(),
             runner.clone(),
         )),
+        user_path: Arc::new(WindowsUserPath),
         downloader: Arc::new(WindowsDownloader::new(runner.clone())),
         trust: Arc::new(CertutilTrustStore::new(runner.clone())),
         runner,
@@ -113,6 +116,7 @@ fn platform(app_name: &str, paths: &Paths) -> Platform {
             &paths.tmp(),
             runner.clone(),
         )),
+        user_path: Arc::new(MacUserPath::new(app_name)),
         downloader: Arc::new(CurlDownloader::new(runner.clone())),
         trust: Arc::new(KeychainTrustStore::new(runner.clone())),
         runner,
@@ -138,6 +142,7 @@ fn platform(_app_name: &str, paths: &Paths) -> Platform {
         ports: Arc::new(UnsupportedPorts),
         shell: Arc::new(UnsupportedShell),
         hosts: Arc::new(UnsupportedHosts),
+        user_path: Arc::new(UnsupportedUserPath),
         downloader: Arc::new(UnsupportedDownloader),
         trust: Arc::new(UnsupportedTrustStore),
         system_path: std::env::var("PATH").unwrap_or_default(),
@@ -203,6 +208,7 @@ fn setup(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
         CoreAdapters {
             hosts: platform.hosts,
             shell: platform.shell,
+            user_path: platform.user_path,
             downloader: platform.downloader,
             archive: Arc::new(ZipExtractor),
             ca,

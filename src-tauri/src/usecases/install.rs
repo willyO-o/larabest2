@@ -81,6 +81,7 @@ impl Core {
                 progress.emit("Listo", ProgressState::Done, Some(message.clone()));
                 // Filas, versiones y menús con lo nuevo.
                 self.supervisor.emit_all();
+                self.refresh_user_path().await?;
                 Ok(message)
             }
             Err(e) => {

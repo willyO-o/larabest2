@@ -16,6 +16,8 @@ La interfaz sigue la estructura de Laragon (ventana compacta, una fila por servi
 
 **Agregar desde el menú:** versiones de PHP, Nginx, Apache, MariaDB y los servicios opcionales, más Adminer, phpMyAdmin y Composer, con un clic. Ver [Agregar programas desde el menú](#agregar-programas-desde-el-menú).
 
+**PATH:** `php`, `composer` y `mariadb` en cualquier terminal (VS Code, PowerShell, Windows Terminal), al día con la versión activa, como el *Add to Path* de Laragon. Ver [Programas en el PATH](#programas-en-el-path).
+
 ## Menú contextual
 
 Clic derecho en cualquier parte de la ventana, el botón **Menú** o el ícono de la bandeja abren el mismo menú:
@@ -29,7 +31,7 @@ Clic derecho en cualquier parte de la ventana, el botón **Menú** o el ícono d
 | MariaDB | versión, `my.cnf` de ajustes propios, Adminer, phpMyAdmin, `my.cnf` generado, carpeta de datos, log de errores |
 | PostgreSQL, Redis, MongoDB, Mailpit | uno por cada servicio opcional en la pila (ver abajo) |
 | Logs | errores y accesos del servidor web, errores de PHP y de MariaDB, logs de los opcionales, carpeta de logs |
-| Herramientas | Web, Base de datos, Correo (con Mailpit), Terminal, carpeta raíz |
+| Herramientas | Web, Base de datos, Correo (con Mailpit), Terminal, carpeta raíz, PATH (agregar o quitar la app del PATH) |
 | Agregar | descargar versiones y herramientas (ver abajo) |
 | Preferencias | tema (Sistema, Claro, Oscuro), servidor web (Nginx o Apache), servicios opcionales, botón Base de datos (Adminer o phpMyAdmin), iniciar todo al abrir, HTTPS para los sitios `.test`, carpeta de certificados, cambiar la carpeta raíz, abrir `app.json` |
 
@@ -58,6 +60,18 @@ Las extensiones marcadas en el menú se guardan en `app.json` y PHP se reinicia 
 | Adminer, phpMyAdmin, Composer | sus descargas oficiales, en `bin\` | igual |
 
 En Windows cada versión queda en su carpeta (`bin\php\8.4.13\`), así que conviven varias y se elige en **Menú → PHP → Versión**. El menú muestra al lado lo que ya está instalado; volver a agregar algo baja la versión más nueva de esa rama si la hay. El progreso aparece en la línea de estado y, al terminar, la fila del servicio ya muestra la versión nueva. En macOS hace falta tener Homebrew (<https://brew.sh>); la app solo ejecuta `brew install`.
+
+## Programas en el PATH
+
+La **Terminal** de la app ya trae `php`, `composer`, `mariadb` y el servidor web, solo para esa consola. Para tenerlos también en cualquier otra terminal: **Menú → Herramientas → PATH → Agregar LARABEST al PATH**. Se quitan con **Quitar LARABEST del PATH**.
+
+- Solo cambia el PATH de **tu usuario** (no el del sistema): no pide administrador. Se agregan al principio las carpetas del PHP activo, `bin` de MariaDB, el servidor web y `etc\shell` (el `composer.bat` de la app). El resto del PATH queda igual y en el mismo orden.
+- Es **automático**: al cambiar de versión (PHP, MariaDB, Nginx o Apache), de servidor web o al agregar un programa, el PATH se actualiza solo y la versión anterior desaparece de él.
+- Las terminales abiertas antes conservan su PATH: abre una nueva (en VS Code, cierra y vuelve a abrir la terminal integrada o reinicia VS Code).
+- `php` fuera de la app usa el mismo `php.ini` que el servidor: la app genera uno junto a cada `php.exe` activo (`bin\php\<versión>\php.ini`, no editar) con las extensiones marcadas y, al final, tus ajustes de `etc\php\custom\user.ini`. Si ya había un `php.ini` tuyo en esa carpeta, no se toca. No se usa la variable `PHPRC` global, así otro PHP instalado (XAMPP, Laragon) sigue leyendo su propio `php.ini`.
+- Si tienes Laragon o XAMPP en el PATH, el de LARABEST queda delante y es el que responde a `php`. **Quitar** devuelve el PATH a como estaba.
+- Al **cambiar la carpeta raíz**, la app se quita del PATH (las carpetas eran de la raíz anterior); vuelve a agregarla en la nueva.
+- macOS: en lugar del PATH de Windows, la app escribe un bloque marcado (`# >>> LARABEST`) en `~/.zprofile`; fuera de él no cambia nada.
 
 ## Apache en lugar de Nginx
 
@@ -294,6 +308,13 @@ Prepara `bin\` como se describe arriba y crea `www\blog\index.php` con `<?php ph
 - [ ] **Detener** cierra los dos `httpd.exe` sin forzarlos (en `logs\apache-error.log` no hay errores de cierre).
 - [ ] **Servidor web → Nginx** vuelve atrás.
 
+**PATH**
+
+- [ ] **Menú → Herramientas → PATH → Agregar LARABEST al PATH** muestra un aviso de listo. En una terminal **nueva** (PowerShell o la de VS Code), `where php` muestra primero `C:\LARABEST\bin\php\<versión>\php.exe`, `php -m` lista `pdo_mysql`, y `composer -V` y `mariadb --version` responden.
+- [ ] En **Configuración → Variables de entorno**, el `Path` de tu usuario tiene las carpetas de `C:\LARABEST` al principio y el resto igual; el `Path` del sistema no cambió.
+- [ ] **Menú → PHP → Versión → 8.3**: en otra terminal nueva, `php -v` dice 8.3 y el `Path` ya no tiene la carpeta de 8.4.
+- [ ] **Quitar LARABEST del PATH** deja el `Path` del usuario como estaba (Laragon o XAMPP vuelven a responder a `php` si estaban).
+
 ## macOS
 
 En macOS la app usa los programas de **Homebrew** en vez de copiarlos a `bin/`. Funciona en Apple Silicon y en Intel (el `.dmg` es universal) desde macOS 13 Ventura; Homebrew ofrece binarios listos para macOS 14 o posterior (en versiones anteriores, y en Intel para algunas fórmulas, los compila y tarda bastante).
@@ -339,6 +360,7 @@ Si macOS dice que la app «está dañada», es la misma marca de cuarentena: usa
 | Archivo hosts | aviso de UAC | `/etc/hosts`, con la contraseña de administrador (aviso estándar de macOS) |
 | HTTPS | almacén de certificados del usuario (`certutil`) | llavero de inicio de sesión, «Confiar siempre» (pide tu contraseña) |
 | Terminal | `cmd.exe` | Terminal.app con tu shell (zsh o bash); PHP, MariaDB, Nginx y Composer de la app quedan primero en el PATH aunque tu `.zshrc` agregue Homebrew |
+| Herramientas → PATH | `Path` de tu usuario (variables de entorno) | bloque marcado en `~/.zprofile` |
 | MariaDB | puerto 3306 | puerto 3306 y socket propio `~/LARABEST/tmp/mariadb.sock` (en la Terminal de la app `mariadb -u root` lo usa solo) |
 | Bandeja | ícono en la bandeja; clic izquierdo abre la ventana | ícono en la barra de menús; el clic abre el menú. Clic en el ícono del Dock muestra la ventana |
 

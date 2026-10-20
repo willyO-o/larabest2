@@ -1073,3 +1073,74 @@ async fn apache_comes_from_the_apache_lounge_zip_mirrored_on_fossies() {
         .fs
         .exists(Path::new(&format!("{ROOT}/bin/apache/2.4.69/{httpd}"))));
 }
+
+#[tokio::test]
+async fn user_path_adds_the_active_programs_and_removes_them() {
+    let h = Harness::new();
+    h.fs.write(Path::new(&format!("{ROOT}/bin/composer/composer.phar")), "")
+        .unwrap();
+    let core = h.core();
+
+    core.set_user_path(true).await.unwrap();
+    assert!(h.config.get().user_path);
+    let (root, dirs) = h.user_path.applied.lock().unwrap()[0].clone();
+    assert_eq!(root, ROOT);
+    let joined = dirs.join(";");
+    for dir in [
+        r"C:\APP\bin\php\8.4.6",
+        r"C:\APP\bin\mariadb\11.4.5\bin",
+        r"C:\APP\bin\nginx\1.28.0",
+        r"C:\APP\etc\shell",
+    ] {
+        assert!(dirs.iter().any(|d| d == dir), "{dir} en {joined}");
+    }
+    // `php` fuera de la app encuentra su php.ini junto a php.exe.
+    assert!(h
+        .fs
+        .read(&format!("{ROOT}/bin/php/8.4.6/php.ini"))
+        .contains("extension=pdo_mysql"));
+    assert!(h
+        .fs
+        .exists(Path::new(&format!("{ROOT}/etc/shell/composer.bat"))));
+
+    core.set_user_path(false).await.unwrap();
+    assert!(!h.config.get().user_path);
+    assert_eq!(h.user_path.current(), Some(Vec::new()));
+}
+
+#[tokio::test]
+async fn user_path_follows_version_and_web_server_changes_only_when_on() {
+    let h = Harness::new();
+    let core = h.core();
+    core.switch_php("8.3.20").await.unwrap();
+    assert!(h.user_path.applied.lock().unwrap().is_empty());
+
+    core.set_user_path(true).await.unwrap();
+    core.switch_php("8.4.6").await.unwrap();
+    let dirs = h.user_path.current().unwrap();
+    assert!(dirs.iter().any(|d| d.ends_with(r"php\8.4.6")), "{dirs:?}");
+    assert!(!dirs.iter().any(|d| d.contains("8.3.20")), "{dirs:?}");
+
+    h.binaries.add(ROOT, ServiceId::Apache, "2.4.69");
+    core.set_web_server(WebServer::Apache).await.unwrap();
+    let dirs = h.user_path.current().unwrap();
+    assert!(
+        dirs.iter().any(|d| d.contains(r"apache\2.4.69")),
+        "{dirs:?}"
+    );
+    assert!(!dirs.iter().any(|d| d.contains("nginx")), "{dirs:?}");
+}
+
+#[tokio::test]
+async fn user_path_on_macos_uses_the_homebrew_programs() {
+    let h = Harness::homebrew();
+    let core = h.core();
+    core.set_user_path(true).await.unwrap();
+    let dirs = h.user_path.current().unwrap();
+    assert!(
+        dirs.iter()
+            .any(|d| d == "/opt/homebrew/Cellar/php@8.4/8.4.13/bin"),
+        "{dirs:?}"
+    );
+    assert!(dirs.iter().all(|d| !d.contains('\\')), "{dirs:?}");
+}

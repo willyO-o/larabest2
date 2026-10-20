@@ -21,7 +21,7 @@ use crate::drivers::{apache, mailpit, nginx, postgresql, templates, tools};
 use crate::error::AppError;
 use crate::ports::{
     write_if_changed, ArchiveExtractor, CertificateAuthority, Downloader, HostsManager,
-    SecretSource, ShellLauncher,
+    SecretSource, ShellLauncher, UserPathManager,
 };
 use crate::supervisor::Supervisor;
 use sites::scan_sites;
@@ -74,6 +74,7 @@ pub struct PhpExtension {
 pub struct CoreAdapters {
     pub hosts: Arc<dyn HostsManager>,
     pub shell: Arc<dyn ShellLauncher>,
+    pub user_path: Arc<dyn UserPathManager>,
     pub downloader: Arc<dyn Downloader>,
     pub archive: Arc<dyn ArchiveExtractor>,
     pub ca: Arc<dyn CertificateAuthority>,
@@ -84,6 +85,7 @@ pub struct Core {
     pub supervisor: Arc<Supervisor>,
     hosts: Arc<dyn HostsManager>,
     shell: Arc<dyn ShellLauncher>,
+    user_path: Arc<dyn UserPathManager>,
     downloader: Arc<dyn Downloader>,
     archive: Arc<dyn ArchiveExtractor>,
     ca: Arc<dyn CertificateAuthority>,
@@ -105,6 +107,7 @@ impl Core {
             supervisor,
             hosts: adapters.hosts,
             shell: adapters.shell,
+            user_path: adapters.user_path,
             downloader: adapters.downloader,
             archive: adapters.archive,
             ca: adapters.ca,
@@ -199,7 +202,7 @@ impl Core {
         if was_active {
             self.start(new).await?;
         }
-        Ok(())
+        self.refresh_user_path().await
     }
 
     pub fn php_versions(&self) -> Result<Vec<InstalledVersion>, AppError> {
@@ -230,7 +233,8 @@ impl Core {
         let mut cfg = deps.config.load()?;
         cfg.versions.set(id, Some(version.to_string()));
         deps.config.save(&cfg)?;
-        self.apply_config_change(id).await
+        self.apply_config_change(id).await?;
+        self.refresh_user_path().await
     }
 
     /// Tras cambiar `app.json`: reinicia el servicio si está en marcha o
@@ -653,9 +657,10 @@ impl Core {
         Ok(mailpit::web_url(cfg.mailpit_http_port))
     }
 
-    /// Entorno de la terminal: PHP activo, MariaDB, Nginx y Composer
-    /// delante del PATH del sistema, solo para esa consola.
-    pub fn terminal_env(&self) -> Result<HashMap<String, String>, AppError> {
+    /// Carpetas de los programas activos: PHP, MariaDB, el servidor web y
+    /// el script de Composer (`etc/shell`). Las usan la terminal y el PATH
+    /// del usuario. Con "\" en Windows, como las espera su PATH.
+    fn program_dirs(&self) -> Result<Vec<String>, AppError> {
         let deps = self.supervisor.deps();
         let ctx = self.supervisor.context()?;
         let mut path: Vec<String> = Vec::new();
@@ -692,14 +697,25 @@ impl Core {
             deps.fs.set_executable(&target)?;
             path.push(slash(&deps.paths.etc_shell()));
         }
-        // Las rutas internas usan "/", pero en el PATH de Windows van con "\"
-        // y separadas por ";". La disposición indica la plataforma.
+        // Las rutas internas usan "/", pero en el PATH de Windows van con "\".
+        // La disposición indica la plataforma.
         let windows = deps.layout == BinaryLayout::Portable;
-        let sep = if windows { ";" } else { ":" };
-        let mut joined: Vec<String> = path
+        Ok(path
             .into_iter()
             .map(|p| if windows { p.replace('/', "\\") } else { p })
-            .collect();
+            .collect())
+    }
+
+    /// Entorno de la terminal: PHP activo, MariaDB, Nginx y Composer
+    /// delante del PATH del sistema, solo para esa consola.
+    pub fn terminal_env(&self) -> Result<HashMap<String, String>, AppError> {
+        let deps = self.supervisor.deps();
+        let sep = if deps.layout == BinaryLayout::Portable {
+            ";"
+        } else {
+            ":"
+        };
+        let mut joined = self.program_dirs()?;
         if !self.system_path.is_empty() {
             joined.push(self.system_path.clone());
         }
@@ -719,6 +735,53 @@ impl Core {
             );
         }
         Ok(env)
+    }
+
+    pub fn user_path_enabled(&self) -> bool {
+        self.supervisor
+            .deps()
+            .config
+            .load()
+            .map(|c| c.user_path)
+            .unwrap_or(false)
+    }
+
+    /// Menú → Herramientas → PATH: agrega los programas activos al PATH del
+    /// usuario (`php`, `composer`, `mariadb` en cualquier terminal nueva) o
+    /// los quita. Solo se tocan las carpetas de dentro de la raíz.
+    pub async fn set_user_path(&self, enabled: bool) -> Result<(), AppError> {
+        let deps = self.supervisor.deps();
+        if enabled {
+            self.apply_user_path().await?;
+        } else {
+            self.user_path.apply(deps.paths.root(), &[])?;
+        }
+        let mut cfg = deps.config.load()?;
+        cfg.user_path = enabled;
+        deps.config.save(&cfg)
+    }
+
+    /// Con el PATH activado, lo pone al día tras cambiar una versión, el
+    /// servidor web o agregar un programa.
+    pub(crate) async fn refresh_user_path(&self) -> Result<(), AppError> {
+        if !self.user_path_enabled() {
+            return Ok(());
+        }
+        self.apply_user_path().await.map_err(|e| {
+            AppError::Process(format!("No se pudo actualizar el PATH del usuario: {e}"))
+        })
+    }
+
+    async fn apply_user_path(&self) -> Result<(), AppError> {
+        // El php.ini junto a php.exe (ver el driver de PHP) es el que lee
+        // `php` fuera de la terminal de la app.
+        match self.supervisor.render(ServiceId::Php).await {
+            Ok(()) | Err(AppError::BinaryMissing { .. }) => {}
+            Err(e) => return Err(e),
+        }
+        let dirs = self.program_dirs()?;
+        self.user_path
+            .apply(self.supervisor.deps().paths.root(), &dirs)
     }
 
     /// Abre un archivo de configuración o log en el editor del sistema.

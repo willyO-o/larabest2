@@ -1,8 +1,9 @@
 //! Lo común a las pruebas de punta a punta de Windows y macOS: la app
 //! armada con los adaptadores reales de la plataforma y el recorrido que un
 //! usuario haría con ella. Solo se simulan el archivo hosts (pediría
-//! permiso de administrador), la terminal (abriría una ventana) y la
-//! confianza en la CA (pediría confirmación); los dominios se resuelven con
+//! permiso de administrador), la terminal (abriría una ventana), el PATH
+//! del usuario (cambiaría el de quien corre la prueba) y la confianza en la
+//! CA (pediría confirmación); los dominios se resuelven con
 //! `curl --resolve`.
 
 use std::path::{Path, PathBuf};
@@ -22,7 +23,7 @@ use crate::domain::{
 use crate::error::AppError;
 use crate::ports::{BinaryProvider, ConfigStore, Downloader, PortChecker, ProcessRunner};
 use crate::supervisor::{Deps, Supervisor, Timings};
-use crate::testing::{FakeEvents, FakeHosts, FakeShell};
+use crate::testing::{FakeEvents, FakeHosts, FakeShell, FakeUserPath};
 use crate::usecases::{Core, CoreAdapters};
 
 const CURL: &str = if cfg!(windows) {
@@ -148,6 +149,7 @@ pub fn world(root: PathBuf, platform: Platform, ports: E2ePorts) -> World {
         CoreAdapters {
             hosts: Arc::new(FakeHosts::default()),
             shell: Arc::new(FakeShell::default()),
+            user_path: Arc::new(FakeUserPath::default()),
             downloader: platform.downloader,
             archive: Arc::new(ZipExtractor),
             ca: Arc::new(ca),
@@ -384,6 +386,35 @@ pub async fn common_flow(w: &World, stack: &[ServiceId]) {
     check(w, running(w, stack), "Nginx debe volver con HTTPS");
     let secure = get("hola.test", ports.https, "/", true).await;
     check(w, secure.contains("hola 8."), &secure);
+}
+
+/// Cambiar a PHP 8.3 reinicia solo PHP y el sitio responde con esa versión.
+/// Después se vuelve a la versión anterior: el Laravel de `common_flow` se
+/// creó con ella y sus dependencias pueden exigirla (Laravel 13 ya pide
+/// PHP 8.4 en algunos paquetes), así que con 8.3 respondería 500.
+pub async fn php_switch_flow(w: &World) {
+    let previous = w
+        .core
+        .supervisor
+        .snapshot()
+        .into_iter()
+        .find(|s| s.id == ServiceId::Php)
+        .and_then(|s| s.version)
+        .expect("PHP activo");
+    let php83 = w
+        .core
+        .versions(ServiceId::Php)
+        .unwrap()
+        .into_iter()
+        .find(|v| v.version.starts_with("8.3."))
+        .expect("PHP 8.3 instalado");
+    w.core.switch_php(&php83.version).await.unwrap();
+    let page = get("hola.test", w.ports.http, "/", false).await;
+    check(w, page.contains("hola 8.3."), &page);
+
+    w.core.switch_php(&previous).await.unwrap();
+    let page = get("hola.test", w.ports.http, "/", false).await;
+    check(w, page.contains(&format!("hola {previous}")), &page);
 }
 
 /// Apache en lugar de Nginx (Preferencias → Servidor web), con lo que dejó

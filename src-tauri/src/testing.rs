@@ -518,6 +518,30 @@ impl HostsManager for FakeHosts {
     }
 }
 
+/// PATH del usuario en memoria: guarda la última llamada.
+#[derive(Default)]
+pub struct FakeUserPath {
+    /// `(raíz, carpetas)` de cada `apply`.
+    pub applied: Mutex<Vec<(String, Vec<String>)>>,
+}
+
+impl FakeUserPath {
+    /// Carpetas que quedaron en el PATH tras la última llamada.
+    pub fn current(&self) -> Option<Vec<String>> {
+        self.applied.lock().unwrap().last().map(|(_, d)| d.clone())
+    }
+}
+
+impl crate::ports::UserPathManager for FakeUserPath {
+    fn apply(&self, root: &Path, dirs: &[String]) -> Result<(), AppError> {
+        self.applied
+            .lock()
+            .unwrap()
+            .push((slash(root), dirs.to_vec()));
+        Ok(())
+    }
+}
+
 // ---------------------------------------------------------------- terminal
 
 #[derive(Default)]
@@ -550,6 +574,7 @@ pub struct Harness {
     pub events: std::sync::Arc<FakeEvents>,
     pub hosts: std::sync::Arc<FakeHosts>,
     pub shell: std::sync::Arc<FakeShell>,
+    pub user_path: std::sync::Arc<FakeUserPath>,
     pub downloader: std::sync::Arc<FakeDownloader>,
     pub archive: std::sync::Arc<FakeArchive>,
     pub ca: std::sync::Arc<FakeCa>,
@@ -645,6 +670,7 @@ impl Harness {
             events,
             hosts: Arc::new(FakeHosts::default()),
             shell: Arc::new(FakeShell::default()),
+            user_path: Arc::new(FakeUserPath::default()),
             supervisor,
         }
     }
@@ -655,6 +681,7 @@ impl Harness {
             crate::usecases::CoreAdapters {
                 hosts: self.hosts.clone(),
                 shell: self.shell.clone(),
+                user_path: self.user_path.clone(),
                 downloader: self.downloader.clone(),
                 archive: self.archive.clone(),
                 ca: self.ca.clone(),

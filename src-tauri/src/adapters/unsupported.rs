@@ -13,7 +13,7 @@ use crate::domain::HostEntry;
 use crate::error::AppError;
 use crate::ports::{
     CommandOutput, Downloader, HostsManager, PortChecker, ProcessHandle, ProcessRunner,
-    ProcessSpec, ShellLauncher,
+    ProcessSpec, ShellLauncher, UserPathManager,
 };
 
 fn unsupported() -> AppError {
@@ -90,6 +90,14 @@ impl HostsManager for UnsupportedHosts {
     }
 
     async fn sync(&self, _entries: &[HostEntry]) -> Result<(), AppError> {
+        Err(unsupported())
+    }
+}
+
+pub struct UnsupportedUserPath;
+
+impl UserPathManager for UnsupportedUserPath {
+    fn apply(&self, _root: &Path, _dirs: &[String]) -> Result<(), AppError> {
         Err(unsupported())
     }
 }

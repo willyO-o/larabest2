@@ -8,6 +8,7 @@ mod layout;
 mod paths;
 mod service;
 mod site;
+pub mod user_path;
 mod version;
 
 pub use config::{

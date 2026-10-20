@@ -8,6 +8,7 @@ mod ports;
 mod process;
 mod shell;
 mod trust;
+mod user_path;
 
 pub use download::WindowsDownloader;
 pub use hosts::{apply_hosts_request, WindowsHostsManager};
@@ -15,6 +16,7 @@ pub use ports::WindowsPortChecker;
 pub use process::WindowsProcessRunner;
 pub use shell::WindowsShellLauncher;
 pub use trust::CertutilTrustStore;
+pub use user_path::WindowsUserPath;
 
 use std::path::PathBuf;
 

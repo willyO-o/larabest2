@@ -130,6 +130,16 @@ pub trait ShellLauncher: Send + Sync {
     fn open_in_editor(&self, path: &Path) -> Result<(), AppError>;
 }
 
+/// PATH del usuario, para usar los programas de la app desde cualquier
+/// terminal (Menú → Herramientas → PATH). En Windows es el PATH de la
+/// cuenta, no el del sistema (no pide administrador); en macOS, un bloque
+/// marcado en `~/.zprofile`.
+pub trait UserPathManager: Send + Sync {
+    /// Pone `dirs` al principio y quita cualquier otra carpeta de dentro de
+    /// `root`. Con `dirs` vacío solo quita las de la app.
+    fn apply(&self, root: &Path, dirs: &[String]) -> Result<(), AppError>;
+}
+
 pub trait ConfigStore: Send + Sync {
     fn load(&self) -> Result<crate::domain::AppConfig, AppError>;
     fn save(&self, cfg: &crate::domain::AppConfig) -> Result<(), AppError>;

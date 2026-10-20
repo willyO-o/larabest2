@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
 use minijinja::context;
@@ -53,6 +53,41 @@ fn fpm_spec(ctx: &RenderContext) -> Result<ProcessSpec, AppError> {
             .env("PHP_INI_SCAN_DIR", slash(&ctx.paths.php_custom()))
             .log_to(ctx.paths.logs().join("php-fpm-console.log")),
     )
+}
+
+/// Windows: `php.ini` junto a `php.exe`. PHP lo busca ahí cuando no hay
+/// `PHPRC`, así `php` y Composer desde cualquier terminal (PATH del
+/// usuario, VS Code) tienen las extensiones y ajustes del servidor sin
+/// variables globales que confundirían a otro PHP instalado (XAMPP,
+/// Laragon). Fuera de la app nadie define `PHP_INI_SCAN_DIR`, por eso
+/// lleva al final los `.ini` de `etc/php/custom`. Un `php.ini` propio (sin
+/// la marca de generado) no se toca.
+fn write_cli_ini(ctx: &RenderContext, php_dir: &str, ini: &str) -> Result<(), AppError> {
+    let fs = ctx.fs.as_ref();
+    let target = Path::new(php_dir).join("php.ini");
+    let mark = format!("; Generado por {}", ctx.app_name);
+    if fs.exists(&target)
+        && !fs
+            .read_to_string(&target)
+            .is_ok_and(|text| text.starts_with(&mark))
+    {
+        return Ok(());
+    }
+    let custom = ctx.paths.php_custom();
+    let mut files: Vec<String> = fs
+        .list_files(&custom)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|f| f.to_lowercase().ends_with(".ini"))
+        .collect();
+    files.sort();
+    let mut content = ini.to_string();
+    for file in files {
+        let text = fs.read_to_string(&custom.join(&file))?;
+        content.push_str(&format!("\n; ---- etc/php/custom/{file} ----\n{text}\n"));
+    }
+    write_if_changed(fs, &target, &content)?;
+    Ok(())
 }
 
 /// `php` de línea de comandos de la versión activa, con el mismo `php.ini`
@@ -153,6 +188,9 @@ impl ServiceDriver for PhpDriver {
             },
         )?;
         write_if_changed(fs, &ctx.paths.php_ini(), &ini)?;
+        if portable {
+            write_cli_ini(ctx, &install.path, &ini)?;
+        }
         if ctx.layout == BinaryLayout::Homebrew {
             let fpm = templates::render(
                 templates::PHP_FPM_CONF,
@@ -250,6 +288,33 @@ mod tests {
         assert!(!ini.contains("extension=gd"));
     }
 
+    #[tokio::test]
+    async fn cli_ini_next_to_php_exe_carries_the_custom_settings() {
+        let f = fixture();
+        f.fs.write(
+            Path::new("C:/APP/etc/php/custom/user.ini"),
+            "memory_limit = 1G\n",
+        )
+        .unwrap();
+        f.fs.write(Path::new("C:/APP/etc/php/custom/notes.txt"), "x")
+            .unwrap();
+        PhpDriver.render_config(&f.ctx).await.unwrap();
+        let cli = f.fs.read("C:/APP/bin/php/8.4.6/php.ini");
+        assert!(cli.starts_with(&f.fs.read("C:/APP/etc/php/php.ini")));
+        assert!(cli.contains("extension=pdo_mysql"));
+        assert!(cli.ends_with("; ---- etc/php/custom/user.ini ----\nmemory_limit = 1G\n\n"));
+        assert!(!cli.contains("notes.txt"));
+    }
+
+    #[tokio::test]
+    async fn own_php_ini_next_to_php_exe_is_kept() {
+        let f = fixture();
+        f.fs.write(Path::new("C:/APP/bin/php/8.4.6/php.ini"), "; mío\n")
+            .unwrap();
+        PhpDriver.render_config(&f.ctx).await.unwrap();
+        assert_eq!(f.fs.read("C:/APP/bin/php/8.4.6/php.ini"), "; mío\n");
+    }
+
     #[test]
     fn launches_one_cgi_per_port_with_max_requests_zero() {
         let f = fixture();
@@ -328,6 +393,10 @@ mod tests {
         assert!(fpm.contains(r#"pid = "/Users/ana/LARABEST/tmp/php-fpm.pid""#));
         assert!(fpm.contains(r#"error_log = "/Users/ana/LARABEST/logs/php-fpm.log""#));
         assert!(!fpm.contains("user ="), "sin root no se cambia de usuario");
+        // La carpeta de Homebrew no se toca.
+        assert!(!f
+            .fs
+            .exists(Path::new("/opt/homebrew/Cellar/php@8.4/8.4.13/php.ini")));
     }
 
     #[tokio::test]

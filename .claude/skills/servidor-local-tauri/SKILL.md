@@ -13,7 +13,7 @@ Referencia funcional: Laragon (concepto y simplicidad). Referencia de implementa
 
 1. **Hexagonal.** El núcleo (dominio, casos de uso, supervisor, drivers) nunca llama al sistema operativo directamente: pide lo que necesita a un puerto (trait) y un adaptador por plataforma lo resuelve. Así el port a macOS es solo escribir adaptadores.
 2. **La interfaz no tiene lógica de negocio.** Vue solo hace `invoke` y `listen`. El estado de un servicio cambia en pantalla únicamente al recibir un evento, nunca por suponer que el comando funcionó.
-3. **Todo bajo una raíz portable.** Sin servicios de Windows, sin tocar el registro, sin modificar el PATH global. La única excepción es el archivo hosts.
+3. **Todo bajo una raíz portable.** Sin servicios de Windows, sin tocar el registro, sin modificar el PATH global. Excepciones: el archivo hosts y, solo si el usuario lo activa en **Herramientas → PATH**, el PATH de su cuenta (`HKCU\Environment\Path` en Windows, un bloque marcado en `~/.zprofile` en macOS), tocando únicamente carpetas de dentro de la raíz y reversible con **Quitar**. Nunca el PATH del sistema ni variables globales como `PHPRC`.
 4. **Lo generado no se edita.** Los archivos de `etc/` se regeneran desde plantillas; lo personalizado va en archivos de inclusión aparte.
 5. **Identidad propia.** No usar el nombre, logo ni íconos de Laragon. El nombre de la app está pendiente: usar el marcador `APP_NAME` de `tauri.conf.json` y no inventar uno.
 6. **Windows 10 o superior.** Ver la tabla de plataformas.

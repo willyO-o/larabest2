@@ -74,10 +74,12 @@ async fn e2e_windows() {
         &pma,
     );
 
-    // La terminal usa el PHP de la app.
+    // La terminal usa el PHP de la app. Cada parte va como argumento
+    // propio: Rust escapa las comillas internas con `\"`, que cmd.exe no
+    // entiende, y PHP recibiría el código partido.
     let env = w.core.terminal_env().unwrap();
     let out = tokio::process::Command::new("cmd.exe")
-        .args(["/C", "php -r \"echo PHP_BINARY;\""])
+        .args(["/C", "php", "-r", "echo PHP_BINARY;"])
         .env("PATH", &env["PATH"])
         .env("PHPRC", &env["PHPRC"])
         .env("PHP_INI_SCAN_DIR", &env["PHP_INI_SCAN_DIR"])
@@ -92,16 +94,7 @@ async fn e2e_windows() {
     );
 
     // Cambiar de PHP reinicia solo los php-cgi.
-    let php83 = w
-        .core
-        .versions(ServiceId::Php)
-        .unwrap()
-        .into_iter()
-        .find(|v| v.version.starts_with("8.3."))
-        .expect("PHP 8.3 agregado");
-    w.core.switch_php(&php83.version).await.unwrap();
-    let page = get("hola.test", PORTS.http, "/", false).await;
-    check(&w, page.contains("hola 8.3."), &page);
+    e2e::php_switch_flow(&w).await;
 
     // Apache (de Apache Lounge) en lugar de Nginx, con los php-cgi.
     e2e::apache_flow(&w).await;

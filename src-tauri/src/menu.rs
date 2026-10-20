@@ -38,6 +38,17 @@ fn disabled(app: &AppHandle, label: &str) -> tauri::Result<Item> {
     )?))
 }
 
+/// Opción que se puede habilitar o no según el estado.
+fn action(app: &AppHandle, id: &str, label: &str, enabled: bool) -> tauri::Result<Item> {
+    Ok(Box::new(MenuItem::with_id(
+        app,
+        id,
+        label,
+        enabled,
+        None::<&str>,
+    )?))
+}
+
 fn check(app: &AppHandle, id: &str, label: &str, checked: bool) -> tauri::Result<Item> {
     Ok(Box::new(CheckMenuItem::with_id(
         app,
@@ -293,6 +304,27 @@ pub fn build(app: &AppHandle, from_tray: bool) -> tauri::Result<Menu<Wry>> {
     }
     tools.push(text(app, "terminal", "Terminal")?);
     tools.push(text(app, "root", "Carpeta raíz")?);
+    // Herramientas → PATH, como en Laragon: php, composer y mariadb en
+    // cualquier terminal, al día con la versión activa.
+    let in_path = core.user_path_enabled();
+    tools.push(Box::new(submenu(
+        app,
+        "PATH",
+        vec![
+            action(
+                app,
+                "user_path:add",
+                &format!("Agregar {name} al PATH"),
+                !in_path,
+            )?,
+            action(
+                app,
+                "user_path:remove",
+                &format!("Quitar {name} del PATH"),
+                in_path,
+            )?,
+        ],
+    )?));
 
     // Preferencias → Servicios: qué opcionales forman parte de la pila.
     let mut services = Vec::new();
@@ -457,6 +489,19 @@ async fn run(app: &AppHandle, id: &str) -> Result<(), AppError> {
         "web_reload" => return core.reload(core.web_server().service()).await,
         "hosts_sync" => return core.sync_sites().await.map(|_| ()),
         "auto_start" => return core.set_auto_start(!core.auto_start()),
+        "user_path:add" => {
+            core.set_user_path(true).await?;
+            tray::show_info(
+                app,
+                "Listo. En las terminales nuevas ya puedes usar php, composer y mariadb;                  siguen la versión activa. Las que ya estaban abiertas hay que cerrarlas.",
+            );
+            return Ok(());
+        }
+        "user_path:remove" => {
+            core.set_user_path(false).await?;
+            tray::show_info(app, "Se quitaron los programas de la app del PATH.");
+            return Ok(());
+        }
         "ssl_toggle" => {
             let enabled = !core.ssl_enabled();
             core.set_ssl(enabled).await?;
@@ -465,10 +510,17 @@ async fn run(app: &AppHandle, id: &str) -> Result<(), AppError> {
         }
         "choose_root" => {
             if let Some(path) = settings::choose_root(app).await? {
-                tray::show_info(
-                    app,
-                    &format!("Se usará {path} la próxima vez que abras la aplicación."),
-                );
+                // Las carpetas del PATH son de la raíz actual: se quitan ya
+                // para que no queden apuntando a la anterior.
+                let mut message =
+                    format!("Se usará {path} la próxima vez que abras la aplicación.");
+                if core.user_path_enabled() {
+                    core.set_user_path(false).await?;
+                    message.push_str(
+                        " Se quitó del PATH: vuelve a agregarla desde Herramientas → PATH.",
+                    );
+                }
+                tray::show_info(app, &message);
             }
             return Ok(());
         }

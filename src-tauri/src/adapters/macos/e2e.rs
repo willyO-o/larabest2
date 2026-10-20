@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use super::{CurlDownloader, HomebrewBinaryProvider, MacPortChecker, UnixProcessRunner};
 use crate::domain::{BinaryLayout, ServiceId};
-use crate::e2e::{self, check, get, E2ePorts, Platform};
+use crate::e2e::{self, check, E2ePorts, Platform};
 use crate::ports::ProcessRunner;
 
 /// 80 y 443 como los usará la gente: así se comprueba que en macOS Nginx
@@ -97,16 +97,7 @@ async fn e2e_homebrew() {
     );
 
     // Cambiar de PHP reinicia solo php-fpm.
-    let php83 = w
-        .core
-        .versions(ServiceId::Php)
-        .unwrap()
-        .into_iter()
-        .find(|v| v.version.starts_with("8.3."))
-        .expect("php@8.3");
-    w.core.switch_php(&php83.version).await.unwrap();
-    let page = get("hola.test", PORTS.http, "/", false).await;
-    check(&w, page.contains("hola 8.3."), &page);
+    e2e::php_switch_flow(&w).await;
 
     // Apache (brew install httpd) en lugar de Nginx, con php-fpm.
     e2e::apache_flow(&w).await;
