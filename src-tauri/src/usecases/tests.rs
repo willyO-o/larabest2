@@ -1349,7 +1349,9 @@ async fn windows_7_gets_the_last_versions_that_run_there() {
         "{err}"
     );
 
-    h.archive.contains(&["bin/mariadbd.exe"]);
+    // Con ".exe" solo en Windows: las pruebas corren también en macOS.
+    let mariadbd = format!("bin/{}", crate::drivers::exe("mariadbd"));
+    h.archive.contains(&[&mariadbd]);
     let message = core.install_package("mariadb-10.4").await.unwrap();
     assert_eq!(message, "MariaDB 10.4.12 instalado.");
     // Versión fija: sin consultar la última.
