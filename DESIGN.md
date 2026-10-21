@@ -1,41 +1,43 @@
 ---
 name: LARABEST
-description: Servidor local para Windows con la estructura de Laragon; la ventana es la luz de estado de la pila.
+description: Servidor local con la estructura de Laragon; la ventana es la luz de estado de la pila, con el azul eléctrico y el azul marino del logo de LaraBest.
 colors:
-  ground: "#f3f4f7"
+  ground: "#f3f6fb"
   surface: "#ffffff"
-  sunken: "#eceef2"
-  line: "#dde0e7"
-  ink: "#15171c"
-  ink-2: "#4f5562"
-  ink-3: "#6b7280"
-  accent: "#3d4ed8"
-  accent-hover: "#3443c4"
+  sunken: "#eaeff7"
+  line: "#d9e0ec"
+  ink: "#141c30"
+  ink-2: "#47536d"
+  ink-3: "#5f6b85"
+  accent: "#2563eb"
+  accent-hover: "#1d4ed8"
   ok: "#15803d"
   busy: "#b45309"
   bad: "#b42318"
   bad-ground: "#fdeceb"
   warn: "#9a5b06"
-  band-stopped: "#2b2f38"
+  band-stopped: "#1b2440"
   band-busy: "#7a4a0a"
-  band-partial: "#23495a"
-  band-running: "#155e37"
+  band-partial: "#1e4a7a"
+  band-running: "#14633f"
   band-failed: "#8a1c1c"
-  dark-ground: "#16181d"
-  dark-surface: "#1e2128"
-  dark-ink: "#e9ebf0"
-  dark-accent: "#8b96ff"
-  dark-accent-hover: "#a0a9ff"
-  dark-accent-ink: "#0e1233"
-  dark-sunken: "#252932"
-  dark-line: "#2f343e"
-  dark-ink-2: "#b4bac6"
-  dark-ink-3: "#9299a6"
+  dark-ground: "#0d1322"
+  dark-surface: "#141c2f"
+  dark-ink: "#e7ecf6"
+  dark-accent: "#6ea6ff"
+  dark-accent-hover: "#8bb8ff"
+  dark-accent-ink: "#08142b"
+  dark-sunken: "#1a2339"
+  dark-line: "#26314b"
+  dark-ink-2: "#b1bcd2"
+  dark-ink-3: "#8d99b3"
   dark-ok: "#4ade80"
   dark-busy: "#f5b14c"
   dark-bad: "#ff8a80"
   dark-bad-ground: "#3a1d1c"
   led-busy: "#fbbf24"
+  wordmark-accent: "#b4d2ff"
+  dark-band-stopped: "#182340"
 typography:
   body:
     fontFamily: "'Segoe UI Variable Text', 'Segoe UI', system-ui, sans-serif"
@@ -115,6 +117,15 @@ components:
 ---
 
 # Design System: LARABEST
+
+## Marca
+
+El logo (`src-tauri/icons/logo.svg`, del que salen todos los íconos con `npx tauri icon`) es un servidor isométrico de tres bandejas en azul marino con `</>` en azul eléctrico, dentro de un anillo azul sobre disco blanco. En la banda va a 26 px con una sombra mínima, seguido de la palabra en dos tonos: «Lara» en blanco y «Best» en `#b4d2ff`, el azul claro que pasa 4,5:1 sobre los seis colores de la banda. El nombre técnico de la app (ventana, instalador) sigue siendo LARABEST.
+
+- **Azul eléctrico** (`accent`): la acción principal, el foco, la selección y los enlaces. En oscuro se aclara (`#6ea6ff`) con texto oscuro encima.
+- **Azul marino** (`band-stopped`, `ink`): la banda en reposo y el texto. Los neutros llevan un leve tinte azul frío; el oscuro es azul marino profundo, no gris.
+- Los colores de estado (verde, ámbar, rojo) no son marca: son información y no cambian.
+- Profundidad con desplazamiento y desenfoque (`--shadow`, azul marino translúcido). El botón principal suma una luz arriba y una sombra azul debajo.
 
 ## Overview
 

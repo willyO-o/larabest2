@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <!-- Silueta del logo para la barra de menús de macOS ("template"): solo
+       cuenta la opacidad; macOS la tiñe de negro o blanco según el tema.
+       Las luces y el contorno del </> son huecos transparentes. -->
+  <defs>
+    <mask id="holes">
+      <rect width="256" height="256" fill="#fff" />
+      <g fill="#000">
+        <circle cx="160" cy="111.5" r="9" />
+        <circle cx="160" cy="141.5" r="9" />
+        <circle cx="160" cy="171.5" r="9" />
+      </g>
+      <path d="M160 168 L144 182 L160 196 M184 160 L170 204 M194 168 L210 182 L194 196"
+        fill="none" stroke="#000" stroke-width="40" stroke-linecap="round" stroke-linejoin="round" />
+    </mask>
+  </defs>
+  <circle cx="128" cy="128" r="112" fill="none" stroke="#000" stroke-width="18" />
+  <g mask="url(#holes)" fill="#000">
+    <polygon points="66,144 128,176 190,144 190,168 128,200 66,168" />
+    <polygon points="66,114 128,146 190,114 190,138 128,170 66,138" />
+    <polygon points="128,52 190,84 190,108 128,140 66,108 66,84" />
+  </g>
+  <path d="M160 168 L144 182 L160 196 M184 160 L170 204 M194 168 L210 182 L194 196"
+    fill="none" stroke="#000" stroke-width="16" stroke-linecap="round" stroke-linejoin="round" />
+</svg>

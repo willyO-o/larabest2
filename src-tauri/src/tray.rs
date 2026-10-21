@@ -39,53 +39,18 @@ pub fn show_info(app: &AppHandle, message: &str) {
 /// Lado del icono de la barra de menús de macOS: 18 pt a doble densidad.
 const TEMPLATE_SIZE: u32 = 36;
 
-/// La marca (tres bandejas con su luz) en negro con transparencia, como
-/// piden los iconos de la barra de menús de macOS: el sistema la tiñe
-/// según el tema. La luz queda calada.
+/// Silueta del logo (`icons/tray-template.svg`, rasterizada con
+/// `scripts/brand-assets.mjs`): 36x36 RGBA. En la barra de menús de macOS
+/// solo cuenta la opacidad: el sistema la tiñe según el tema.
+const TEMPLATE_RGBA: &[u8] = include_bytes!("../icons/tray-template.rgba");
+
+/// En negro puro con la opacidad del dibujo, como piden los iconos
+/// "template" de macOS. Las luces y el contorno del `</>` quedan calados.
 fn template_rgba() -> Vec<u8> {
-    // Mismas medidas que BrandMark.vue (viewBox de 24).
-    const BARS: [(f32, f32, f32, f32, f32); 3] = [
-        (3.0, 3.5, 18.0, 5.0, 0.95),
-        (3.0, 10.0, 18.0, 5.0, 0.75),
-        (3.0, 16.5, 18.0, 4.0, 0.55),
-    ];
-    const RADIUS: f32 = 1.5;
-    const LED: (f32, f32, f32) = (6.5, 6.0, 1.2);
-    const SAMPLES: u32 = 4;
-    let scale = TEMPLATE_SIZE as f32 / 24.0;
-    let coverage = |ux: f32, uy: f32| -> f32 {
-        let (cx, cy, r) = LED;
-        if (ux - cx).powi(2) + (uy - cy).powi(2) <= r * r {
-            return 0.0;
-        }
-        for (x, y, w, h, opacity) in BARS {
-            if ux < x || ux > x + w || uy < y || uy > y + h {
-                continue;
-            }
-            let dx = (x + RADIUS - ux).max(ux - (x + w - RADIUS)).max(0.0);
-            let dy = (y + RADIUS - uy).max(uy - (y + h - RADIUS)).max(0.0);
-            if dx * dx + dy * dy <= RADIUS * RADIUS {
-                return opacity;
-            }
-        }
-        0.0
-    };
-    let mut rgba = Vec::with_capacity((TEMPLATE_SIZE * TEMPLATE_SIZE * 4) as usize);
-    for py in 0..TEMPLATE_SIZE {
-        for px in 0..TEMPLATE_SIZE {
-            let mut sum = 0.0;
-            for sy in 0..SAMPLES {
-                for sx in 0..SAMPLES {
-                    let x = (px as f32 + (sx as f32 + 0.5) / SAMPLES as f32) / scale;
-                    let y = (py as f32 + (sy as f32 + 0.5) / SAMPLES as f32) / scale;
-                    sum += coverage(x, y);
-                }
-            }
-            let alpha = sum / (SAMPLES * SAMPLES) as f32;
-            rgba.extend_from_slice(&[0, 0, 0, (alpha * 255.0).round() as u8]);
-        }
-    }
-    rgba
+    TEMPLATE_RGBA
+        .chunks_exact(4)
+        .flat_map(|p| [0, 0, 0, p[3]])
+        .collect()
 }
 
 pub fn create(app: &AppHandle) -> tauri::Result<()> {
@@ -138,15 +103,15 @@ mod tests {
     }
 
     #[test]
-    fn template_icon_is_black_bars_with_the_led_cut_out() {
+    fn template_icon_is_the_logo_silhouette_in_black() {
         let rgba = template_rgba();
         assert_eq!(rgba.len(), (TEMPLATE_SIZE * TEMPLATE_SIZE * 4) as usize);
         assert!(rgba.chunks(4).all(|p| p[..3] == [0, 0, 0]));
-        // Centro de la primera bandeja (más opaca) y de la última.
-        assert!(alpha(&rgba, 24, 9) > 230);
-        assert!((130..150).contains(&alpha(&rgba, 24, 28)));
-        // La luz (6.5, 6) y el margen quedan transparentes.
-        assert_eq!(alpha(&rgba, 9, 9), 0);
-        assert_eq!(alpha(&rgba, 1, 1), 0);
+        // El anillo arriba y la tapa del servidor son opacos.
+        assert!(alpha(&rgba, 18, 2) > 150);
+        assert!(alpha(&rgba, 18, 12) > 200);
+        // Fuera del anillo, transparente.
+        assert_eq!(alpha(&rgba, 0, 0), 0);
+        assert_eq!(alpha(&rgba, 35, 35), 0);
     }
 }

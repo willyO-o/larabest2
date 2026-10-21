@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <!-- Logo de LaraBest: servidor de tres bandejas con </> dentro de un anillo.
+       Fuente de los íconos de la app (npx tauri icon src-tauri/icons/logo.svg). -->
+  <circle cx="128" cy="128" r="114" fill="#ffffff" stroke="#1d63ed" stroke-width="13" />
+  <g stroke-linejoin="round">
+    <!-- Bandeja de abajo -->
+    <polygon points="66,144 128,176 128,200 66,168" fill="#1f2a44" />
+    <polygon points="128,176 190,144 190,168 128,200" fill="#283554" />
+    <!-- Bandeja del medio -->
+    <polygon points="66,114 128,146 128,170 66,138" fill="#1f2a44" />
+    <polygon points="128,146 190,114 190,138 128,170" fill="#283554" />
+    <!-- Bandeja de arriba con su tapa -->
+    <polygon points="128,52 190,84 128,116 66,84" fill="#3a4766" />
+    <polygon points="66,84 128,116 128,140 66,108" fill="#1f2a44" />
+    <polygon points="128,116 190,84 190,108 128,140" fill="#283554" />
+  </g>
+  <!-- Luces de cada bandeja -->
+  <g fill="#ffffff">
+    <circle cx="160" cy="111.5" r="4.5" />
+    <circle cx="174" cy="104.3" r="4.5" />
+    <circle cx="160" cy="141.5" r="4.5" />
+    <circle cx="174" cy="134.3" r="4.5" />
+    <circle cx="160" cy="171.5" r="4.5" />
+    <circle cx="174" cy="164.3" r="4.5" />
+  </g>
+  <!-- </> con contorno blanco, como en el logo -->
+  <g fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M160 168 L144 182 L160 196 M184 160 L170 204 M194 168 L210 182 L194 196"
+      stroke="#ffffff" stroke-width="24" />
+    <path d="M160 168 L144 182 L160 196 M184 160 L170 204 M194 168 L210 182 L194 196"
+      stroke="#1d63ed" stroke-width="11" />
+  </g>
+</svg>

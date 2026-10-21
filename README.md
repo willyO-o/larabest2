@@ -1,3 +1,5 @@
+<p align="center"><img src="src-tauri/icons/logo.svg" width="120" alt="Logo de LaraBest"></p>
+
 # LARABEST
 
 Servidor local para Windows (10, 11 y Server 2016 en adelante; 7, 8 y Server 2012 con el instalador legacy) y para macOS 13 o posterior, inspirado en Laragon: gestiona **Nginx** (o **Apache**), **PHP** y **MariaDB** como procesos propios y crea un dominio `<carpeta>.test` por cada proyecto de `www/`. Hecho con Tauri 2, Rust y Vue 3.
@@ -485,6 +487,19 @@ El CI de Windows (job `servicios`) agrega todo el catálogo desde **Menú → Ag
 ## Desarrollo
 
 Requisitos: Node 22, Rust estable y, en Windows, las herramientas de compilación de Visual Studio con WebView2.
+
+Íconos y logo: todo sale de `src-tauri/icons/logo.svg` (y su silueta `tray-template.svg` para la barra de menús de macOS). Para regenerarlos tras cambiar el logo:
+
+```bash
+npx tauri icon src-tauri/icons/logo.svg -o tmp-icons          # ventana, barra de tareas, .exe, .ico, .icns
+# copia a src-tauri/icons: 32x32.png 64x64.png 128x128.png 128x128@2x.png icon.png icon.ico icon.icns
+npx tauri icon src-tauri/icons/logo.svg -o tmp-logo -p 48 -p 120
+npx tauri icon src-tauri/icons/tray-template.svg -o tmp-tray -p 36
+node scripts/brand-assets.mjs tmp-logo/48x48.png tmp-logo/120x120.png tmp-tray/36x36.png   # bandeja de macOS e imágenes del instalador
+cp src-tauri/icons/logo.svg public/logo.svg                   # favicon
+```
+
+Después de cambiar los íconos, `cargo clean -p larabest` antes de compilar: Cargo no siempre nota el cambio y deja el ícono anterior en el `.exe`.
 
 Instalador legacy (Windows 7, 8 y Server 2012), en Windows:
 

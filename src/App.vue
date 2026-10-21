@@ -117,7 +117,11 @@ function openMenu(e?: MouseEvent) {
   <div class="app" @contextmenu.prevent="openMenu()">
     <header class="band" :data-stack="stack">
       <BrandMark />
-      <span class="band-name">{{ settings.settings?.appName ?? 'LARABEST' }}</span>
+      <!-- Como en el logo: "Lara" en el color del texto y "Best" en azul. -->
+      <span class="band-name" aria-label="LaraBest">
+        <span aria-hidden="true">Lara</span
+        ><span class="band-name-accent" aria-hidden="true">Best</span>
+      </span>
       <span v-if="settings.appVersion" class="band-version">{{ settings.appVersion }}</span>
       <span class="band-summary" role="status">{{ summary }}</span>
       <ThemeSwitch />
