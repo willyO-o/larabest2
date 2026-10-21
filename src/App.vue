@@ -6,10 +6,12 @@ import AppIcon from './components/AppIcon.vue'
 import BrandMark from './components/BrandMark.vue'
 import CreateSitePanel from './components/CreateSitePanel.vue'
 import ServiceRow from './components/ServiceRow.vue'
+import ServicesPanel from './components/ServicesPanel.vue'
 import ThemeSwitch from './components/ThemeSwitch.vue'
 import { attempt, lastError } from './lib/errors'
 import { SERVICE_LABEL, useServicesStore } from './stores/services'
 import { useInstallsStore } from './stores/installs'
+import { useServicesPanelStore } from './stores/servicesPanel'
 import { useSettingsStore } from './stores/settings'
 import { useSitesStore } from './stores/sites'
 
@@ -17,9 +19,16 @@ const services = useServicesStore()
 const sites = useSitesStore()
 const settings = useSettingsStore()
 const installs = useInstallsStore()
+const servicesPanel = useServicesPanelStore()
 
 onMounted(async () => {
-  await Promise.all([services.init(), sites.init(), settings.init(), installs.init()])
+  await Promise.all([
+    services.init(),
+    sites.init(),
+    settings.init(),
+    installs.init(),
+    servicesPanel.init(),
+  ])
   // La ventana se crea oculta: se muestra cuando ya está pintada con su tema.
   requestAnimationFrame(() => attempt(() => invoke('app_ready')))
 })
@@ -28,13 +37,17 @@ onMounted(async () => {
 const ROW_HEIGHT = 46
 /** Alto de la ventana con las tres filas de la pila base. */
 const BASE_HEIGHT = 380
+/** Alto mínimo con Servicios y puertos abierto: entran todas sus filas. */
+const SERVICES_PANEL_HEIGHT = 540
 
 // Cada servicio opcional activo suma una fila: la ventana crece con ellas.
+// Con Servicios y puertos abierto crece lo necesario y al cerrarlo vuelve.
 watch(
-  () => services.list.length,
-  (rows) => {
+  [() => services.list.length, () => servicesPanel.open],
+  ([rows, panelOpen]) => {
     if (!rows) return
-    const height = BASE_HEIGHT + Math.max(0, rows - 3) * ROW_HEIGHT
+    const fit = BASE_HEIGHT + Math.max(0, rows - 3) * ROW_HEIGHT
+    const height = panelOpen ? Math.max(fit, SERVICES_PANEL_HEIGHT) : fit
     attempt(() => invoke('window_fit', { height }))
   },
   { immediate: true },
@@ -100,6 +113,15 @@ function openMenu(e?: MouseEvent) {
       <span v-if="settings.appVersion" class="band-version">{{ settings.appVersion }}</span>
       <span class="band-summary" role="status">{{ summary }}</span>
       <ThemeSwitch />
+      <button
+        class="band-icon"
+        aria-label="Servicios y puertos"
+        title="Servicios y puertos"
+        :aria-expanded="servicesPanel.open"
+        @click="servicesPanel.open ? servicesPanel.close() : servicesPanel.show()"
+      >
+        <AppIcon name="gear" />
+      </button>
       <button class="band-menu" aria-haspopup="menu" @click="openMenu($event)">
         Menú <AppIcon name="chevron" class="band-chev" />
       </button>
@@ -166,5 +188,6 @@ function openMenu(e?: MouseEvent) {
     </footer>
 
     <CreateSitePanel />
+    <ServicesPanel />
   </div>
 </template>

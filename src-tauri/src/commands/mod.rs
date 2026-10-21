@@ -7,9 +7,11 @@ use tauri::{AppHandle, Emitter, State};
 use tauri_plugin_opener::OpenerExt;
 
 use crate::domain::{
-    slash, InstalledVersion, ServiceId, ServiceStatus, Site, SitePreset, ThemePreference,
+    slash, InstalledVersion, PortSettings, ServiceId, ServiceStatus, Site, SitePreset,
+    ThemePreference,
 };
 use crate::error::AppError;
+use crate::usecases::{PortBusy, ServicesChoice, ServicesSettings};
 use crate::{menu, settings, tray, AppState};
 
 #[tauri::command]
@@ -91,9 +93,11 @@ pub async fn shell_open_terminal(
     state.core.open_terminal(cwd)
 }
 
+/// Botón Raíz: abre `www/`, donde están los proyectos (como el botón Root
+/// de Laragon). La carpeta raíz se abre desde el menú contextual.
 #[tauri::command]
 pub async fn shell_open_root(app: AppHandle, state: State<'_, AppState>) -> Result<(), AppError> {
-    open_path(&app, state.core.root())
+    open_path(&app, state.core.www())
 }
 
 #[tauri::command]
@@ -101,13 +105,16 @@ pub async fn shell_open_web(app: AppHandle, state: State<'_, AppState>) -> Resul
     open_url(&app, &state.core.web_url()?)
 }
 
-/// Botón "Base de datos": Adminer en `adminer.test`.
+/// Botón "Base de datos": HeidiSQL, Adminer o phpMyAdmin según Preferencias.
 #[tauri::command]
 pub async fn shell_open_database(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<(), AppError> {
-    open_url(&app, &state.core.database_url()?)
+    if let Some(url) = state.core.open_database()? {
+        open_url(&app, &url)?;
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -138,6 +145,36 @@ pub struct Settings {
     pub default_root: String,
     pub theme: ThemePreference,
     pub ssl: bool,
+}
+
+/// Preferencias → Servicios y puertos.
+#[tauri::command]
+pub async fn services_settings_get(
+    state: State<'_, AppState>,
+) -> Result<ServicesSettings, AppError> {
+    state.core.services_settings()
+}
+
+/// Puertos del formulario que ya ocupa otro programa.
+#[tauri::command]
+pub async fn services_settings_busy(
+    state: State<'_, AppState>,
+    ports: PortSettings,
+) -> Result<Vec<PortBusy>, AppError> {
+    Ok(state.core.busy_ports(&ports))
+}
+
+/// Guarda el panel. Las filas cambian con los eventos `service:state`.
+#[tauri::command]
+pub async fn services_settings_save(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    choice: ServicesChoice,
+) -> Result<(), AppError> {
+    let result = state.core.save_services(choice).await;
+    // Menú y bandeja con los servicios nuevos, aunque algo haya fallado.
+    tray::rebuild(&app);
+    result
 }
 
 #[tauri::command]

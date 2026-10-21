@@ -242,6 +242,19 @@ fn setup(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
             tray::show_error(&app, &e.to_string());
             return;
         }
+        // HeidiSQL y Notepad++ vienen dentro del instalador de Windows: se
+        // extraen en bin/ la primera vez o si el instalador trae otra versión.
+        if let Some(bundled) = app
+            .path()
+            .resource_dir()
+            .ok()
+            .map(|dir| dir.join("bundled"))
+            .filter(|dir| dir.is_dir())
+        {
+            if let Err(e) = core.provision_bundled(&bundled).await {
+                tray::show_error(&app, &e.to_string());
+            }
+        }
         // Si se cancela el permiso del archivo hosts, los sitios se marcan
         // como pendientes en la interfaz y se puede reintentar.
         let _ = core.sync_sites().await;
@@ -308,6 +321,9 @@ pub fn run() {
             commands::shell_open_site,
             commands::shell_open_site_folder,
             commands::settings_get,
+            commands::services_settings_get,
+            commands::services_settings_busy,
+            commands::services_settings_save,
             commands::settings_choose_root,
             commands::menu_popup,
             commands::settings_set_theme,

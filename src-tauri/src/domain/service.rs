@@ -42,6 +42,12 @@ impl ServiceId {
         Self::OPTIONAL.contains(&self)
     }
 
+    /// Se puede quitar de la pila: los opcionales y MariaDB (por ejemplo,
+    /// si se usa otro MySQL o solo PostgreSQL). PHP y el servidor web no.
+    pub fn can_disable(self) -> bool {
+        self.is_optional() || self == ServiceId::Mariadb
+    }
+
     pub fn is_web(self) -> bool {
         Self::WEB.contains(&self)
     }

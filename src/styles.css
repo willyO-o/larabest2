@@ -236,6 +236,40 @@ button:disabled {
   outline-color: #ffffff;
 }
 
+/* Engranaje (Servicios y puertos): mismo material que Menú y el tema. */
+.band-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  margin-left: 10px;
+  border-radius: var(--radius);
+  background: rgb(255 255 255 / 0.12);
+  color: rgb(255 255 255 / 0.85);
+  transition:
+    background-color 140ms ease,
+    color 140ms ease,
+    transform 140ms var(--ease-out);
+}
+
+.band-icon .icon {
+  width: 17px;
+  height: 17px;
+}
+
+.band-icon[aria-expanded='true'] {
+  background: rgb(255 255 255 / 0.26);
+  color: #ffffff;
+}
+
+.band-icon:active {
+  transform: scale(0.94);
+}
+
+.band-icon:focus-visible {
+  outline-color: #ffffff;
+}
+
 /* Selector de tema: tres botones dentro de la banda, mismo material que Menú. */
 .theme-switch {
   display: inline-flex;
@@ -925,6 +959,107 @@ button:disabled {
   color: var(--warn);
 }
 
+/* ---------------------------------------------------------------- servicios y puertos */
+
+.svc-table {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+  border-top: 1px solid var(--line);
+}
+
+.svc-row {
+  display: grid;
+  grid-template-columns: 140px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  min-height: 42px;
+  padding: 4px 2px;
+  border-bottom: 1px solid var(--line);
+}
+
+.svc-name {
+  font-size: 14px;
+  font-weight: 600;
+  /* Alinea los nombres sin casilla con los que la tienen. */
+  padding-left: 24px;
+}
+
+.svc-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding-left: 0;
+  cursor: default;
+}
+
+.svc-check input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.svc-row[data-off='true'] .svc-version,
+.svc-row[data-off='true'] .port {
+  opacity: 0.55;
+}
+
+.svc-version {
+  color: var(--ink-2);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.svc-version.is-missing {
+  color: var(--ink-3);
+}
+
+.svc-web {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  max-width: 200px;
+}
+
+.svc-web .segment {
+  height: 26px;
+}
+
+.svc-web .segment:disabled {
+  opacity: 0.45;
+}
+
+.svc-ports {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.port {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.port-caption {
+  color: var(--ink-3);
+  font-size: 12px;
+}
+
+.port-input {
+  width: 64px;
+  height: 28px;
+  padding: 0 8px;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.port-input[data-busy='true']:not([aria-invalid='true']) {
+  border-color: var(--warn);
+}
+
 /* ---------------------------------------------------------------- hover */
 
 @media (hover: hover) and (pointer: fine) {
@@ -934,6 +1069,10 @@ button:disabled {
   }
   .band-menu:hover {
     background: rgb(255 255 255 / 0.2);
+  }
+  .band-icon:hover:not([aria-expanded='true']) {
+    background: rgb(255 255 255 / 0.2);
+    color: #ffffff;
   }
   .row-btn:hover:not(:disabled) {
     background: var(--sunken);

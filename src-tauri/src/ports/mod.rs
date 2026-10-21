@@ -128,6 +128,10 @@ pub trait ShellLauncher: Send + Sync {
     /// Abre un archivo de texto (configuración o log) en el editor del
     /// sistema: `.conf` y `.cnf` no tienen programa asociado.
     fn open_in_editor(&self, path: &Path) -> Result<(), AppError>;
+    /// Abre un programa de escritorio (HeidiSQL, Notepad++) independiente
+    /// de la app: sigue abierto aunque se cierre. En Windows los
+    /// argumentos van tal cual, con las comillas que traigan.
+    fn launch(&self, program: &Path, args: &[String]) -> Result<(), AppError>;
 }
 
 /// PATH del usuario, para usar los programas de la app desde cualquier

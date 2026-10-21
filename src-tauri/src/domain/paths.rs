@@ -54,6 +54,20 @@ impl Paths {
     }
 
     /// Carpeta donde se copia `composer.phar` (opcional).
+    /// Carpeta de un programa incluido en el instalador (HeidiSQL, Notepad++).
+    pub fn bin_bundled(&self, tool: super::bundled::BundledTool) -> PathBuf {
+        self.bin().join(tool.key())
+    }
+
+    pub fn bundled_exe(&self, tool: super::bundled::BundledTool) -> PathBuf {
+        self.bin_bundled(tool).join(tool.exe())
+    }
+
+    /// Versiones de Node.js agregadas desde el menú: `bin/nodejs/<versión>/`.
+    pub fn bin_nodejs(&self) -> PathBuf {
+        self.bin().join("nodejs")
+    }
+
     pub fn bin_composer(&self) -> PathBuf {
         self.bin().join("composer")
     }

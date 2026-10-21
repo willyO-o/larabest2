@@ -30,7 +30,7 @@ const busy = computed(() => services.pending.has('all'))
     <button class="action" @click="settings.openTerminal()">
       <AppIcon name="terminal" /><span>Terminal</span>
     </button>
-    <button class="action" @click="settings.openRoot()">
+    <button class="action" title="Abrir la carpeta www" @click="settings.openRoot()">
       <AppIcon name="folder" /><span>Raíz</span>
     </button>
   </nav>

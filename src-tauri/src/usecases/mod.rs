@@ -1,11 +1,14 @@
 //! Casos de uso. Los comandos de Tauri solo llaman a estos métodos.
 
+mod bundled;
 mod create_site;
 mod install;
+mod services_settings;
 pub mod sites;
 mod ssl;
 
 pub use create_site::{COMPOSER_URL, WORDPRESS_URL};
+pub use services_settings::{PortBusy, ServiceToggle, ServicesChoice, ServicesSettings};
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::PathBuf;
@@ -525,6 +528,11 @@ impl Core {
         self.supervisor.deps().paths.root().to_path_buf()
     }
 
+    /// Carpeta de los proyectos: una subcarpeta por sitio.
+    pub fn www(&self) -> PathBuf {
+        self.supervisor.deps().paths.www()
+    }
+
     /// `http://localhost/`: lista de proyectos de `www/`.
     pub fn web_url(&self) -> Result<String, AppError> {
         let port = self.supervisor.deps().config.load()?.http_port;
@@ -536,10 +544,13 @@ impl Core {
     }
 
     /// Botón "Base de datos": Adminer o phpMyAdmin según Preferencias.
-    pub fn database_url(&self) -> Result<String, AppError> {
-        match self.supervisor.deps().config.load()?.database_client {
-            DatabaseClient::Adminer => self.adminer_url(ServiceId::Mariadb),
-            DatabaseClient::Phpmyadmin => self.phpmyadmin_url(),
+    /// Botón Base de datos: abre HeidiSQL y devuelve `None`, o devuelve la
+    /// dirección de Adminer o phpMyAdmin para abrirla en el navegador.
+    pub fn open_database(&self) -> Result<Option<String>, AppError> {
+        match self.database_client() {
+            DatabaseClient::Heidisql => self.open_heidisql().map(|()| None),
+            DatabaseClient::Adminer => self.adminer_url(ServiceId::Mariadb).map(Some),
+            DatabaseClient::Phpmyadmin => self.phpmyadmin_url().map(Some),
         }
     }
 
@@ -575,19 +586,29 @@ impl Core {
         Ok(())
     }
 
+    /// El elegido en Preferencias o, si no se eligió, HeidiSQL cuando está
+    /// instalado (Windows) y Adminer si no.
     pub fn database_client(&self) -> DatabaseClient {
-        self.supervisor
+        let chosen = self
+            .supervisor
             .deps()
             .config
             .load()
-            .map(|c| c.database_client)
-            .unwrap_or_default()
+            .ok()
+            .and_then(|c| c.db_client);
+        chosen.unwrap_or_else(|| {
+            if self.bundled_installed(crate::domain::bundled::BundledTool::Heidisql) {
+                DatabaseClient::Heidisql
+            } else {
+                DatabaseClient::Adminer
+            }
+        })
     }
 
     pub fn set_database_client(&self, client: DatabaseClient) -> Result<(), AppError> {
         let deps = self.supervisor.deps();
         let mut cfg = deps.config.load()?;
-        cfg.database_client = client;
+        cfg.db_client = Some(client);
         deps.config.save(&cfg)
     }
 
@@ -629,7 +650,7 @@ impl Core {
     /// Activa o desactiva un servicio opcional en Preferencias. Si se
     /// desactiva mientras corre, se detiene.
     pub async fn set_service_enabled(&self, id: ServiceId, enabled: bool) -> Result<(), AppError> {
-        if !id.is_optional() {
+        if !id.can_disable() {
             return Err(AppError::InvalidInput(format!(
                 "{} siempre forma parte de la pila.",
                 id.label()
@@ -782,11 +803,6 @@ impl Core {
         let dirs = self.program_dirs()?;
         self.user_path
             .apply(self.supervisor.deps().paths.root(), &dirs)
-    }
-
-    /// Abre un archivo de configuración o log en el editor del sistema.
-    pub fn open_in_editor(&self, path: &std::path::Path) -> Result<(), AppError> {
-        self.shell.open_in_editor(path)
     }
 
     pub fn open_terminal(&self, cwd: Option<String>) -> Result<(), AppError> {

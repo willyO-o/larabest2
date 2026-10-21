@@ -1,5 +1,6 @@
 //! Tipos del dominio. Sin llamadas al sistema operativo.
 
+pub mod bundled;
 pub mod catalog;
 mod config;
 mod dotenv;
@@ -12,8 +13,8 @@ pub mod user_path;
 mod version;
 
 pub use config::{
-    ActiveVersions, AppConfig, DatabaseClient, OptionalServices, ThemePreference, WebServer,
-    DEFAULT_PHP_EXTENSIONS,
+    ActiveVersions, AppConfig, DatabaseClient, OptionalServices, PortSettings, ThemePreference,
+    WebServer, DEFAULT_PHP_EXTENSIONS,
 };
 pub use dotenv::set_env;
 pub use hosts::{decode_request, encode_request, merge_block, parse_block, HostEntry};

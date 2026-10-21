@@ -31,9 +31,10 @@ Clic derecho en cualquier parte de la ventana, el botón **Menú** o el ícono d
 | MariaDB | versión, `my.cnf` de ajustes propios, Adminer, phpMyAdmin, `my.cnf` generado, carpeta de datos, log de errores |
 | PostgreSQL, Redis, MongoDB, Mailpit | uno por cada servicio opcional en la pila (ver abajo) |
 | Logs | errores y accesos del servidor web, errores de PHP y de MariaDB, logs de los opcionales, carpeta de logs |
-| Herramientas | Web, Base de datos, Correo (con Mailpit), Terminal, carpeta raíz, PATH (agregar o quitar la app del PATH) |
+| Herramientas | Web, Base de datos, Correo (con Mailpit), Terminal, carpeta www, PATH (agregar o quitar la app del PATH) |
+| Carpeta raíz (`C:\LARABEST`) | abre la carpeta raíz en uso; muestra su ruta |
 | Agregar | descargar versiones y herramientas (ver abajo) |
-| Preferencias | tema (Sistema, Claro, Oscuro), servidor web (Nginx o Apache), servicios opcionales, botón Base de datos (Adminer o phpMyAdmin), iniciar todo al abrir, HTTPS para los sitios `.test`, carpeta de certificados, cambiar la carpeta raíz, abrir `app.json` |
+| Preferencias | tema (Sistema, Claro, Oscuro), servidor web (Nginx o Apache), **Servicios y puertos…** (qué servicios arrancan y en qué puertos), botón Base de datos (Adminer o phpMyAdmin), iniciar todo al abrir, HTTPS para los sitios `.test`, carpeta de certificados, cambiar la carpeta raíz, abrir `app.json` |
 
 Lo generado (`etc\nginx\nginx.conf`, `etc\php\php.ini`, `etc\mariadb\my.cnf`) se regenera en cada inicio: ábrelo solo para consultarlo. Tus ajustes van en archivos que nunca se regeneran:
 
@@ -91,7 +92,25 @@ El botón **Base de datos** abre Adminer en `http://adminer.test` (con MariaDB c
 
 ## Servicios opcionales
 
-Además de la pila base (Nginx, PHP y MariaDB), la app gestiona cuatro servicios opcionales. Cada uno aparece como una fila más (la ventana crece) y arranca con **Iniciar todo** en cuanto está instalado; en **Menú → Preferencias → Servicios** se puede quitar o volver a poner en la pila. Al quitarlo, si estaba en marcha, se detiene.
+Además de la pila base (Nginx, PHP y MariaDB), la app gestiona cuatro servicios opcionales. Cada uno aparece como una fila más (la ventana crece) y arranca con **Iniciar todo** en cuanto está instalado; en **Menú → Preferencias → Servicios y puertos…** se puede quitar o volver a poner en la pila. Al quitarlo, si estaba en marcha, se detiene.
+
+## Servicios y puertos
+
+El **engranaje** de la cabecera (junto al tema y a **Menú**) abre un panel con una fila por servicio; la ventana crece mientras está abierto. También se llega por **Menú → Preferencias → Servicios y puertos…**, útil desde la bandeja con la ventana oculta.
+
+| Fila | Qué se elige |
+| --- | --- |
+| Servidor web | Nginx o Apache (el que no está instalado aparece apagado) y los puertos HTTP y HTTPS |
+| PHP | puerto FastCGI; en Windows usa ese y los siguientes, uno por `php-cgi` (por defecto 9000–9003). Siempre activo |
+| MariaDB | activar o quitar de la pila (por ejemplo, si usas el MySQL de otro programa) y su puerto |
+| PostgreSQL, Redis, MongoDB | activar o quitar, y su puerto. Sin instalar, la casilla está apagada: agrégalos desde **Menú → Agregar** |
+| Mailpit | activar o quitar, y sus puertos SMTP y web |
+
+- No deja guardar dos servicios en el mismo puerto (aunque uno esté desactivado: al activarlo chocarían) ni puertos fuera de 1–65535.
+- Mientras escribes, avisa si un puerto ya lo ocupa otro programa (por ejemplo `mysqld.exe` de Laragon o XAMPP en el 3306) para que cambies el puerto o cierres ese programa. Es solo un aviso: se puede guardar igual.
+- Al guardar, solo se reinician los servicios afectados que estén en marcha: cambiar el puerto de MariaDB reinicia MariaDB; el de PHP reinicia PHP y el servidor web; el SMTP de Mailpit reinicia Mailpit y PHP (va en su `php.ini`). Los detenidos solo regeneran su configuración.
+- Con un puerto HTTP o HTTPS distinto de 80 o 443, las direcciones de los sitios lo llevan (`http://blog.test:8080`). Adminer y phpMyAdmin usan el puerto nuevo de MariaDB solos.
+- Los sitios ya creados guardan el puerto de MariaDB, Redis o el SMTP en su `wp-config.php` o `.env`: si cambias alguno, el panel lo recuerda para que lo cambies también ahí.
 
 | Servicio | Puerto | Para qué | Windows (en `bin\<servicio>\<versión>\`) | macOS |
 | --- | --- | --- | --- | --- |
@@ -238,7 +257,7 @@ Prepara `bin\` como se describe arriba y crea `www\blog\index.php` con `<?php ph
 - [ ] **Web** abre `http://localhost/` con la lista de carpetas de `www\`.
 - [ ] **Base de datos** abre Adminer en `http://adminer.test`. Entra con servidor `127.0.0.1`, usuario `root` y sin contraseña. Crea una base de datos.
 - [ ] **Terminal** abre una consola en `www\` donde `php -v`, `mariadb --version`, `nginx -v` y `composer -V` (si copiaste Composer) funcionan. En una consola normal de Windows esos comandos siguen sin existir.
-- [ ] **Raíz** abre `C:\LARABEST` en el Explorador.
+- [ ] **Raíz** abre `C:\LARABEST\www` en el Explorador (como el botón *Root* de Laragon). **Menú → Carpeta raíz (C:\LARABEST)** abre la raíz.
 
 **Errores visibles**
 
@@ -288,7 +307,15 @@ Prepara `bin\` como se describe arriba y crea `www\blog\index.php` con `<?php ph
 **Servicios opcionales**
 
 - [ ] Copia Redis en `bin\redis\<versión>\`: al reabrir el menú (o la app) aparece la fila Redis y la ventana crece. **Iniciar todo** lo arranca.
-- [ ] **Menú → Preferencias → Servicios → Redis** lo quita de la pila: se detiene y su fila desaparece. Volver a marcarlo la trae de vuelta.
+- [ ] **Menú → Preferencias → Servicios y puertos…**, desmarcar Redis y **Guardar**: se detiene y su fila desaparece. Volver a marcarlo la trae de vuelta.
+
+**Servicios y puertos**
+
+- [ ] El engranaje de la cabecera abre y cierra el panel (queda resaltado mientras está abierto).
+- [ ] Con Laragon (o XAMPP) usando el 3306, al abrir el panel aparece el aviso «MariaDB (3306): lo ocupa mysqld.exe» y el campo en ámbar. Cambiar a 3307 quita el aviso; **Guardar** y **Iniciar todo**: MariaDB arranca y Adminer entra.
+- [ ] Escribir el mismo puerto en Redis y MariaDB: el error lo dice y **Guardar** queda apagado.
+- [ ] Con todo en marcha, cambiar el puerto HTTP a 8080 y guardar: solo se reinicia el servidor web y `http://blog.test:8080` funciona; el botón **Web** abre `http://localhost:8080/`.
+- [ ] Quitar MariaDB de la pila: su fila desaparece y **Iniciar todo** ya no la arranca.
 - [ ] Con PostgreSQL en `bin\postgresql\17.x\`: la primera vez crea `data\postgresql`; **Menú → PostgreSQL → Abrir Adminer** entra como `postgres` (con `pdo_pgsql` marcada en PHP).
 - [ ] Con MongoDB: arranca, y **Detener** lo cierra sin forzarlo (el log `logs\mongodb.log` muestra un cierre normal, sin «unclean shutdown» al volver a iniciarlo).
 - [ ] Con Mailpit: un sitio WordPress nuevo envía el correo de «¿Olvidaste tu contraseña?» y aparece en **Menú → Mailpit → Abrir el correo recibido**.

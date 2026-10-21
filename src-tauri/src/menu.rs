@@ -8,6 +8,7 @@ use tauri::menu::{
 use tauri::{AppHandle, Emitter, Manager, Wry};
 
 use crate::commands::{open_path, open_url};
+use crate::domain::bundled::BundledTool;
 use crate::domain::catalog;
 use crate::domain::{
     BinaryLayout, DatabaseClient, ServiceId, ServiceState, ThemePreference, WebServer,
@@ -214,7 +215,9 @@ pub fn build(app: &AppHandle, from_tray: bool) -> tauri::Result<Menu<Wry>> {
         open(app, "phpErrorLog", "Log de errores")?,
     ];
 
-    let mariadb = vec![
+    let heidisql = core.bundled_installed(BundledTool::Heidisql);
+    let notepadpp = core.bundled_installed(BundledTool::Notepadpp);
+    let mut mariadb = vec![
         versions(
             app,
             &state,
@@ -222,13 +225,18 @@ pub fn build(app: &AppHandle, from_tray: bool) -> tauri::Result<Menu<Wry>> {
             active(ServiceId::Mariadb).as_deref(),
         )?,
         open(app, "mariadbUserCnf", "my.cnf (ajustes propios)")?,
+    ];
+    if heidisql {
+        mariadb.push(text(app, "heidisql", "Abrir HeidiSQL")?);
+    }
+    mariadb.extend([
         text(app, "adminer:mariadb", "Abrir Adminer")?,
         text(app, "phpmyadmin", "Abrir phpMyAdmin")?,
         sep(app)?,
         open(app, "mariadbCnf", "my.cnf generado (solo lectura)")?,
         open(app, "mariadbData", "Carpeta de datos")?,
         open(app, "mariadbErrorLog", "Log de errores")?,
-    ];
+    ]);
 
     // Servicios opcionales que forman parte de la pila.
     let enabled: Vec<ServiceId> = ServiceId::OPTIONAL
@@ -294,6 +302,7 @@ pub fn build(app: &AppHandle, from_tray: bool) -> tauri::Result<Menu<Wry>> {
     let client_label = match client {
         DatabaseClient::Adminer => "Adminer",
         DatabaseClient::Phpmyadmin => "phpMyAdmin",
+        DatabaseClient::Heidisql => "HeidiSQL",
     };
     let mut tools = vec![
         text(app, "web", "Web (localhost)")?,
@@ -303,7 +312,11 @@ pub fn build(app: &AppHandle, from_tray: bool) -> tauri::Result<Menu<Wry>> {
         tools.push(text(app, "mailpit", "Correo (Mailpit)")?);
     }
     tools.push(text(app, "terminal", "Terminal")?);
-    tools.push(text(app, "root", "Carpeta raíz")?);
+    if notepadpp {
+        tools.push(text(app, "notepadpp", "Notepad++")?);
+    }
+    // Igual que el botón Raíz de la ventana.
+    tools.push(text(app, "root_www", "Carpeta www")?);
     // Herramientas → PATH, como en Laragon: php, composer y mariadb en
     // cualquier terminal, al día con la versión activa.
     let in_path = core.user_path_enabled();
@@ -325,23 +338,6 @@ pub fn build(app: &AppHandle, from_tray: bool) -> tauri::Result<Menu<Wry>> {
             )?,
         ],
     )?));
-
-    // Preferencias → Servicios: qué opcionales forman parte de la pila.
-    let mut services = Vec::new();
-    for id in ServiceId::OPTIONAL {
-        let installed = !core.versions(id).unwrap_or_default().is_empty();
-        let label = if installed {
-            id.label().to_string()
-        } else {
-            format!("{} (sin instalar)", id.label())
-        };
-        services.push(check(
-            app,
-            &format!("svc:{}", id.key()),
-            &label,
-            core.service_enabled(id),
-        )?);
-    }
 
     // Agregar: descargar versiones y herramientas (el "Quick add").
     let mut add = Vec::new();
@@ -368,7 +364,16 @@ pub fn build(app: &AppHandle, from_tray: bool) -> tauri::Result<Menu<Wry>> {
         check(app, "theme:light", "Claro", theme == ThemePreference::Light)?,
         check(app, "theme:dark", "Oscuro", theme == ThemePreference::Dark)?,
     ];
-    let clients = vec![
+    let mut clients = Vec::new();
+    if heidisql {
+        clients.push(check(
+            app,
+            "dbclient:heidisql",
+            "HeidiSQL",
+            client == DatabaseClient::Heidisql,
+        )?);
+    }
+    clients.extend([
         check(
             app,
             "dbclient:adminer",
@@ -381,7 +386,7 @@ pub fn build(app: &AppHandle, from_tray: bool) -> tauri::Result<Menu<Wry>> {
             "phpMyAdmin",
             client == DatabaseClient::Phpmyadmin,
         )?,
-    ];
+    ]);
     // Preferencias → Servidor web: Nginx o Apache.
     let mut web_servers = Vec::new();
     for (key, choice) in [("nginx", WebServer::Nginx), ("apache", WebServer::Apache)] {
@@ -396,7 +401,9 @@ pub fn build(app: &AppHandle, from_tray: bool) -> tauri::Result<Menu<Wry>> {
     let prefs = vec![
         Box::new(submenu(app, "Tema", themes)?) as Item,
         Box::new(submenu(app, "Servidor web", web_servers)?) as Item,
-        Box::new(submenu(app, "Servicios", services)?) as Item,
+        // Qué servicios forman parte de la pila y sus puertos: un panel en
+        // la ventana, porque los puertos se escriben.
+        text(app, "services_panel", "Servicios y puertos…")?,
         Box::new(submenu(app, "Botón Base de datos", clients)?) as Item,
         check(
             app,
@@ -444,6 +451,13 @@ pub fn build(app: &AppHandle, from_tray: bool) -> tauri::Result<Menu<Wry>> {
         .item(&submenu(app, "Herramientas", tools)?)
         .item(&submenu(app, "Agregar", add)?)
         .separator()
+        // La raíz en uso (se puede cambiar en Preferencias), a la vista.
+        .item(&*text(
+            app,
+            "root",
+            &format!("Carpeta raíz ({})", core.root().display()),
+        )?)
+        .separator()
         .item(&submenu(app, "Preferencias", prefs)?)
         .separator();
     if from_tray {
@@ -479,13 +493,21 @@ async fn run(app: &AppHandle, id: &str) -> Result<(), AppError> {
         "start_all" => return core.start_all().await,
         "stop_all" => return core.stop_all().await,
         "web" => return open_url(app, &core.web_url()?),
-        "database" => return open_url(app, &core.database_url()?),
+        "database" => {
+            if let Some(url) = core.open_database()? {
+                open_url(app, &url)?;
+            }
+            return Ok(());
+        }
+        "heidisql" => return core.open_heidisql(),
+        "notepadpp" => return core.open_notepadpp(),
         "adminer:postgresql" => return open_url(app, &core.adminer_url(ServiceId::Postgresql)?),
         "adminer:mariadb" => return open_url(app, &core.adminer_url(ServiceId::Mariadb)?),
         "phpmyadmin" => return open_url(app, &core.phpmyadmin_url()?),
         "mailpit" => return open_url(app, &core.mailpit_url()?),
         "terminal" => return core.open_terminal(None),
         "root" => return open_path(app, core.root()),
+        "root_www" => return open_path(app, core.www()),
         "web_reload" => return core.reload(core.web_server().service()).await,
         "hosts_sync" => return core.sync_sites().await.map(|_| ()),
         "auto_start" => return core.set_auto_start(!core.auto_start()),
@@ -525,6 +547,11 @@ async fn run(app: &AppHandle, id: &str) -> Result<(), AppError> {
             return Ok(());
         }
         _ => {}
+    }
+    if id == "services_panel" {
+        tray::show_main(app);
+        let _ = app.emit("ui:services", ());
+        return Ok(());
     }
     if let Some(preset) = id.strip_prefix("create:") {
         // El formulario vive en la ventana: se muestra y se le avisa.
@@ -573,12 +600,6 @@ async fn run(app: &AppHandle, id: &str) -> Result<(), AppError> {
             serde_json::from_value(serde_json::Value::String(client.into()))
                 .map_err(|_| AppError::InvalidInput(id.into()))?;
         return core.set_database_client(client);
-    }
-    if let Some(key) = id.strip_prefix("svc:") {
-        let service: ServiceId = serde_json::from_value(serde_json::Value::String(key.into()))
-            .map_err(|_| AppError::InvalidInput(id.into()))?;
-        let enabled = core.service_enabled(service);
-        return core.set_service_enabled(service, !enabled).await;
     }
     if let Some(name) = id.strip_prefix("ext:") {
         let enabled = core

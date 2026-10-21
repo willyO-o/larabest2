@@ -121,20 +121,20 @@ async fn database_url_needs_adminer_and_nginx() {
     let h = Harness::new();
     let core = h.core();
     assert!(core
-        .database_url()
+        .open_database()
         .unwrap_err()
         .to_string()
         .contains("adminer.php"));
     h.fs.write(Path::new(&format!("{ROOT}/bin/adminer/adminer.php")), "")
         .unwrap();
     assert!(core
-        .database_url()
+        .open_database()
         .unwrap_err()
         .to_string()
         .contains("Inicia Nginx"));
     core.start(ServiceId::Nginx).await.unwrap();
     assert_eq!(
-        core.database_url().unwrap(),
+        core.open_database().unwrap().unwrap(),
         "http://adminer.test/?server=127.0.0.1:3306&username=root"
     );
 }
@@ -563,7 +563,8 @@ async fn enabling_ssl_trusts_ca_issues_certs_and_switches_urls() {
     let sent = h.events.sites.lock().unwrap().last().unwrap().clone();
     assert_eq!(sent[0].url, "https://blog.test/");
     assert!(core
-        .database_url()
+        .open_database()
+        .unwrap()
         .unwrap()
         .starts_with("https://adminer.test/?"));
     // Nginx se reinició para tomar el puerto 443.
@@ -741,7 +742,7 @@ async fn adminer_opens_mariadb_or_postgresql_without_password() {
         "http://adminer.test/?pgsql=127.0.0.1:5432&username=postgres"
     );
     assert_eq!(
-        core.database_url().unwrap(),
+        core.open_database().unwrap().unwrap(),
         "http://adminer.test/?server=127.0.0.1:3306&username=root"
     );
 }
@@ -826,10 +827,10 @@ async fn phpmyadmin_is_served_registered_and_can_be_the_database_button() {
 
     core.start(ServiceId::Nginx).await.unwrap();
     // Adminer sigue siendo el botón por defecto (y no está instalado).
-    assert!(core.database_url().is_err());
+    assert!(core.open_database().is_err());
     core.set_database_client(crate::domain::DatabaseClient::Phpmyadmin)
         .unwrap();
-    assert_eq!(core.database_url().unwrap(), "http://phpmyadmin.test/");
+    assert_eq!(core.open_database().unwrap().unwrap(), "http://phpmyadmin.test/");
 
     let err = core
         .create_site("phpMyAdmin", SitePreset::Blank)
@@ -1008,10 +1009,10 @@ async fn with_apache_the_sites_are_its_vhosts_and_windows_restarts_it() {
 
     h.fs.write(Path::new(&format!("{ROOT}/bin/adminer/adminer.php")), "")
         .unwrap();
-    assert!(core.database_url().is_ok());
+    assert!(core.open_database().is_ok());
     core.stop(ServiceId::Apache).await.unwrap();
     assert!(core
-        .database_url()
+        .open_database()
         .unwrap_err()
         .to_string()
         .contains("Inicia Apache"));
@@ -1143,4 +1144,248 @@ async fn user_path_on_macos_uses_the_homebrew_programs() {
         "{dirs:?}"
     );
     assert!(dirs.iter().all(|d| !d.contains('\\')), "{dirs:?}");
+}
+
+fn choice(ports: crate::domain::PortSettings) -> crate::usecases::ServicesChoice {
+    crate::usecases::ServicesChoice {
+        web_server: WebServer::Nginx,
+        enabled: Vec::new(),
+        ports,
+    }
+}
+
+#[tokio::test]
+async fn changing_a_port_restarts_only_the_services_that_use_it() {
+    let h = Harness::new();
+    let core = h.core();
+    core.start_all().await.unwrap();
+    let before = h.runner.spawned().len();
+
+    let mut ports = h.config.get().ports();
+    ports.mariadb = 3307;
+    core.set_ports(ports).await.unwrap();
+
+    assert_eq!(h.config.get().mariadb_port, 3307);
+    let new: Vec<_> = h.runner.spawned()[before..].to_vec();
+    assert!(!new.is_empty());
+    assert!(
+        new.iter().all(|s| s.exe_name().starts_with("mariadbd")),
+        "{:?}",
+        new.iter().map(|s| s.exe_name()).collect::<Vec<_>>()
+    );
+    assert!(h
+        .fs
+        .read(&format!("{ROOT}/etc/mariadb/my.cnf"))
+        .contains("3307"));
+    assert_eq!(
+        h.supervisor.state(ServiceId::Mariadb),
+        ServiceState::Running
+    );
+}
+
+#[tokio::test]
+async fn php_port_change_restarts_php_and_the_web_server() {
+    let h = Harness::new();
+    let core = h.core();
+    core.start_all().await.unwrap();
+    let before = h.runner.spawned().len();
+    h.ports.set_listening(&[80, 9100, 9101, 9102, 9103]);
+
+    let mut ports = h.config.get().ports();
+    ports.php = 9100;
+    core.set_ports(ports).await.unwrap();
+
+    let names: Vec<String> = h.runner.spawned()[before..]
+        .iter()
+        .map(|s| s.exe_name())
+        .collect();
+    assert_eq!(
+        names.iter().filter(|n| n.starts_with("php-cgi")).count(),
+        4,
+        "{names:?}"
+    );
+    assert!(names.iter().any(|n| n.starts_with("nginx")), "{names:?}");
+    assert!(
+        !names.iter().any(|n| n.starts_with("mariadbd")),
+        "{names:?}"
+    );
+    assert!(h
+        .fs
+        .read(&format!("{ROOT}/etc/nginx/nginx.conf"))
+        .contains("127.0.0.1:9100"));
+}
+
+#[tokio::test]
+async fn repeated_ports_change_nothing() {
+    let h = Harness::new();
+    let mut ports = h.config.get().ports();
+    ports.redis = 3306;
+    let err = h.core().save_services(choice(ports)).await.unwrap_err();
+    assert!(err.to_string().contains("repetido"), "{err}");
+    assert_eq!(h.config.get().redis_port, 6379);
+}
+
+#[tokio::test]
+async fn http_port_change_puts_the_port_in_site_urls() {
+    let h = Harness::new();
+    h.fs.create_dir_all(Path::new(&format!("{ROOT}/www/blog")))
+        .unwrap();
+    let mut ports = h.config.get().ports();
+    ports.http = 8080;
+    h.core().set_ports(ports).await.unwrap();
+    let sites = h.events.sites.lock().unwrap().last().cloned().unwrap();
+    assert_eq!(sites[0].url, "http://blog.test:8080/");
+}
+
+#[tokio::test]
+async fn mariadb_can_be_removed_from_the_stack() {
+    let h = Harness::new();
+    let core = h.core();
+    let mut c = choice(h.config.get().ports());
+    c.enabled = vec![crate::usecases::ServiceToggle {
+        id: ServiceId::Mariadb,
+        enabled: false,
+    }];
+    core.save_services(c).await.unwrap();
+    core.start_all().await.unwrap();
+    assert!(!h
+        .runner
+        .spawned()
+        .iter()
+        .any(|s| s.exe_name().starts_with("mariadbd")));
+    assert_eq!(h.supervisor.state(ServiceId::Nginx), ServiceState::Running);
+
+    // PHP no se puede quitar.
+    let mut c = choice(h.config.get().ports());
+    c.enabled = vec![crate::usecases::ServiceToggle {
+        id: ServiceId::Php,
+        enabled: false,
+    }];
+    assert!(core.save_services(c).await.is_err());
+}
+
+#[tokio::test]
+async fn busy_ports_name_the_other_program_but_not_our_running_services() {
+    let h = Harness::new();
+    let core = h.core();
+    h.ports.set_busy(3306, "mysqld.exe");
+    let busy = core.busy_ports(&h.config.get().ports());
+    assert_eq!(busy.len(), 1);
+    assert_eq!(busy[0].port, 3306);
+    assert_eq!(busy[0].program, "mysqld.exe");
+
+    // Nginx en marcha ocupa el 80: es nuestro, no se avisa.
+    core.start(ServiceId::Nginx).await.unwrap();
+    h.ports.set_busy(80, "nginx.exe");
+    let busy = core.busy_ports(&h.config.get().ports());
+    assert!(!busy.iter().any(|b| b.port == 80), "{busy:?}");
+}
+
+const BUNDLED: &str = "C:/Programas/LARABEST/bundled";
+
+#[tokio::test]
+async fn bundled_tools_are_extracted_once_and_keep_user_settings() {
+    use crate::domain::bundled::BundledTool;
+    let h = Harness::new();
+    let core = h.core();
+    h.fs.write(Path::new(&format!("{BUNDLED}/heidisql-12.21.zip")), "")
+        .unwrap();
+    h.fs.write(Path::new(&format!("{BUNDLED}/notepad++-8.9.8.1.zip")), "")
+        .unwrap();
+    h.fs.write(Path::new(&format!("{BUNDLED}/LICENCIAS.txt")), "GPL")
+        .unwrap();
+    h.archive.contains(&["heidisql.exe", "notepad++.exe"]);
+
+    let done = core.provision_bundled(Path::new(BUNDLED)).await.unwrap();
+    assert_eq!(done, vec!["HeidiSQL 12.21", "Notepad++ 8.9.8.1"]);
+    assert!(core.bundled_installed(BundledTool::Heidisql));
+    // Modo portable: ajustes junto al .exe, no en el registro ni en %APPDATA%.
+    assert_eq!(
+        h.fs.read(&format!("{ROOT}/bin/heidisql/portable_settings.txt")),
+        ""
+    );
+    assert!(h
+        .fs
+        .exists(Path::new(&format!("{ROOT}/bin/notepad++/doLocalConf.xml"))));
+
+    // Ya extraídos: no se vuelve a hacer.
+    assert!(core
+        .provision_bundled(Path::new(BUNDLED))
+        .await
+        .unwrap()
+        .is_empty());
+
+    // Otra versión en el instalador: se actualiza sin pisar las sesiones.
+    h.fs.write(
+        Path::new(&format!("{ROOT}/bin/heidisql/portable_settings.txt")),
+        "Servers.LARABEST",
+    )
+    .unwrap();
+    h.fs.remove_file(Path::new(&format!("{BUNDLED}/heidisql-12.21.zip")))
+        .unwrap();
+    h.fs.write(Path::new(&format!("{BUNDLED}/heidisql-12.22.zip")), "")
+        .unwrap();
+    let done = core.provision_bundled(Path::new(BUNDLED)).await.unwrap();
+    assert_eq!(done, vec!["HeidiSQL 12.22"]);
+    assert_eq!(
+        h.fs.read(&format!("{ROOT}/bin/heidisql/portable_settings.txt")),
+        "Servers.LARABEST"
+    );
+}
+
+#[tokio::test]
+async fn database_button_opens_heidisql_connected_when_installed() {
+    let h = Harness::new();
+    let core = h.core();
+    h.fs.write(Path::new(&format!("{ROOT}/bin/heidisql/heidisql.exe")), "")
+        .unwrap();
+    assert_eq!(
+        core.database_client(),
+        crate::domain::DatabaseClient::Heidisql
+    );
+    let err = core.open_database().unwrap_err();
+    assert!(err.to_string().contains("Inicia MariaDB"), "{err}");
+
+    core.start(ServiceId::Mariadb).await.unwrap();
+    assert_eq!(core.open_database().unwrap(), None);
+    let launched = h.shell.launched.lock().unwrap().clone();
+    assert_eq!(launched[0].0, format!("{ROOT}/bin/heidisql/heidisql.exe"));
+    assert_eq!(
+        launched[0].1,
+        vec!["-n=0", "-h=\"127.0.0.1\"", "-P=3306", "-u=root", "-p="]
+    );
+
+    // Elegir otro cliente en Preferencias lo cambia.
+    core.set_database_client(crate::domain::DatabaseClient::Adminer)
+        .unwrap();
+    assert_eq!(
+        core.database_client(),
+        crate::domain::DatabaseClient::Adminer
+    );
+}
+
+#[tokio::test]
+async fn without_heidisql_the_button_keeps_adminer() {
+    let h = Harness::new();
+    assert_eq!(
+        h.core().database_client(),
+        crate::domain::DatabaseClient::Adminer
+    );
+}
+
+#[tokio::test]
+async fn config_files_open_in_notepadpp_when_installed() {
+    let h = Harness::new();
+    let core = h.core();
+    core.open_in_editor(Path::new("C:/APP/etc/php/php.ini"))
+        .unwrap();
+    assert_eq!(*h.shell.edited.lock().unwrap(), vec!["C:/APP/etc/php/php.ini"]);
+
+    h.fs.write(Path::new(&format!("{ROOT}/bin/notepad++/notepad++.exe")), "")
+        .unwrap();
+    core.open_in_editor(Path::new("C:/APP/etc/php/php.ini"))
+        .unwrap();
+    let launched = h.shell.launched.lock().unwrap().clone();
+    assert_eq!(launched[0].0, format!("{ROOT}/bin/notepad++/notepad++.exe"));
+    assert_eq!(launched[0].1, vec![r#""C:\APP\etc\php\php.ini""#]);
 }

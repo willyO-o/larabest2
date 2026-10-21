@@ -48,11 +48,13 @@ impl ActiveVersions {
     }
 }
 
-/// Servicios opcionales elegidos en Preferencias. `None`: activo si está
-/// instalado, así lo recién instalado aparece solo.
+/// Servicios que se pueden quitar de la pila en Preferencias → Servicios y
+/// puertos (los opcionales y MariaDB). `None`: activo si está instalado,
+/// así lo recién instalado aparece solo.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct OptionalServices {
+    pub mariadb: Option<bool>,
     pub postgresql: Option<bool>,
     pub redis: Option<bool>,
     pub mongodb: Option<bool>,
@@ -62,6 +64,9 @@ pub struct OptionalServices {
 impl OptionalServices {
     pub fn get(&self, id: ServiceId) -> Option<bool> {
         match id {
+            // Parte de la pila base: activo salvo que se quite a propósito,
+            // así su fila (aunque diga "sin instalar") guía al usuario.
+            ServiceId::Mariadb => Some(self.mariadb.unwrap_or(true)),
             ServiceId::Postgresql => self.postgresql,
             ServiceId::Redis => self.redis,
             ServiceId::Mongodb => self.mongodb,
@@ -72,6 +77,7 @@ impl OptionalServices {
 
     pub fn set(&mut self, id: ServiceId, enabled: bool) {
         match id {
+            ServiceId::Mariadb => self.mariadb = Some(enabled),
             ServiceId::Postgresql => self.postgresql = Some(enabled),
             ServiceId::Redis => self.redis = Some(enabled),
             ServiceId::Mongodb => self.mongodb = Some(enabled),
@@ -116,6 +122,8 @@ pub enum DatabaseClient {
     #[default]
     Adminer,
     Phpmyadmin,
+    /// Programa de escritorio incluido en el instalador de Windows.
+    Heidisql,
 }
 
 /// Extensiones que piden Laravel y WordPress (más `pdo_sqlite`); activas
@@ -156,7 +164,10 @@ pub struct AppConfig {
     pub https_port: u16,
     pub services: OptionalServices,
     pub web_server: WebServer,
-    pub database_client: DatabaseClient,
+    /// Qué abre el botón Base de datos. `None`: HeidiSQL si está instalado
+    /// y, si no, Adminer. (Reemplaza a `databaseClient`, que guardaba
+    /// siempre Adminer y no dejaba que HeidiSQL fuera el predeterminado.)
+    pub db_client: Option<DatabaseClient>,
     pub postgresql_port: u16,
     pub redis_port: u16,
     pub mongodb_port: u16,
@@ -167,6 +178,8 @@ pub struct AppConfig {
     /// Programas activos (PHP, MariaDB, servidor web, Composer) en el PATH
     /// del usuario, al día con cada cambio de versión.
     pub user_path: bool,
+    /// Versión de Node.js de la terminal y el PATH. `None`: la más nueva.
+    pub node_version: Option<String>,
 }
 
 impl Default for AppConfig {
@@ -185,18 +198,106 @@ impl Default for AppConfig {
             https_port: 443,
             services: OptionalServices::default(),
             web_server: WebServer::Nginx,
-            database_client: DatabaseClient::Adminer,
+            db_client: None,
             postgresql_port: 5432,
             redis_port: 6379,
             mongodb_port: 27017,
             mailpit_smtp_port: 1025,
             mailpit_http_port: 8025,
             user_path: false,
+            node_version: None,
         }
     }
 }
 
+/// Puertos que se cambian en Preferencias → Servicios y puertos.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PortSettings {
+    pub http: u16,
+    pub https: u16,
+    /// Primer puerto FastCGI de PHP; en Windows cada `php-cgi` usa el
+    /// siguiente.
+    pub php: u16,
+    pub mariadb: u16,
+    pub postgresql: u16,
+    pub redis: u16,
+    pub mongodb: u16,
+    pub mailpit_smtp: u16,
+    pub mailpit_http: u16,
+}
+
+impl PortSettings {
+    /// Cada puerto con quién lo usa. `php_count`: cuántos puertos seguidos
+    /// usa PHP (uno por `php-cgi` en Windows, uno con `php-fpm`).
+    pub fn owners(&self, php_count: u16) -> Vec<(u32, &'static str)> {
+        let mut list = vec![(self.http as u32, "HTTP"), (self.https as u32, "HTTPS")];
+        for i in 0..php_count.max(1) as u32 {
+            list.push((self.php as u32 + i, "PHP"));
+        }
+        list.extend([
+            (self.mariadb as u32, "MariaDB"),
+            (self.postgresql as u32, "PostgreSQL"),
+            (self.redis as u32, "Redis"),
+            (self.mongodb as u32, "MongoDB"),
+            (self.mailpit_smtp as u32, "Mailpit (SMTP)"),
+            (self.mailpit_http as u32, "Mailpit (web)"),
+        ]);
+        list
+    }
+
+    /// Sin ceros, sin pasarse de 65535 y sin dos servicios en el mismo
+    /// puerto (aunque alguno esté desactivado: al activarlo chocarían).
+    pub fn validate(&self, php_count: u16) -> Result<(), String> {
+        let mut seen: Vec<(u32, &str)> = Vec::new();
+        for (port, owner) in self.owners(php_count) {
+            if port == 0 {
+                return Err(format!("El puerto de {owner} no puede ser 0."));
+            }
+            if port > u16::MAX as u32 {
+                return Err(format!(
+                    "Los {} puertos de PHP desde {} se pasan de 65535.",
+                    php_count, self.php
+                ));
+            }
+            if let Some((_, other)) = seen.iter().find(|(p, o)| *p == port && *o != owner) {
+                return Err(format!(
+                    "El puerto {port} está repetido: lo usarían {other} y {owner}."
+                ));
+            }
+            seen.push((port, owner));
+        }
+        Ok(())
+    }
+}
+
 impl AppConfig {
+    pub fn ports(&self) -> PortSettings {
+        PortSettings {
+            http: self.http_port,
+            https: self.https_port,
+            php: self.php_base_port,
+            mariadb: self.mariadb_port,
+            postgresql: self.postgresql_port,
+            redis: self.redis_port,
+            mongodb: self.mongodb_port,
+            mailpit_smtp: self.mailpit_smtp_port,
+            mailpit_http: self.mailpit_http_port,
+        }
+    }
+
+    pub fn set_ports(&mut self, ports: PortSettings) {
+        self.http_port = ports.http;
+        self.https_port = ports.https;
+        self.php_base_port = ports.php;
+        self.mariadb_port = ports.mariadb;
+        self.postgresql_port = ports.postgresql;
+        self.redis_port = ports.redis;
+        self.mongodb_port = ports.mongodb;
+        self.mailpit_smtp_port = ports.mailpit_smtp;
+        self.mailpit_http_port = ports.mailpit_http;
+    }
+
     pub fn php_ports(&self) -> Vec<u16> {
         let count = self.php_processes.max(1);
         (0..count).map(|i| self.php_base_port + i).collect()
@@ -274,5 +375,54 @@ mod tests {
         assert_eq!(json["httpPort"], 80);
         assert_eq!(json["phpBasePort"], 9000);
         assert_eq!(json["theme"], "system");
+    }
+    #[test]
+    fn mariadb_is_on_unless_removed() {
+        let mut services = OptionalServices::default();
+        assert_eq!(services.get(ServiceId::Mariadb), Some(true));
+        services.set(ServiceId::Mariadb, false);
+        assert_eq!(services.get(ServiceId::Mariadb), Some(false));
+    }
+
+    #[test]
+    fn ports_round_trip_and_default_ports_are_valid() {
+        let mut cfg = AppConfig::default();
+        let mut ports = cfg.ports();
+        assert_eq!(ports.validate(4), Ok(()));
+        ports.mariadb = 3307;
+        cfg.set_ports(ports);
+        assert_eq!(cfg.mariadb_port, 3307);
+        assert_eq!(cfg.ports(), ports);
+    }
+
+    #[test]
+    fn repeated_ports_are_rejected_with_both_names() {
+        let mut ports = AppConfig::default().ports();
+        ports.redis = 3306;
+        assert_eq!(
+            ports.validate(4),
+            Err("El puerto 3306 está repetido: lo usarían MariaDB y Redis.".into())
+        );
+        // El rango de los php-cgi también cuenta.
+        let mut ports = AppConfig::default().ports();
+        ports.mailpit_http = 9002;
+        assert!(ports
+            .validate(4)
+            .unwrap_err()
+            .contains("PHP y Mailpit (web)"));
+        assert_eq!(ports.validate(1), Ok(()));
+    }
+
+    #[test]
+    fn zero_and_php_overflow_are_rejected() {
+        let mut ports = AppConfig::default().ports();
+        ports.mongodb = 0;
+        assert_eq!(
+            ports.validate(4),
+            Err("El puerto de MongoDB no puede ser 0.".into())
+        );
+        let mut ports = AppConfig::default().ports();
+        ports.php = 65534;
+        assert!(ports.validate(4).unwrap_err().contains("se pasan de 65535"));
     }
 }

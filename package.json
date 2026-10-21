@@ -7,7 +7,9 @@
     "dev": "vite",
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "bundled": "node scripts/fetch-bundled.mjs",
+    "build:windows": "tauri build --config src-tauri/tauri.bundle-windows.conf.json"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.12.1",

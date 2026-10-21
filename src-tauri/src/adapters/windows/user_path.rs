@@ -174,7 +174,9 @@ mod tests {
         let root = Path::new(r"C:\larabest-prueba-path");
         let dir = r"C:\larabest-prueba-path\bin\php\8.4.6".to_string();
 
-        WindowsUserPath.apply(root, &[dir.clone()]).unwrap();
+        WindowsUserPath
+            .apply(root, std::slice::from_ref(&dir))
+            .unwrap();
         let (added, kind) = EnvironmentKey::open().unwrap().read_path().unwrap();
         assert!(added.starts_with(&format!("{dir};")), "{added}");
         assert_eq!(kind, before.1);

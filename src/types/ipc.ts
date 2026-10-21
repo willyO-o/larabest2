@@ -76,6 +76,48 @@ export interface Settings {
   ssl: boolean
 }
 
+export type WebServer = 'nginx' | 'apache'
+
+/** Puertos de Preferencias → Servicios y puertos (`PortSettings` en Rust). */
+export interface PortSettings {
+  http: number
+  https: number
+  /** Primer puerto FastCGI; PHP usa `phpPortCount` seguidos. */
+  php: number
+  mariadb: number
+  postgresql: number
+  redis: number
+  mongodb: number
+  mailpitSmtp: number
+  mailpitHttp: number
+}
+
+/** Resultado de `services_settings_get`. */
+export interface ServicesSettings {
+  webServer: WebServer
+  ports: PortSettings
+  phpPortCount: number
+}
+
+export interface ServiceToggle {
+  id: ServiceId
+  enabled: boolean
+}
+
+/** Lo que guarda `services_settings_save`. */
+export interface ServicesChoice {
+  webServer: WebServer
+  /** Solo servicios que se pueden quitar: MariaDB y los opcionales. */
+  enabled: ServiceToggle[]
+  ports: PortSettings
+}
+
+/** Un puerto que ya ocupa otro programa (`services_settings_busy`). */
+export interface PortBusy {
+  port: number
+  program: string
+}
+
 export type AppErrorKind =
   | 'io'
   | 'config'
@@ -104,5 +146,7 @@ export const EVENTS = {
   sitesProgress: 'sites:progress',
   /** El menú contextual pide abrir el formulario de sitio nuevo. */
   uiCreateSite: 'ui:create-site',
+  /** El menú contextual pide abrir Servicios y puertos. */
+  uiServices: 'ui:services',
   installProgress: 'install:progress',
 } as const

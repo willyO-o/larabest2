@@ -169,6 +169,14 @@ impl ShellLauncher for MacShellLauncher {
             .map_err(|e| AppError::io(format!("No se pudo abrir la terminal en {}", slash(cwd)), e))
     }
 
+    fn launch(&self, program: &Path, args: &[String]) -> Result<(), AppError> {
+        std::process::Command::new(program)
+            .args(args)
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| AppError::io(format!("No se pudo abrir {}", slash(program)), e))
+    }
+
     /// `open -t`: el editor de texto que el usuario tenga por defecto.
     fn open_in_editor(&self, path: &Path) -> Result<(), AppError> {
         std::process::Command::new("/usr/bin/open")

@@ -46,6 +46,8 @@ pub enum Tool {
     Adminer,
     Phpmyadmin,
     Composer,
+    /// Última LTS; en Windows cada versión queda en `bin/nodejs/<versión>/`.
+    Nodejs,
 }
 
 const fn service(
@@ -75,7 +77,7 @@ impl Package {
 
 /// El catálogo, en el orden del menú. Las versiones elegidas para la app:
 /// PHP 8.3 y 8.4, MariaDB 11.4 (LTS) y PostgreSQL 17.
-pub const PACKAGES: [Package; 12] = [
+pub const PACKAGES: [Package; 13] = [
     service("php-8.4", "PHP 8.4", ServiceId::Php, "8.4"),
     service("php-8.3", "PHP 8.3", ServiceId::Php, "8.3"),
     service("nginx", "Nginx", ServiceId::Nginx, ""),
@@ -105,6 +107,11 @@ pub const PACKAGES: [Package; 12] = [
         label: "Composer",
         kind: PackageKind::Tool(Tool::Composer),
     },
+    Package {
+        id: "nodejs",
+        label: "Node.js (LTS)",
+        kind: PackageKind::Tool(Tool::Nodejs),
+    },
 ];
 
 pub fn find(id: &str) -> Option<Package> {
@@ -129,6 +136,11 @@ pub mod urls {
     pub const ADMINER: &str = "https://www.adminer.org/latest.php";
     pub const PHPMYADMIN: &str =
         "https://www.phpmyadmin.net/downloads/phpMyAdmin-latest-all-languages.zip";
+    pub const NODE_INDEX: &str = "https://nodejs.org/dist/index.json";
+
+    pub fn node_zip(version: &str) -> String {
+        format!("https://nodejs.org/dist/v{version}/node-v{version}-win-x64.zip")
+    }
 
     pub fn nginx_zip(version: &str) -> String {
         format!("https://nginx.org/download/nginx-{version}.zip")
@@ -309,6 +321,25 @@ pub fn apache_latest(html: &str) -> Option<(String, String)> {
     best.map(|(version, _, _, file)| (version, file))
 }
 
+/// `index.json` de nodejs.org (lo más nuevo primero): la LTS más reciente
+/// con zip para Windows x64, sin la "v" ("24.22.0").
+pub fn node_lts(json: &str) -> Option<String> {
+    let doc: Value = serde_json::from_str(json).ok()?;
+    doc.as_array()?.iter().find_map(|release| {
+        let lts = release.get("lts")?;
+        if lts == &Value::Bool(false) || lts.is_null() {
+            return None;
+        }
+        let has_zip = release
+            .get("files")?
+            .as_array()?
+            .iter()
+            .any(|f| f.as_str() == Some("win-x64-zip"));
+        let version = release.get("version")?.as_str()?;
+        has_zip.then(|| version.trim_start_matches('v').to_string())
+    })
+}
+
 /// Último release de GitHub (`/releases/latest`): su etiqueta.
 pub fn github_tag(json: &str) -> Option<String> {
     let doc: Value = serde_json::from_str(json).ok()?;
@@ -415,7 +446,23 @@ mod tests {
     #[test]
     fn packages_are_grouped_for_the_menu() {
         let groups: Vec<u8> = PACKAGES.iter().map(Package::group).collect();
-        assert_eq!(groups, vec![0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2]);
+        assert_eq!(groups, vec![0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2]);
+    }
+
+    #[test]
+    fn reads_the_newest_node_lts_with_a_windows_zip() {
+        let json = r#"[
+            {"version": "v26.12.0", "lts": false, "files": ["win-x64-zip"]},
+            {"version": "v24.22.0", "lts": "Krypton", "files": ["osx-arm64-tar", "win-x64-zip"]},
+            {"version": "v22.23.3", "lts": "Jod", "files": ["win-x64-zip"]}
+        ]"#;
+        assert_eq!(node_lts(json).as_deref(), Some("24.22.0"));
+        let no_zip = r#"[{"version": "v24.22.0", "lts": "Krypton", "files": ["linux-x64"]}]"#;
+        assert_eq!(node_lts(no_zip), None);
+        assert_eq!(
+            urls::node_zip("24.22.0"),
+            "https://nodejs.org/dist/v24.22.0/node-v24.22.0-win-x64.zip"
+        );
     }
 
     #[test]

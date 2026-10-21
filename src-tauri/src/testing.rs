@@ -548,6 +548,8 @@ impl crate::ports::UserPathManager for FakeUserPath {
 pub struct FakeShell {
     pub opened: Mutex<Vec<(String, HashMap<String, String>)>>,
     pub edited: Mutex<Vec<String>>,
+    /// `(programa, argumentos)` de cada `launch`.
+    pub launched: Mutex<Vec<(String, Vec<String>)>>,
 }
 
 impl ShellLauncher for FakeShell {
@@ -558,6 +560,14 @@ impl ShellLauncher for FakeShell {
 
     fn open_in_editor(&self, path: &Path) -> Result<(), AppError> {
         self.edited.lock().unwrap().push(slash(path));
+        Ok(())
+    }
+
+    fn launch(&self, program: &Path, args: &[String]) -> Result<(), AppError> {
+        self.launched
+            .lock()
+            .unwrap()
+            .push((slash(program), args.to_vec()));
         Ok(())
     }
 }

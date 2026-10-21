@@ -79,6 +79,10 @@ impl ShellLauncher for UnsupportedShell {
     fn open_in_editor(&self, _path: &Path) -> Result<(), AppError> {
         Err(unsupported())
     }
+
+    fn launch(&self, _program: &Path, _args: &[String]) -> Result<(), AppError> {
+        Err(unsupported())
+    }
 }
 
 pub struct UnsupportedHosts;
