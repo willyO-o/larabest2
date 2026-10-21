@@ -85,6 +85,7 @@ pub struct Platform {
     pub binaries: Arc<dyn BinaryProvider>,
     pub downloader: Arc<dyn Downloader>,
     pub system_path: String,
+    pub os: crate::domain::os::OsInfo,
 }
 
 pub struct World {
@@ -154,6 +155,7 @@ pub fn world(root: PathBuf, platform: Platform, ports: E2ePorts) -> World {
             archive: Arc::new(ZipExtractor),
             ca: Arc::new(ca),
             secrets: Arc::new(OsSecrets),
+            os: platform.os,
         },
         platform.system_path,
     ));

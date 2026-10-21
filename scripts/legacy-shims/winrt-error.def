@@ -1,0 +1,19 @@
+; api-ms-win-core-winrt-error-l1-1-0.dll para Windows 7, que no tiene WinRT:
+; la librería `windows-result` de Rust la usa solo para adjuntar detalles a
+; los errores de WinRT. Las que devuelven BOOL responden FALSE ("sin
+; detalles"); las que entregan datos por un puntero, E_NOTIMPL. En Windows 8
+; o posterior el sistema resuelve el nombre por su API set y este archivo se
+; ignora. build-legacy.mjs comprueba que cubre todo lo importado.
+LIBRARY api-ms-win-core-winrt-error-l1-1-0
+EXPORTS
+  RoOriginateErrorW=larabest_zero
+  RoOriginateError=larabest_zero
+  RoTransformErrorW=larabest_zero
+  RoTransformError=larabest_zero
+  SetRestrictedErrorInfo=larabest_zero
+  RoFailFastWithErrorContext=larabest_zero
+  GetRestrictedErrorInfo=larabest_notimpl
+  RoCaptureErrorContext=larabest_notimpl
+  RoGetErrorReportingFlags=larabest_notimpl
+  RoSetErrorReportingFlags=larabest_notimpl
+  RoResolveRestrictedErrorInfoReference=larabest_notimpl

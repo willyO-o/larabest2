@@ -8,8 +8,6 @@ dist-ssr/
 # Rust / Tauri
 src-tauri/target/
 src-tauri/gen/schemas/
-# HeidiSQL y Notepad++ para el instalador de Windows (npm run bundled)
-src-tauri/resources/bundled/
 
 # Carpeta de datos de la app si se prueba dentro del repo (bin/, www/, etc/, data/, logs/, tmp/, app.json)
 /bin/

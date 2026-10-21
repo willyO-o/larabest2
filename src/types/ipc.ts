@@ -60,6 +60,21 @@ export interface InstallProgress {
   detail?: string
 }
 
+/** Cómo está compilado un PHP (`php_build_info`, `PhpBuild` en Rust). */
+export interface PhpBuild {
+  version: string
+  /** false = NTS (Non Thread Safe), lo que usa la app con FastCGI. */
+  threadSafe: boolean
+  /** "x64"; macOS no lo informa. */
+  arch: string | null
+  /** "Visual C++ 2022". */
+  compiler: string | null
+  /** Compilador de las extensiones en Windows: "VS17", "VS16". */
+  toolset: string | null
+  /** "API420240924". */
+  extensionApi: string | null
+}
+
 export interface InstalledVersion {
   service: ServiceId
   version: string
@@ -118,6 +133,27 @@ export interface PortBusy {
   program: string
 }
 
+/** Un paquete del asistente "Preparar LARABEST" (`SetupPackage` en Rust). */
+export interface SetupPackage {
+  id: string
+  label: string
+  /** 0 la pila base, 1 los servicios opcionales, 2 las herramientas. */
+  group: number
+  /** Lo instalado ("8.4.26", "instalado"), o null. */
+  status: string | null
+  /** Marcado de entrada. */
+  recommended: boolean
+}
+
+/** Resultado de `setup_info`. */
+export interface SetupInfo {
+  /** Abrirlo al iniciar: todavía no se terminó ni se omitió. */
+  show: boolean
+  /** "Windows 11", "Windows 7", "macOS". */
+  os: string
+  packages: SetupPackage[]
+}
+
 export type AppErrorKind =
   | 'io'
   | 'config'
@@ -148,5 +184,7 @@ export const EVENTS = {
   uiCreateSite: 'ui:create-site',
   /** El menú contextual pide abrir Servicios y puertos. */
   uiServices: 'ui:services',
+  /** El menú contextual pide abrir el asistente "Preparar LARABEST". */
+  uiSetup: 'ui:setup',
   installProgress: 'install:progress',
 } as const

@@ -4,9 +4,14 @@ import type { AppError } from '../types/ipc'
 /** Último error de una acción, para mostrarlo sin diálogos modales. */
 export const lastError = ref<string | null>(null)
 
-export function report(e: unknown) {
+/** Texto de un error de `invoke` (un `AppError`) o de cualquier otro. */
+export function messageOf(e: unknown): string {
   const err = e as Partial<AppError> | string
-  lastError.value = typeof err === 'string' ? err : (err?.message ?? String(e))
+  return typeof err === 'string' ? err : (err?.message ?? String(e))
+}
+
+export function report(e: unknown) {
+  lastError.value = messageOf(e)
 }
 
 /** Ejecuta un `invoke` y guarda el error si falla. */

@@ -151,7 +151,7 @@ Segoe UI Variable (la del sistema en Windows 10/11) en todos los textos; cifras 
 
 ## Layout
 
-Ventana fija de 640×380. De arriba abajo: banda (46px), lista de servicios (flexible; rejilla de 6 columnas: punto, nombre, versión, puerto, estado, acciones), error de acción si existe, fila de cinco botones (el primero 1.25 veces más ancho) y línea de estado (26px). Márgenes laterales de 12 a 16px, separación de 6 a 8px entre controles.
+Ventana fija de 700×380 (crece en alto con los servicios opcionales y los paneles). De arriba abajo: banda (46px), lista de servicios (flexible; rejilla de 6 columnas: punto, nombre, versión —en PHP con su compilación, NTS · x64 · VS17—, puerto, estado, acciones), error de acción si existe, fila de cinco botones (el primero 1.25 veces más ancho) y línea de estado (26px). Márgenes laterales de 12 a 16px, separación de 6 a 8px entre controles.
 
 ## Elevation & Depth
 

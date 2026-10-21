@@ -8,8 +8,8 @@ use tauri::menu::{
 use tauri::{AppHandle, Emitter, Manager, Wry};
 
 use crate::commands::{open_path, open_url};
-use crate::domain::bundled::BundledTool;
 use crate::domain::catalog;
+use crate::domain::desktop::DesktopTool;
 use crate::domain::{
     BinaryLayout, DatabaseClient, ServiceId, ServiceState, ThemePreference, WebServer,
 };
@@ -89,10 +89,15 @@ fn versions(
     }
     for v in list {
         let checked = active == Some(v.version.as_str());
+        // PHP con su compilación: "8.4.26  (NTS · x64 · VS17)".
+        let label = match (id, state.core.php_build_cached(&v.version)) {
+            (ServiceId::Php, Some(build)) => format!("{}  ({})", v.version, build.short()),
+            _ => v.version.clone(),
+        };
         items.push(check(
             app,
             &format!("ver:{}:{}", id.key(), v.version),
-            &v.version,
+            &label,
             checked,
         )?);
     }
@@ -215,8 +220,8 @@ pub fn build(app: &AppHandle, from_tray: bool) -> tauri::Result<Menu<Wry>> {
         open(app, "phpErrorLog", "Log de errores")?,
     ];
 
-    let heidisql = core.bundled_installed(BundledTool::Heidisql);
-    let notepadpp = core.bundled_installed(BundledTool::Notepadpp);
+    let heidisql = core.desktop_installed(DesktopTool::Heidisql);
+    let notepadpp = core.desktop_installed(DesktopTool::Notepadpp);
     let mut mariadb = vec![
         versions(
             app,
@@ -339,11 +344,13 @@ pub fn build(app: &AppHandle, from_tray: bool) -> tauri::Result<Menu<Wry>> {
         ],
     )?));
 
-    // Agregar: descargar versiones y herramientas (el "Quick add").
-    let mut add = Vec::new();
-    for (i, package) in catalog::PACKAGES.iter().enumerate() {
+    // Agregar: descargar versiones y herramientas (el "Quick add"), las que
+    // corren en este sistema (Windows 7 recibe PHP 8.2 y MariaDB 10.4).
+    let packages = catalog::packages_for(core.os());
+    let mut add = vec![text(app, "setup", "Preparar LARABEST…")?, sep(app)?];
+    for (i, package) in packages.iter().enumerate() {
         // Separadores entre la pila base, los opcionales y las herramientas.
-        if i > 0 && catalog::PACKAGES[i - 1].group() != package.group() {
+        if i > 0 && packages[i - 1].group() != package.group() {
             add.push(sep(app)?);
         }
         let label = match core.package_status(package) {
@@ -445,6 +452,26 @@ pub fn build(app: &AppHandle, from_tray: bool) -> tauri::Result<Menu<Wry>> {
         .item(&submenu(app, "MariaDB", mariadb)?);
     for menu in &optional {
         builder = builder.item(menu);
+    }
+    // Node.js: la versión de la terminal y el PATH, si hay alguna agregada.
+    let node_versions = core.node_versions();
+    if !node_versions.is_empty() {
+        let active = core.active_node();
+        let mut items = Vec::new();
+        for v in &node_versions {
+            items.push(check(
+                app,
+                &format!("node:{v}"),
+                v,
+                active.as_deref() == Some(v.as_str()),
+            )?);
+        }
+        let versions = submenu(app, "Versión", items)?;
+        builder = builder.item(
+            &SubmenuBuilder::new(app, "Node.js")
+                .item(&versions)
+                .build()?,
+        );
     }
     builder = builder
         .item(&submenu(app, "Logs", logs)?)
@@ -548,6 +575,11 @@ async fn run(app: &AppHandle, id: &str) -> Result<(), AppError> {
         }
         _ => {}
     }
+    if id == "setup" {
+        tray::show_main(app);
+        let _ = app.emit("ui:setup", ());
+        return Ok(());
+    }
     if id == "services_panel" {
         tray::show_main(app);
         let _ = app.emit("ui:services", ());
@@ -600,6 +632,9 @@ async fn run(app: &AppHandle, id: &str) -> Result<(), AppError> {
             serde_json::from_value(serde_json::Value::String(client.into()))
                 .map_err(|_| AppError::InvalidInput(id.into()))?;
         return core.set_database_client(client);
+    }
+    if let Some(version) = id.strip_prefix("node:") {
+        return core.set_node_version(version).await;
     }
     if let Some(name) = id.strip_prefix("ext:") {
         let enabled = core

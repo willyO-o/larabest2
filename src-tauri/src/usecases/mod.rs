@@ -1,14 +1,18 @@
 //! Casos de uso. Los comandos de Tauri solo llaman a estos métodos.
 
-mod bundled;
 mod create_site;
+mod desktop;
 mod install;
+mod nodejs;
+mod php_build;
 mod services_settings;
+mod setup;
 pub mod sites;
 mod ssl;
 
 pub use create_site::{COMPOSER_URL, WORDPRESS_URL};
 pub use services_settings::{PortBusy, ServiceToggle, ServicesChoice, ServicesSettings};
+pub use setup::{SetupInfo, SetupPackage};
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::PathBuf;
@@ -16,6 +20,7 @@ use std::sync::Arc;
 
 use minijinja::context;
 
+use crate::domain::os::OsInfo;
 use crate::domain::{
     slash, BinaryLayout, DatabaseClient, HostEntry, InstalledVersion, ServiceId, ServiceState,
     Site, ThemePreference, WebServer,
@@ -82,6 +87,8 @@ pub struct CoreAdapters {
     pub archive: Arc<dyn ArchiveExtractor>,
     pub ca: Arc<dyn CertificateAuthority>,
     pub secrets: Arc<dyn SecretSource>,
+    /// Sistema donde corre la app: decide qué versiones se pueden agregar.
+    pub os: OsInfo,
 }
 
 pub struct Core {
@@ -93,6 +100,7 @@ pub struct Core {
     archive: Arc<dyn ArchiveExtractor>,
     ca: Arc<dyn CertificateAuthority>,
     secrets: Arc<dyn SecretSource>,
+    os: OsInfo,
     /// PATH del sistema, base del PATH propio de la terminal. Vacío en
     /// macOS: allí la terminal antepone el PATH propio al de la shell.
     system_path: String,
@@ -102,6 +110,8 @@ pub struct Core {
     create_lock: tokio::sync::Mutex<()>,
     /// Se agrega un paquete a la vez.
     install_lock: tokio::sync::Mutex<()>,
+    /// Compilación de cada PHP instalado, por carpeta (ver `php_build.rs`).
+    php_builds: std::sync::Mutex<HashMap<String, crate::domain::php_build::PhpBuild>>,
 }
 
 impl Core {
@@ -115,10 +125,12 @@ impl Core {
             archive: adapters.archive,
             ca: adapters.ca,
             secrets: adapters.secrets,
+            os: adapters.os,
             system_path,
             sites_lock: tokio::sync::Mutex::new(()),
             create_lock: tokio::sync::Mutex::new(()),
             install_lock: tokio::sync::Mutex::new(()),
+            php_builds: std::sync::Mutex::new(HashMap::new()),
         }
     }
 
@@ -524,6 +536,10 @@ impl Core {
         Ok(sites)
     }
 
+    pub fn os(&self) -> OsInfo {
+        self.os
+    }
+
     pub fn root(&self) -> PathBuf {
         self.supervisor.deps().paths.root().to_path_buf()
     }
@@ -597,7 +613,7 @@ impl Core {
             .ok()
             .and_then(|c| c.db_client);
         chosen.unwrap_or_else(|| {
-            if self.bundled_installed(crate::domain::bundled::BundledTool::Heidisql) {
+            if self.desktop_installed(crate::domain::desktop::DesktopTool::Heidisql) {
                 DatabaseClient::Heidisql
             } else {
                 DatabaseClient::Adminer
@@ -678,9 +694,9 @@ impl Core {
         Ok(mailpit::web_url(cfg.mailpit_http_port))
     }
 
-    /// Carpetas de los programas activos: PHP, MariaDB, el servidor web y
-    /// el script de Composer (`etc/shell`). Las usan la terminal y el PATH
-    /// del usuario. Con "\" en Windows, como las espera su PATH.
+    /// Carpetas de los programas activos: PHP, MariaDB, el servidor web,
+    /// Node.js y el script de Composer (`etc/shell`). Las usan la terminal y
+    /// el PATH del usuario. Con "\" en Windows, como las espera su PATH.
     fn program_dirs(&self) -> Result<Vec<String>, AppError> {
         let deps = self.supervisor.deps();
         let ctx = self.supervisor.context()?;
@@ -702,6 +718,10 @@ impl Core {
             {
                 path.push(slash(dir));
             }
+        }
+        // Node.js agregado desde el menú (Windows): node, npm y npx.
+        if let Some(dir) = self.node_dir() {
+            path.push(slash(&dir));
         }
         let phar = deps.paths.composer_phar();
         if deps.fs.exists(&phar) {

@@ -1,9 +1,10 @@
-//! Adaptadores de Windows 10 y 11.
+//! Adaptadores de Windows (7 SP1 en adelante con el instalador legacy; 10, 11 y Server 2016+ con el normal).
 
 mod download;
 #[cfg(test)]
 mod e2e;
 mod hosts;
+mod os;
 mod ports;
 mod process;
 mod shell;
@@ -12,6 +13,7 @@ mod user_path;
 
 pub use download::WindowsDownloader;
 pub use hosts::{apply_hosts_request, WindowsHostsManager};
+pub use os::detect_os;
 pub use ports::WindowsPortChecker;
 pub use process::WindowsProcessRunner;
 pub use shell::WindowsShellLauncher;

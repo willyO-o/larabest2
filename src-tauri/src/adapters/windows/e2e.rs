@@ -39,6 +39,7 @@ async fn e2e_windows() {
         binaries: Arc::new(DirBinaryProvider::new(Paths::new(&root))),
         downloader: Arc::new(WindowsDownloader::new(runner)),
         system_path: std::env::var("PATH").unwrap_or_default(),
+        os: super::detect_os(),
     };
     let w = e2e::world(root, platform, PORTS);
     w.core.bootstrap().await.unwrap();

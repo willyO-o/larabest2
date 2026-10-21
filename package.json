@@ -8,8 +8,7 @@
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview",
     "tauri": "tauri",
-    "bundled": "node scripts/fetch-bundled.mjs",
-    "build:windows": "tauri build --config src-tauri/tauri.bundle-windows.conf.json"
+    "build:legacy": "node scripts/build-legacy.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.12.1",

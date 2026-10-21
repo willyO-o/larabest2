@@ -7,11 +7,13 @@ import BrandMark from './components/BrandMark.vue'
 import CreateSitePanel from './components/CreateSitePanel.vue'
 import ServiceRow from './components/ServiceRow.vue'
 import ServicesPanel from './components/ServicesPanel.vue'
+import SetupPanel from './components/SetupPanel.vue'
 import ThemeSwitch from './components/ThemeSwitch.vue'
 import { attempt, lastError } from './lib/errors'
 import { SERVICE_LABEL, useServicesStore } from './stores/services'
 import { useInstallsStore } from './stores/installs'
 import { useServicesPanelStore } from './stores/servicesPanel'
+import { useSetupStore } from './stores/setup'
 import { useSettingsStore } from './stores/settings'
 import { useSitesStore } from './stores/sites'
 
@@ -20,6 +22,7 @@ const sites = useSitesStore()
 const settings = useSettingsStore()
 const installs = useInstallsStore()
 const servicesPanel = useServicesPanelStore()
+const setup = useSetupStore()
 
 onMounted(async () => {
   await Promise.all([
@@ -28,6 +31,7 @@ onMounted(async () => {
     settings.init(),
     installs.init(),
     servicesPanel.init(),
+    setup.init(),
   ])
   // La ventana se crea oculta: se muestra cuando ya está pintada con su tema.
   requestAnimationFrame(() => attempt(() => invoke('app_ready')))
@@ -39,15 +43,19 @@ const ROW_HEIGHT = 46
 const BASE_HEIGHT = 380
 /** Alto mínimo con Servicios y puertos abierto: entran todas sus filas. */
 const SERVICES_PANEL_HEIGHT = 540
+/** Alto mínimo con el asistente abierto (su lista se desplaza si no entra). */
+const SETUP_PANEL_HEIGHT = 620
 
 // Cada servicio opcional activo suma una fila: la ventana crece con ellas.
-// Con Servicios y puertos abierto crece lo necesario y al cerrarlo vuelve.
+// Con Servicios y puertos o el asistente abiertos crece lo necesario y al
+// cerrarlos vuelve.
 watch(
-  [() => services.list.length, () => servicesPanel.open],
-  ([rows, panelOpen]) => {
+  [() => services.list.length, () => servicesPanel.open, () => setup.open],
+  ([rows, panelOpen, setupOpen]) => {
     if (!rows) return
-    const fit = BASE_HEIGHT + Math.max(0, rows - 3) * ROW_HEIGHT
-    const height = panelOpen ? Math.max(fit, SERVICES_PANEL_HEIGHT) : fit
+    let height = BASE_HEIGHT + Math.max(0, rows - 3) * ROW_HEIGHT
+    if (panelOpen) height = Math.max(height, SERVICES_PANEL_HEIGHT)
+    if (setupOpen) height = Math.max(height, SETUP_PANEL_HEIGHT)
     attempt(() => invoke('window_fit', { height }))
   },
   { immediate: true },
@@ -189,5 +197,6 @@ function openMenu(e?: MouseEvent) {
 
     <CreateSitePanel />
     <ServicesPanel />
+    <SetupPanel />
   </div>
 </template>

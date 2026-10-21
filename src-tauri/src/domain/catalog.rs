@@ -5,6 +5,8 @@
 use serde::Serialize;
 use serde_json::Value;
 
+use super::desktop::DesktopTool;
+use super::os::{OsInfo, WindowsTier};
 use super::{ProgressState, ServiceId};
 
 /// Carga de `install:progress` mientras se agrega un paquete.
@@ -27,6 +29,9 @@ pub struct Package {
     pub id: &'static str,
     pub label: &'static str,
     pub kind: PackageKind,
+    /// Versión exacta en lugar de la última: la final que corre en un
+    /// Windows antiguo (MariaDB 10.4.12 en Windows 7).
+    pub pinned: Option<&'static str>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,6 +53,8 @@ pub enum Tool {
     Composer,
     /// Última LTS; en Windows cada versión queda en `bin/nodejs/<versión>/`.
     Nodejs,
+    /// Programa de escritorio de Windows (HeidiSQL, Notepad++).
+    Desktop(DesktopTool),
 }
 
 const fn service(
@@ -60,6 +67,23 @@ const fn service(
         id,
         label,
         kind: PackageKind::Service { service, branch },
+        pinned: None,
+    }
+}
+
+const fn tool(id: &'static str, label: &'static str, tool: Tool) -> Package {
+    Package {
+        id,
+        label,
+        kind: PackageKind::Tool(tool),
+        pinned: None,
+    }
+}
+
+const fn pinned(package: Package, version: &'static str) -> Package {
+    Package {
+        pinned: Some(version),
+        ..package
     }
 }
 
@@ -75,9 +99,10 @@ impl Package {
     }
 }
 
-/// El catálogo, en el orden del menú. Las versiones elegidas para la app:
-/// PHP 8.3 y 8.4, MariaDB 11.4 (LTS) y PostgreSQL 17.
-pub const PACKAGES: [Package; 13] = [
+/// El catálogo de Windows 10/11, Server 2016+ y macOS, en el orden del
+/// menú. Las versiones elegidas para la app: PHP 8.3 y 8.4, MariaDB 11.4
+/// (LTS) y PostgreSQL 17.
+pub const PACKAGES: [Package; 15] = [
     service("php-8.4", "PHP 8.4", ServiceId::Php, "8.4"),
     service("php-8.3", "PHP 8.3", ServiceId::Php, "8.3"),
     service("nginx", "Nginx", ServiceId::Nginx, ""),
@@ -92,30 +117,94 @@ pub const PACKAGES: [Package; 13] = [
     service("redis", "Redis", ServiceId::Redis, ""),
     service("mongodb", "MongoDB", ServiceId::Mongodb, ""),
     service("mailpit", "Mailpit", ServiceId::Mailpit, ""),
-    Package {
-        id: "adminer",
-        label: "Adminer",
-        kind: PackageKind::Tool(Tool::Adminer),
-    },
-    Package {
-        id: "phpmyadmin",
-        label: "phpMyAdmin",
-        kind: PackageKind::Tool(Tool::Phpmyadmin),
-    },
-    Package {
-        id: "composer",
-        label: "Composer",
-        kind: PackageKind::Tool(Tool::Composer),
-    },
-    Package {
-        id: "nodejs",
-        label: "Node.js (LTS)",
-        kind: PackageKind::Tool(Tool::Nodejs),
-    },
+    tool("heidisql", "HeidiSQL", Tool::Desktop(DesktopTool::Heidisql)),
+    tool("adminer", "Adminer", Tool::Adminer),
+    tool("phpmyadmin", "phpMyAdmin", Tool::Phpmyadmin),
+    tool("composer", "Composer", Tool::Composer),
+    tool("nodejs", "Node.js (LTS)", Tool::Nodejs),
+    tool(
+        "notepadpp",
+        "Notepad++",
+        Tool::Desktop(DesktopTool::Notepadpp),
+    ),
+];
+
+/// Versiones para Windows antiguos: las últimas que corren ahí. PHP 8.3 o
+/// posterior exige Windows 8; MariaDB dejó Windows 7 en 10.4.12 y 8.1 en
+/// 10.6.12; Node.js 16 es el último con Windows 8.1 y 12 con Windows 7.
+pub const LEGACY_PACKAGES: [Package; 5] = [
+    service("php-8.2", "PHP 8.2", ServiceId::Php, "8.2"),
+    pinned(
+        service("mariadb-10.6", "MariaDB 10.6", ServiceId::Mariadb, "10.6"),
+        "10.6.12",
+    ),
+    pinned(
+        service("mariadb-10.4", "MariaDB 10.4", ServiceId::Mariadb, "10.4"),
+        "10.4.12",
+    ),
+    pinned(tool("nodejs-16", "Node.js 16", Tool::Nodejs), "16.20.2"),
+    pinned(tool("nodejs-12", "Node.js 12", Tool::Nodejs), "12.22.12"),
 ];
 
 pub fn find(id: &str) -> Option<Package> {
-    PACKAGES.iter().copied().find(|p| p.id == id)
+    PACKAGES
+        .iter()
+        .chain(LEGACY_PACKAGES.iter())
+        .copied()
+        .find(|p| p.id == id)
+}
+
+/// Lo que se puede agregar en este sistema, en el orden del menú.
+pub fn packages_for(os: OsInfo) -> Vec<Package> {
+    let ids: &[&str] = match os.windows_tier() {
+        // Sin MongoDB, Mailpit, PostgreSQL 17 ni Redis: sus versiones
+        // actuales piden Windows 10 o Server 2016.
+        Some(WindowsTier::Eight) => &[
+            "php-8.4",
+            "php-8.3",
+            "php-8.2",
+            "nginx",
+            "apache",
+            "mariadb-10.6",
+            "heidisql",
+            "adminer",
+            "phpmyadmin",
+            "composer",
+            "nodejs-16",
+            "notepadpp",
+        ],
+        // Apache Lounge pide el runtime de Visual C++ más nuevo, que ya
+        // no se instala en Windows 7.
+        Some(WindowsTier::Seven) => &[
+            "php-8.2",
+            "nginx",
+            "mariadb-10.4",
+            "heidisql",
+            "adminer",
+            "phpmyadmin",
+            "composer",
+            "nodejs-12",
+            "notepadpp",
+        ],
+        Some(WindowsTier::Modern) => return PACKAGES.to_vec(),
+        // macOS: HeidiSQL y Notepad++ son de Windows.
+        None => {
+            return PACKAGES
+                .iter()
+                .copied()
+                .filter(|p| !matches!(p.kind, PackageKind::Tool(Tool::Desktop(_))))
+                .collect()
+        }
+    };
+    ids.iter().filter_map(|id| find(id)).collect()
+}
+
+/// El paquete más reciente de un servicio para este sistema (el primero
+/// del menú): PHP 8.4 en Windows 10, PHP 8.2 en Windows 7.
+pub fn first_for(os: OsInfo, service: ServiceId) -> Option<Package> {
+    packages_for(os)
+        .into_iter()
+        .find(|p| matches!(p.kind, PackageKind::Service { service: s, .. } if s == service))
 }
 
 /// Fuentes de las versiones (Windows).
@@ -137,6 +226,14 @@ pub mod urls {
     pub const PHPMYADMIN: &str =
         "https://www.phpmyadmin.net/downloads/phpMyAdmin-latest-all-languages.zip";
     pub const NODE_INDEX: &str = "https://nodejs.org/dist/index.json";
+
+    /// La API de GitHub entrega un asset (`/releases/assets/<id>`) como
+    /// archivo solo si se pide así. Así se descarga sin pasar por
+    /// github.com, que algunas redes bloquean.
+    pub fn accept_header(url: &str) -> Option<&'static str> {
+        (url.starts_with("https://api.github.com/") && url.contains("/releases/assets/"))
+            .then_some("application/octet-stream")
+    }
 
     pub fn node_zip(version: &str) -> String {
         format!("https://nodejs.org/dist/v{version}/node-v{version}-win-x64.zip")
@@ -340,6 +437,24 @@ pub fn node_lts(json: &str) -> Option<String> {
     })
 }
 
+/// Release de GitHub: la versión (etiqueta sin "v") y la URL del asset
+/// en la API del archivo que termina en `suffix`.
+pub fn github_asset(json: &str, suffix: &str) -> Option<(String, String)> {
+    let doc: Value = serde_json::from_str(json).ok()?;
+    let version = doc
+        .get("tag_name")?
+        .as_str()?
+        .trim_start_matches('v')
+        .to_string();
+    let url = doc.get("assets")?.as_array()?.iter().find_map(|asset| {
+        let name = asset.get("name")?.as_str()?;
+        name.ends_with(suffix)
+            .then(|| asset.get("url")?.as_str().map(str::to_string))
+            .flatten()
+    })?;
+    Some((version, url))
+}
+
 /// Último release de GitHub (`/releases/latest`): su etiqueta.
 pub fn github_tag(json: &str) -> Option<String> {
     let doc: Value = serde_json::from_str(json).ok()?;
@@ -446,7 +561,7 @@ mod tests {
     #[test]
     fn packages_are_grouped_for_the_menu() {
         let groups: Vec<u8> = PACKAGES.iter().map(Package::group).collect();
-        assert_eq!(groups, vec![0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2]);
+        assert_eq!(groups, vec![0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2]);
     }
 
     #[test]
@@ -462,6 +577,74 @@ mod tests {
         assert_eq!(
             urls::node_zip("24.22.0"),
             "https://nodejs.org/dist/v24.22.0/node-v24.22.0-win-x64.zip"
+        );
+    }
+
+    #[test]
+    fn each_windows_gets_versions_that_run_there() {
+        let ids = |os| -> Vec<&str> { packages_for(os).iter().map(|p| p.id).collect() };
+        let modern = ids(OsInfo::Windows {
+            build: 26200,
+            server: false,
+        });
+        assert!(modern.contains(&"php-8.4") && modern.contains(&"mongodb"));
+        assert!(modern.contains(&"heidisql") && !modern.contains(&"php-8.2"));
+
+        let eight = ids(OsInfo::Windows {
+            build: 9600,
+            server: true,
+        });
+        assert!(eight.contains(&"mariadb-10.6") && eight.contains(&"nodejs-16"));
+        assert!(!eight.contains(&"mariadb-11.4") && !eight.contains(&"mongodb"));
+
+        let seven = ids(OsInfo::Windows {
+            build: 7601,
+            server: false,
+        });
+        assert!(seven.contains(&"php-8.2") && seven.contains(&"mariadb-10.4"));
+        assert!(!seven.contains(&"php-8.4") && !seven.contains(&"apache"));
+        assert_eq!(find("mariadb-10.4").unwrap().pinned, Some("10.4.12"));
+
+        let mac = ids(OsInfo::MacOs);
+        assert!(mac.contains(&"php-8.4") && !mac.contains(&"heidisql"));
+
+        assert_eq!(
+            first_for(
+                OsInfo::Windows {
+                    build: 7601,
+                    server: false
+                },
+                ServiceId::Php
+            )
+            .unwrap()
+            .id,
+            "php-8.2"
+        );
+    }
+
+    #[test]
+    fn reads_the_portable_zip_of_a_github_release() {
+        let json = r#"{"tag_name": "v12.21", "assets": [
+            {"name": "HeidiSQL_12.21.0.7344_Setup.exe", "url": "https://api.github.com/repos/HeidiSQL/HeidiSQL/releases/assets/1"},
+            {"name": "HeidiSQL_12.21_64_Portable.zip", "url": "https://api.github.com/repos/HeidiSQL/HeidiSQL/releases/assets/500350064"}
+        ]}"#;
+        assert_eq!(
+            github_asset(json, DesktopTool::Heidisql.asset_suffix()),
+            Some((
+                "12.21".into(),
+                "https://api.github.com/repos/HeidiSQL/HeidiSQL/releases/assets/500350064".into()
+            ))
+        );
+        assert_eq!(github_asset(json, ".portable.x64.zip"), None);
+        assert_eq!(
+            urls::accept_header(
+                "https://api.github.com/repos/HeidiSQL/HeidiSQL/releases/assets/500350064"
+            ),
+            Some("application/octet-stream")
+        );
+        assert_eq!(
+            urls::accept_header("https://api.github.com/repos/x/y/releases/latest"),
+            None
         );
     }
 

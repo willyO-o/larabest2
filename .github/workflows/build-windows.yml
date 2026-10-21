@@ -19,12 +19,35 @@ jobs:
           workspaces: src-tauri
       - run: npm ci
       - run: cargo test --manifest-path src-tauri/Cargo.toml
-      # Incluye HeidiSQL y Notepad++ (scripts/fetch-bundled.mjs).
-      - run: npm run build:windows
+      - run: npm run tauri build
       - uses: actions/upload-artifact@v4
         with:
           name: instalador-windows
           path: src-tauri/target/release/bundle/nsis/*.exe
+
+  # Instalador para Windows 7 SP1, 8, 8.1 y Server 2008 R2/2012/2012 R2:
+  # target x86_64-win7-windows-msvc (Tier 3) con nightly y -Z build-std.
+  legacy:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: rust-src
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: win7
+      - run: npm ci
+      - run: npm run build:legacy
+      - uses: actions/upload-artifact@v4
+        with:
+          name: instalador-windows-legacy
+          path: src-tauri/target/legacy/release/bundle/nsis/*-legacy-setup.exe
 
   # Agrega todo desde el menú Agregar (descargas oficiales reales) y arranca
   # la pila: sitios, correo a Mailpit, Adminer, phpMyAdmin, WordPress,

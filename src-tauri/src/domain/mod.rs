@@ -1,12 +1,14 @@
 //! Tipos del dominio. Sin llamadas al sistema operativo.
 
-pub mod bundled;
 pub mod catalog;
 mod config;
+pub mod desktop;
 mod dotenv;
 mod hosts;
 mod layout;
+pub mod os;
 mod paths;
+pub mod php_build;
 mod service;
 mod site;
 pub mod user_path;

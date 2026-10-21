@@ -685,7 +685,20 @@ impl Harness {
         }
     }
 
+    /// En Windows 11 o macOS según la disposición.
     pub fn core(&self) -> crate::usecases::Core {
+        let os = match self.supervisor.deps().layout {
+            crate::domain::BinaryLayout::Portable => crate::domain::os::OsInfo::Windows {
+                build: 26200,
+                server: false,
+            },
+            crate::domain::BinaryLayout::Homebrew => crate::domain::os::OsInfo::MacOs,
+        };
+        self.core_on(os)
+    }
+
+    /// Como si corriera en otro sistema (Windows 7, Server 2012...).
+    pub fn core_on(&self, os: crate::domain::os::OsInfo) -> crate::usecases::Core {
         crate::usecases::Core::new(
             self.supervisor.clone(),
             crate::usecases::CoreAdapters {
@@ -696,6 +709,7 @@ impl Harness {
                 archive: self.archive.clone(),
                 ca: self.ca.clone(),
                 secrets: std::sync::Arc::new(FakeSecrets),
+                os,
             },
             // En macOS el PATH base lo pone la propia terminal.
             match self.supervisor.deps().layout {

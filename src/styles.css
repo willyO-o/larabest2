@@ -384,6 +384,27 @@ button:disabled {
   color: var(--ink-2);
 }
 
+.service-version {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+/* Compilación de PHP (NTS · x64 · VS17), con el detalle en el título. */
+.service-build {
+  overflow: hidden;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--sunken);
+  color: var(--ink-3);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  cursor: help;
+}
+
 .service-port {
   overflow: hidden;
   white-space: nowrap;
@@ -1058,6 +1079,91 @@ button:disabled {
 
 .port-input[data-busy='true']:not([aria-invalid='true']) {
   border-color: var(--warn);
+}
+
+/* ---------------------------------------------------------------- asistente */
+
+.setup-intro {
+  margin: -4px 0 0;
+  color: var(--ink-2);
+}
+
+.setup-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.setup-group-title {
+  margin: 0 0 2px;
+  color: var(--ink-3);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.setup-row {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 170px) minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  padding: 0 4px;
+  border-radius: var(--radius);
+}
+
+.setup-row input {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.setup-name {
+  font-weight: 600;
+}
+
+.setup-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 0;
+  color: var(--ink-3);
+  font-size: 12px;
+}
+
+.setup-status-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.setup-status .icon {
+  width: 14px;
+  height: 14px;
+  flex: none;
+}
+
+.setup-row[data-state='running'] .setup-status {
+  color: var(--ink);
+}
+
+.setup-row[data-state='done'] .setup-status,
+.setup-row[data-state='installed'] .setup-status {
+  color: var(--ok);
+}
+
+.setup-row[data-state='failed'] .setup-status {
+  color: var(--bad);
+}
+
+.setup-row[data-state='installed'] .setup-name {
+  color: var(--ink-2);
 }
 
 /* ---------------------------------------------------------------- hover */

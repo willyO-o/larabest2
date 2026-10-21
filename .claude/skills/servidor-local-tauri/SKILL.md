@@ -16,18 +16,18 @@ Referencia funcional: Laragon (concepto y simplicidad). Referencia de implementa
 3. **Todo bajo una raíz portable.** Sin servicios de Windows, sin tocar el registro, sin modificar el PATH global. Excepciones: el archivo hosts y, solo si el usuario lo activa en **Herramientas → PATH**, el PATH de su cuenta (`HKCU\Environment\Path` en Windows, un bloque marcado en `~/.zprofile` en macOS), tocando únicamente carpetas de dentro de la raíz y reversible con **Quitar**. Nunca el PATH del sistema ni variables globales como `PHPRC`.
 4. **Lo generado no se edita.** Los archivos de `etc/` se regeneran desde plantillas; lo personalizado va en archivos de inclusión aparte.
 5. **Identidad propia.** No usar el nombre, logo ni íconos de Laragon. El nombre de la app está pendiente: usar el marcador `APP_NAME` de `tauri.conf.json` y no inventar uno.
-6. **Windows 10 o superior.** Ver la tabla de plataformas.
+6. **Windows según el instalador.** El normal: Windows 10, 11 y Server 2016+. El legacy: 7 SP1, 8, 8.1 y Server 2008 R2/2012/2012 R2. Ver la tabla de plataformas.
 7. **Idioma.** Textos de interfaz y mensajes de error en español; identificadores de código en inglés.
 
 ## Plataformas
 
 | Plataforma | Estado |
 | --- | --- |
-| Windows 10 y 11 (x64) | Objetivo de la fase 1; aquí se prueba primero |
+| Windows 10, 11 y Server 2016+ (x64) | Instalador normal; aquí se prueba primero |
 | macOS | Fase 3, solo adaptadores nuevos |
-| Windows 7, 8 y 8.1 | No soportado |
+| Windows 7 SP1, 8, 8.1, Server 2008 R2/2012/2012 R2 | Instalador legacy (`npm run build:legacy`, job `legacy` del CI); sin probar en un equipo real |
 
-Por qué no Windows 7: WebView2 quedó congelado en la versión 109 para Windows 7/8/8.1, sin parches; Rust estable exige Windows 10 desde la 1.78 (Windows 7 requiere el target `x86_64-win7-windows-msvc`, tier 3, con nightly y `-Z build-std`); y PHP 8.3 o superior exige Windows 8, mientras Laravel 13 exige PHP 8.3. Si alguien pide soporte para Windows 7, explicar esto antes de tocar código.
+El usuario pidió el soporte legacy sabiendo sus límites: WebView2 quedó congelado en la versión 109 para Windows 7/8/8.1, sin parches; Rust estable exige Windows 10 desde la 1.78, así que el instalador legacy usa el target `x86_64-win7-windows-msvc` (Tier 3) con nightly y `-Z build-std`; y PHP 8.3 o superior exige Windows 8, mientras Laravel 13 exige PHP 8.3. La app detecta la versión de Windows (`domain/os.rs`, `adapters/windows/os.rs`) y `catalog::packages_for` ofrece solo lo que corre ahí (MariaDB 10.4.12 en 7, 10.6.12 en 8.1; Node.js 12 y 16). El código de Windows debe seguir funcionando en Windows 7: nada de APIs posteriores sin alternativa, y las descargas tienen que funcionar sin `curl.exe` y con PowerShell 2.0.
 
 ## Stack
 
@@ -342,13 +342,13 @@ Requiere el script `"tauri": "tauri"` en `package.json`. Si el push que incluye 
 | 3. macOS | macOS | Adaptadores de macOS; `php-fpm`; binarios desde Homebrew |
 | 4. Extras | Ambas | Descarga de versiones desde la app; respaldos programados; Mailpit; Redis |
 
-Fuera de alcance: Apache, PostgreSQL, compartir sitios por túnel, gestión de Node o Python, actualización automática. No adelantar trabajo de una fase posterior sin que se pida.
+Fuera de alcance: compartir sitios por túnel, gestión de Python, actualización automática. No adelantar trabajo de una fase posterior sin que se pida. (Apache, PostgreSQL y Node.js ya se agregaron a pedido.)
+
+Decidido por el usuario: el botón "Base de datos" abre HeidiSQL en Windows (Adminer si no está, o en macOS); HeidiSQL, Notepad++ y los servicios se descargan desde el asistente "Preparar LARABEST" del primer arranque, no van dentro del instalador.
 
 ## Pendiente de decidir
 
 Preguntar al usuario en lugar de asumir:
 
 - Nombre e identidad visual de la app.
-- Versiones de PHP y MariaDB que se incluyen en la fase 1.
-- Cliente de base de datos que abre el botón "Base de datos".
 - Si los pasantes con Mac pueden instalar Homebrew.

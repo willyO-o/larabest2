@@ -1,6 +1,6 @@
 # LARABEST
 
-Servidor local para Windows 10 y 11 y para macOS 13 o posterior, inspirado en Laragon: gestiona **Nginx** (o **Apache**), **PHP** y **MariaDB** como procesos propios y crea un dominio `<carpeta>.test` por cada proyecto de `www/`. Hecho con Tauri 2, Rust y Vue 3.
+Servidor local para Windows (10, 11 y Server 2016 en adelante; 7, 8 y Server 2012 con el instalador legacy) y para macOS 13 o posterior, inspirado en Laragon: gestiona **Nginx** (o **Apache**), **PHP** y **MariaDB** como procesos propios y crea un dominio `<carpeta>.test` por cada proyecto de `www/`. Hecho con Tauri 2, Rust y Vue 3.
 
 La interfaz sigue la estructura de Laragon (ventana compacta, una fila por servicio, cinco botones abajo y un menú contextual en árbol) con identidad propia. La banda superior cambia de color con el estado: grafito detenido, ámbar iniciando, verde todo en marcha, rojo con un fallo.
 
@@ -15,6 +15,10 @@ La interfaz sigue la estructura de Laragon (ventana compacta, una fila por servi
 **Apache:** se puede usar Apache en lugar de Nginx, con los mismos sitios. Ver [Apache en lugar de Nginx](#apache-en-lugar-de-nginx).
 
 **Agregar desde el menú:** versiones de PHP, Nginx, Apache, MariaDB y los servicios opcionales, más Adminer, phpMyAdmin y Composer, con un clic. Ver [Agregar programas desde el menú](#agregar-programas-desde-el-menú).
+
+**Preparar LARABEST:** la primera vez que se abre, un asistente instala PHP, MariaDB, Nginx, HeidiSQL, Node.js, Composer y lo que elijas, en las versiones que funcionan en tu sistema. Ver [Preparar LARABEST](#preparar-larabest).
+
+**Windows antiguos:** un instalador aparte para Windows 7, 8, 8.1 y Server 2012, con las últimas versiones de cada programa que corren ahí. Ver [Windows soportados](#windows-soportados).
 
 **PATH:** `php`, `composer` y `mariadb` en cualquier terminal (VS Code, PowerShell, Windows Terminal), al día con la versión activa, como el *Add to Path* de Laragon. Ver [Programas en el PATH](#programas-en-el-path).
 
@@ -59,6 +63,11 @@ Las extensiones marcadas en el menú se guardan en `app.json` y PHP se reinicia 
 | MongoDB | `fastdl.mongodb.org` | tap `mongodb/brew` y `brew install mongodb-community` |
 | Mailpit | `axllent/mailpit` (GitHub) | `brew install mailpit` |
 | Adminer, phpMyAdmin, Composer | sus descargas oficiales, en `bin\` | igual |
+| HeidiSQL | zip portable del último release de GitHub, en `bin\heidisql\` | no (es de Windows) |
+| Notepad++ | zip portable del último release de GitHub, en `bin\notepad++\` | no (es de Windows) |
+| Node.js (LTS) | última LTS de `nodejs.org`, en `bin\nodejs\<versión>\` | `brew install node` |
+
+El menú solo muestra lo que corre en tu sistema: en Windows 7 y 8 aparecen versiones anteriores (ver [Windows soportados](#windows-soportados)). HeidiSQL y Notepad++ se descargan por la API de GitHub, que entrega el archivo directo aunque la red bloquee `github.com`.
 
 En Windows cada versión queda en su carpeta (`bin\php\8.4.13\`), así que conviven varias y se elige en **Menú → PHP → Versión**. El menú muestra al lado lo que ya está instalado; volver a agregar algo baja la versión más nueva de esa rama si la hay. El progreso aparece en la línea de estado y, al terminar, la fila del servicio ya muestra la versión nueva. En macOS hace falta tener Homebrew (<https://brew.sh>); la app solo ejecuta `brew install`.
 
@@ -86,9 +95,48 @@ Todo lo demás es igual: los mismos sitios `<carpeta>.test`, puertos 80 y 443, H
 - Windows: las compilaciones recientes de Apache Lounge (VS18) piden el **runtime de Visual C++ más reciente** (<https://aka.ms/vs/17/release/vc_redist.x64.exe> instala la última versión 14.x). Si falta o es viejo, la fila de Apache lo dice.
 - macOS: el Apache que trae el sistema puede estar ocupando el puerto 80 (`sudo apachectl stop`).
 
-## Base de datos: Adminer o phpMyAdmin
+## Preparar LARABEST
 
-El botón **Base de datos** abre Adminer en `http://adminer.test` (con MariaDB como root sin contraseña). Con phpMyAdmin copiado en `bin\phpmyadmin\`, se sirve en `http://phpmyadmin.test` y entra solo como root; en **Menú → Preferencias → Botón Base de datos** se elige cuál abre el botón (**Menú → MariaDB** tiene los dos). La app genera `bin\phpmyadmin\config.inc.php` (phpMyAdmin solo lo lee de su carpeta); tus ajustes van en `etc\phpmyadmin\custom.inc.php`.
+La primera vez que se abre la app aparece **Preparar LARABEST**: una lista de lo que se puede instalar en tu sistema (la pila base, los servicios opcionales y las herramientas), con lo recomendado ya marcado: el PHP y el MariaDB más nuevos que corren ahí, Nginx, HeidiSQL, Adminer, Composer, Node.js y Notepad++. **Instalar** los descarga de sus sitios oficiales de uno en uno; cada fila muestra su paso (buscar versión, descargar, extraer) y al final el resultado. Lo que ya está instalado aparece marcado y no se vuelve a bajar.
+
+- En Windows baja los zips oficiales para tu versión de Windows; en macOS usa Homebrew.
+- **Omitir** o **Cerrar** lo da por terminado y no vuelve a abrirse solo. Para volver: **Menú → Agregar → Preparar LARABEST…**
+- Si algo falla (por ejemplo, sin internet), los demás siguen; el mensaje queda en su fila y se reintenta desde **Menú → Agregar**.
+
+## HeidiSQL y Notepad++
+
+En Windows, el botón **Base de datos** abre **HeidiSQL** ya conectado a MariaDB (root sin contraseña, `127.0.0.1` y el puerto configurado); MariaDB tiene que estar en marcha. Si HeidiSQL no está instalado, el botón abre Adminer. **Menú → MariaDB → Abrir HeidiSQL** hace lo mismo.
+
+Las configuraciones y los logs del menú se abren en **Notepad++** si está instalado (si no, en el Bloc de notas). **Menú → Herramientas → Notepad++** lo abre vacío.
+
+Los dos quedan en modo portable (`portable.lock` y `doLocalConf.xml` junto al `.exe`): sus ajustes y las sesiones de HeidiSQL se guardan en su carpeta de `bin\`, no en el registro ni en `%APPDATA%`, y se conservan al volver a agregarlos para actualizar. Son software libre (GPL); su código está en <https://github.com/HeidiSQL/HeidiSQL> y <https://github.com/notepad-plus-plus/notepad-plus-plus>.
+
+## Node.js
+
+**Menú → Agregar → Node.js (LTS)** baja la última LTS en `bin\nodejs\<versión>\`; pueden convivir varias y se elige en **Menú → Node.js → Versión**. `node`, `npm` y `npx` quedan en la **Terminal** de la app y, si activaste [el PATH](#programas-en-el-path), en cualquier terminal. En macOS es `brew install node`.
+
+## Windows soportados
+
+| Windows | Instalador | PHP | MariaDB | Node.js | Sin disponible |
+| --- | --- | --- | --- | --- | --- |
+| 10, 11, Server 2016/2019/2022/2025 | normal (`…_x64-setup.exe`) | 8.4 y 8.3 | 11.4 | LTS actual | — |
+| 8, 8.1, Server 2012 y 2012 R2 | legacy (`…_x64-legacy-setup.exe`) | 8.4, 8.3 y 8.2 | 10.6.12 | 16.20.2 | PostgreSQL, Redis, MongoDB, Mailpit |
+| 7 SP1, Server 2008 R2 | legacy | 8.2 | 10.4.12 | 12.22.12 | lo anterior y Apache |
+
+La app detecta la versión de Windows al abrirse y el menú **Agregar** y el asistente solo ofrecen lo que corre ahí. Las versiones fijas son las últimas publicadas para cada sistema: MariaDB dejó Windows 7 en 10.4.12 y Windows 8.1 en 10.6.12; Node.js 16 es la última con Windows 8.1 y Server 2012 R2. PHP 8.3 o posterior exige Windows 8, y Laravel 13 exige PHP 8.3: en Windows 7 no hay Laravel actual (WordPress sí funciona). PostgreSQL 17, Redis, MongoDB y Mailpit actuales piden Windows 10 o Server 2016.
+
+Por qué un instalador aparte: Rust estable exige Windows 10 desde la versión 1.78. El instalador legacy se compila para el target `x86_64-win7-windows-msvc` (Tier 3 en Rust: sin binarios oficiales, con nightly y `-Z build-std`). Avisos para Windows 7, 8 y Server 2012:
+
+- WebView2 quedó en la versión 109 para esos sistemas, sin parches de seguridad. El instalador lo instala si falta; si no puede, instala Microsoft Edge WebView2 Runtime 109 a mano.
+- Microsoft ya no da soporte a esos sistemas: úsalos solo en equipos de práctica, no expuestos a internet.
+- En Windows 7 no viene `curl.exe` y PowerShell 2.0 no tiene `Invoke-WebRequest`: la app descarga con `Net.WebClient` y TLS 1.2, que necesita .NET Framework 4.5 o posterior (Windows Update lo instala).
+- Windows 7 necesita el runtime universal de C (actualización KB2999226, que también instala el runtime de Visual C++ 2015-2022 que PHP pide): sin él la app no abre y avisa que falta `api-ms-win-crt-runtime-l1-1-0.dll`.
+- El instalador legacy trae dos DLL de compatibilidad junto al `.exe` (`combase.dll` y `api-ms-win-core-winrt-error-l1-1-0.dll`, en `scripts/legacy-shims/`): las librerías de Windows que usa Tauri buscan en ellas funciones que en Windows 7 están en `ole32.dll` o no existen. En Windows 8 o posterior el sistema usa las suyas y estas se ignoran.
+- El instalador legacy se compila en el CI (`build-windows`, job `legacy`, artefacto `instalador-windows-legacy`) y se revisan sus importaciones con `dumpbin`, pero no se pudo probar en un Windows 7 real.
+
+## Base de datos: HeidiSQL, Adminer o phpMyAdmin
+
+En Windows el botón **Base de datos** abre HeidiSQL si está instalado (ver arriba); si no, Adminer en `http://adminer.test` (con MariaDB como root sin contraseña). Con phpMyAdmin copiado en `bin\phpmyadmin\`, se sirve en `http://phpmyadmin.test` y entra solo como root; en **Menú → Preferencias → Botón Base de datos** se elige cuál abre el botón: HeidiSQL, Adminer o phpMyAdmin (**Menú → MariaDB** tiene todos). La app genera `bin\phpmyadmin\config.inc.php` (phpMyAdmin solo lo lee de su carpeta); tus ajustes van en `etc\phpmyadmin\custom.inc.php`.
 
 ## Servicios opcionales
 
@@ -422,6 +470,15 @@ El CI de Windows (job `servicios`) agrega todo el catálogo desde **Menú → Ag
 ## Desarrollo
 
 Requisitos: Node 22, Rust estable y, en Windows, las herramientas de compilación de Visual Studio con WebView2.
+
+Instalador legacy (Windows 7, 8 y Server 2012), en Windows:
+
+```bash
+rustup toolchain install nightly --component rust-src
+npm run build:legacy     # src-tauri/target/legacy/release/bundle/nsis/*-legacy-setup.exe
+```
+
+`build:legacy` compila primero las DLL de compatibilidad con Visual Studio (cl y link, encontrados con `vswhere`) y, al final, revisa con `dumpbin` que el `.exe` no importe de ellas nada que no cubran: si una actualización de Tauri agrega una función nueva, el build falla y dice cuál agregar en `scripts/legacy-shims/`.
 
 ```bash
 npm ci

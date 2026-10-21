@@ -5,14 +5,16 @@ use std::time::Duration;
 use async_trait::async_trait;
 
 use super::system32;
+use crate::domain::catalog::urls::accept_header;
 use crate::domain::slash;
 use crate::error::AppError;
 use crate::ports::{Downloader, ProcessRunner, ProcessSpec};
 
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 
-/// Descarga con `curl.exe` (incluido desde Windows 10 1803) y, si falla, con
-/// PowerShell, que usa el proxy configurado en Windows.
+/// Descarga con `curl.exe` (incluido desde Windows 10 1803) y, si falla o no
+/// existe (Windows 7 y 8), con PowerShell, que usa el proxy configurado en
+/// Windows.
 pub struct WindowsDownloader {
     runner: Arc<dyn ProcessRunner>,
 }
@@ -35,6 +37,31 @@ fn ps_quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "''"))
 }
 
+/// Sirve desde PowerShell 2.0 (Windows 7): ahí no existe
+/// `Invoke-WebRequest` y se usa `Net.WebClient`. TLS 1.2 (3072) se agrega
+/// a mano porque Windows 7 no lo usa por defecto.
+fn powershell_script(url: &str, out: &str, accept: Option<&str>) -> String {
+    let (iwr_headers, wc_header) = match accept {
+        Some(a) => (
+            format!(" -Headers @{{Accept = {}}}", ps_quote(a)),
+            format!("$c.Headers.Add('Accept', {}); ", ps_quote(a)),
+        ),
+        None => (String::new(), String::new()),
+    };
+    format!(
+        "$ProgressPreference = 'SilentlyContinue'; \
+         try {{ [Net.ServicePointManager]::SecurityProtocol = \
+         [Net.ServicePointManager]::SecurityProtocol -bor 3072 }} catch {{}}; \
+         $u = {url}; $o = {out}; \
+         if (Get-Command Invoke-WebRequest -ErrorAction SilentlyContinue) {{ \
+         Invoke-WebRequest -UseBasicParsing -Uri $u -OutFile $o{iwr_headers} }} else {{ \
+         $c = New-Object Net.WebClient; $c.Headers.Add('User-Agent', 'LARABEST'); \
+         {wc_header}$c.DownloadFile($u, $o) }}",
+        url = ps_quote(url),
+        out = ps_quote(out),
+    )
+}
+
 #[async_trait]
 impl Downloader for WindowsDownloader {
     async fn download(&self, url: &str, dest: &Path) -> Result<(), AppError> {
@@ -47,24 +74,20 @@ impl Downloader for WindowsDownloader {
         let _ = std::fs::remove_file(&part);
         let part_str = part.to_string_lossy().to_string();
 
-        let curl = ProcessSpec::new(system32().join("curl.exe"), system32())
+        let accept = accept_header(url);
+        let mut curl = ProcessSpec::new(system32().join("curl.exe"), system32())
             .arg("-L")
             .arg("-f")
             .arg("-sS")
             .arg("--retry")
-            .arg("2")
-            .arg("-o")
-            .arg(&part_str)
-            .arg(url);
+            .arg("2");
+        if let Some(accept) = accept {
+            curl = curl.arg("-H").arg(format!("Accept: {accept}"));
+        }
+        let curl = curl.arg("-o").arg(&part_str).arg(url);
         let first = self.try_run(&curl).await;
         if let Err(curl_error) = first {
-            let script = format!(
-                "$ProgressPreference = 'SilentlyContinue'; \
-                 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; \
-                 Invoke-WebRequest -UseBasicParsing -Uri {} -OutFile {}",
-                ps_quote(url),
-                ps_quote(&part_str)
-            );
+            let script = powershell_script(url, &part_str, accept);
             let powershell = ProcessSpec::new(
                 system32()
                     .join("WindowsPowerShell")

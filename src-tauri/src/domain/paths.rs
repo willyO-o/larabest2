@@ -54,13 +54,13 @@ impl Paths {
     }
 
     /// Carpeta donde se copia `composer.phar` (opcional).
-    /// Carpeta de un programa incluido en el instalador (HeidiSQL, Notepad++).
-    pub fn bin_bundled(&self, tool: super::bundled::BundledTool) -> PathBuf {
+    /// Carpeta de un programa de escritorio (HeidiSQL, Notepad++).
+    pub fn bin_desktop(&self, tool: super::desktop::DesktopTool) -> PathBuf {
         self.bin().join(tool.key())
     }
 
-    pub fn bundled_exe(&self, tool: super::bundled::BundledTool) -> PathBuf {
-        self.bin_bundled(tool).join(tool.exe())
+    pub fn desktop_exe(&self, tool: super::desktop::DesktopTool) -> PathBuf {
+        self.bin_desktop(tool).join(tool.exe())
     }
 
     /// Versiones de Node.js agregadas desde el menú: `bin/nodejs/<versión>/`.

@@ -2,19 +2,14 @@ import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
+import { messageOf } from '../lib/errors'
 import {
   EVENTS,
-  type AppError,
   type PortBusy,
   type PortSettings,
   type ServicesChoice,
   type ServicesSettings,
 } from '../types/ipc'
-
-function messageOf(e: unknown): string {
-  const err = e as Partial<AppError> | string
-  return typeof err === 'string' ? err : (err?.message ?? String(e))
-}
 
 /**
  * Preferencias → Servicios y puertos. Las filas de la ventana cambian con

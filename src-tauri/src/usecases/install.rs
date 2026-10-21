@@ -8,6 +8,7 @@ use std::time::Duration;
 
 use super::Core;
 use crate::domain::catalog::{self, urls, InstallProgress, Package, PackageKind, Tool};
+use crate::domain::desktop::DesktopTool;
 use crate::domain::{slash, BinaryLayout, ProgressState, ServiceId};
 use crate::drivers::{program_subpath, server_program, tools};
 use crate::error::AppError;
@@ -16,6 +17,7 @@ use crate::ports::ProcessSpec;
 /// `brew install` compila a veces lo que no tiene botella: puede tardar.
 const BREW_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 const BREW_PATHS: [&str; 2] = ["/opt/homebrew/bin/brew", "/usr/local/bin/brew"];
+const BREW_NODE_PATHS: [&str; 2] = ["/opt/homebrew/bin/node", "/usr/local/bin/node"];
 
 struct Progress<'a> {
     core: &'a Core,
@@ -59,6 +61,13 @@ impl Core {
     pub async fn install_package(&self, id: &str) -> Result<String, AppError> {
         let package = catalog::find(id)
             .ok_or_else(|| AppError::NotFound(format!("No existe el paquete {id}")))?;
+        if !catalog::packages_for(self.os).iter().any(|p| p.id == id) {
+            return Err(AppError::InvalidInput(format!(
+                "{} no está disponible para {}.",
+                package.label,
+                self.os.label()
+            )));
+        }
         let Ok(_guard) = self.install_lock.try_lock() else {
             return Err(AppError::InvalidInput(
                 "Ya se está agregando otro paquete. Espera a que termine.".into(),
@@ -71,7 +80,10 @@ impl Core {
         let layout = self.supervisor.deps().layout;
         let result = match package.kind {
             PackageKind::Service { service, branch } => match layout {
-                BinaryLayout::Portable => self.install_zip(&progress, service, branch).await,
+                BinaryLayout::Portable => {
+                    self.install_zip(&progress, service, branch, package.pinned)
+                        .await
+                }
                 BinaryLayout::Homebrew => self.install_brew(&progress, service, branch).await,
             },
             PackageKind::Tool(tool) => self.install_tool(&progress, tool).await,
@@ -79,7 +91,9 @@ impl Core {
         match result {
             Ok(message) => {
                 progress.emit("Listo", ProgressState::Done, Some(message.clone()));
-                // Filas, versiones y menús con lo nuevo.
+                // Filas, versiones y menús con lo nuevo (con la compilación
+                // de un PHP recién agregado).
+                self.load_php_builds().await;
                 self.supervisor.emit_all();
                 self.refresh_user_path().await?;
                 Ok(message)
@@ -170,16 +184,23 @@ impl Core {
     }
 
     /// Windows: descarga el zip y lo extrae en `bin/<servicio>/<versión>/`.
+    /// `pinned`: versión exacta (la final para un Windows antiguo).
     async fn install_zip(
         &self,
         progress: &Progress<'_>,
         service: ServiceId,
         branch: &str,
+        pinned: Option<&str>,
     ) -> Result<String, AppError> {
         let deps = self.supervisor.deps();
         let label = progress.package.label;
-        progress.step(format!("Buscando la última versión de {label}"));
-        let (version, url) = self.resolve_zip(service, branch).await?;
+        let (version, url) = match pinned {
+            Some(version) => (version.to_string(), pinned_zip(service, version)?),
+            None => {
+                progress.step(format!("Buscando la última versión de {label}"));
+                self.resolve_zip(service, branch).await?
+            }
+        };
         let dest = deps.paths.bin_service(service).join(&version);
         let layout = BinaryLayout::Portable;
         let marker = dest.join(program_subpath(
@@ -240,6 +261,27 @@ impl Core {
         service: ServiceId,
         branch: &str,
     ) -> Result<String, AppError> {
+        // MongoDB no está en Homebrew: viene del tap de la propia MongoDB.
+        let tap = (service == ServiceId::Mongodb).then_some("mongodb/brew");
+        self.brew_install(progress, &brew_formula(service, branch), tap)
+            .await?;
+        let version = self
+            .versions(service)?
+            .into_iter()
+            .find(|v| branch.is_empty() || v.version.starts_with(&format!("{branch}.")));
+        Ok(match version {
+            Some(v) => format!("{} {} instalado con Homebrew.", service.label(), v.version),
+            None => format!("{} instalado con Homebrew.", service.label()),
+        })
+    }
+
+    /// `brew install <formula>`, agregando antes un tap si hace falta.
+    async fn brew_install(
+        &self,
+        progress: &Progress<'_>,
+        formula: &str,
+        tap: Option<&str>,
+    ) -> Result<(), AppError> {
         let deps = self.supervisor.deps();
         let brew = BREW_PATHS
             .iter()
@@ -265,22 +307,17 @@ impl Core {
             spec
         };
         let runner = deps.runner.as_ref();
-        if service == ServiceId::Mongodb {
-            progress.step("Agregando el tap de MongoDB");
-            runner
-                .run(&brew_spec(&["tap", "mongodb/brew"]), BREW_TIMEOUT)
-                .await?;
+        if let Some(tap) = tap {
+            progress.step(format!("Agregando el tap {tap}"));
+            runner.run(&brew_spec(&["tap", tap]), BREW_TIMEOUT).await?;
             // Homebrew 5 pide confiar en los tap de terceros; antes no existe.
-            let _ = runner
-                .run(&brew_spec(&["trust", "mongodb/brew"]), BREW_TIMEOUT)
-                .await;
+            let _ = runner.run(&brew_spec(&["trust", tap]), BREW_TIMEOUT).await;
         }
-        let formula = brew_formula(service, branch);
         progress.step(format!(
             "brew install {formula} (puede tardar varios minutos)"
         ));
         let out = runner
-            .run(&brew_spec(&["install", &formula]), BREW_TIMEOUT)
+            .run(&brew_spec(&["install", formula]), BREW_TIMEOUT)
             .await?;
         if !out.success() {
             let text = out.text();
@@ -290,14 +327,57 @@ impl Core {
                 lines[lines.len().saturating_sub(8)..].join("\n")
             )));
         }
-        let version = self
-            .versions(service)?
-            .into_iter()
-            .find(|v| branch.is_empty() || v.version.starts_with(&format!("{branch}.")));
-        Ok(match version {
-            Some(v) => format!("{} {} instalado con Homebrew.", service.label(), v.version),
-            None => format!("{} instalado con Homebrew.", service.label()),
-        })
+        Ok(())
+    }
+
+    /// Node.js: en Windows la última LTS de nodejs.org (o la versión fija
+    /// para un Windows antiguo) en `bin/nodejs/<versión>/`; en macOS,
+    /// `brew install node`.
+    async fn install_node(
+        &self,
+        progress: &Progress<'_>,
+        pinned: Option<&str>,
+    ) -> Result<String, AppError> {
+        let deps = self.supervisor.deps();
+        if deps.layout == BinaryLayout::Homebrew {
+            self.brew_install(progress, "node", None).await?;
+            return Ok("Node.js instalado con Homebrew.".into());
+        }
+        let version = match pinned {
+            Some(version) => version.to_string(),
+            None => {
+                progress.step("Buscando la última versión LTS de Node.js");
+                let json = self.fetch_text(urls::NODE_INDEX).await?;
+                catalog::node_lts(&json).ok_or_else(|| {
+                    AppError::Process(
+                        "No se encontró la versión en nodejs.org. Vuelve a intentarlo más tarde."
+                            .into(),
+                    )
+                })?
+            }
+        };
+        let dest = deps.paths.bin_nodejs().join(&version);
+        let node = dest.join("node.exe");
+        if deps.fs.exists(&node) {
+            return Ok(format!("Node.js {version} ya estaba instalado."));
+        }
+        progress.step(format!("Descargando Node.js {version}"));
+        let zip = deps.paths.downloads().join(format!("node-{version}.zip"));
+        self.downloader
+            .download(&urls::node_zip(&version), &zip)
+            .await?;
+        progress.step(format!("Extrayendo en {}", slash(&dest)));
+        // El zip trae todo dentro de node-v<versión>-win-x64/: se quita.
+        let extracted = self.extract(&zip, &dest, None).await;
+        let _ = deps.fs.remove_file(&zip);
+        extracted?;
+        if !deps.fs.exists(&node) {
+            let _ = deps.fs.remove_dir_all(&dest);
+            return Err(AppError::Process(
+                "El archivo descargado de nodejs.org no tiene node.exe.".into(),
+            ));
+        }
+        Ok(format!("Node.js {version} instalado."))
     }
 
     /// Adminer, phpMyAdmin y Composer se descargan igual en las dos
@@ -305,19 +385,25 @@ impl Core {
     async fn install_tool(&self, progress: &Progress<'_>, tool: Tool) -> Result<String, AppError> {
         let deps = self.supervisor.deps();
         let label = progress.package.label;
-        progress.step(format!("Descargando {label}"));
+        let downloading = format!("Descargando {label}");
         match tool {
+            // Node.js no se sirve como sitio y va por versiones.
+            Tool::Nodejs => return self.install_node(progress, progress.package.pinned).await,
+            Tool::Desktop(desktop) => return self.install_desktop(progress, desktop).await,
             Tool::Adminer => {
+                progress.step(downloading);
                 self.downloader
                     .download(urls::ADMINER, &deps.paths.adminer_php())
                     .await?;
             }
             Tool::Composer => {
+                progress.step(downloading);
                 self.downloader
                     .download(super::COMPOSER_URL, &deps.paths.composer_phar())
                     .await?;
             }
             Tool::Phpmyadmin => {
+                progress.step(downloading);
                 let zip = deps.paths.downloads().join("phpmyadmin.zip");
                 self.downloader.download(urls::PHPMYADMIN, &zip).await?;
                 progress.step(format!(
@@ -366,10 +452,88 @@ impl Core {
                         tools::installed(deps.fs.as_ref(), &deps.paths, tools::PHPMYADMIN)
                     }
                     Tool::Composer => deps.fs.exists(&deps.paths.composer_phar()),
+                    Tool::Nodejs => match (deps.layout, package.pinned) {
+                        (BinaryLayout::Portable, Some(version)) => {
+                            self.node_versions().iter().any(|v| v == version)
+                        }
+                        (BinaryLayout::Portable, None) => {
+                            return self.node_versions().into_iter().next()
+                        }
+                        (BinaryLayout::Homebrew, _) => {
+                            BREW_NODE_PATHS.iter().any(|p| deps.fs.exists(Path::new(p)))
+                        }
+                    },
+                    Tool::Desktop(desktop) => self.desktop_installed(desktop),
                 };
                 installed.then(|| "instalado".to_string())
             }
         }
+    }
+}
+
+impl Core {
+    /// HeidiSQL o Notepad++: el zip portable del último release de GitHub,
+    /// extraído en `bin/<carpeta>/`. Se extrae encima, sin borrar antes: las
+    /// sesiones de HeidiSQL y la configuración de Notepad++ no vienen en el
+    /// zip y se conservan al actualizar.
+    async fn install_desktop(
+        &self,
+        progress: &Progress<'_>,
+        tool: DesktopTool,
+    ) -> Result<String, AppError> {
+        let deps = self.supervisor.deps();
+        if deps.layout != BinaryLayout::Portable {
+            return Err(AppError::Unsupported(format!(
+                "{} es un programa de Windows.",
+                tool.label()
+            )));
+        }
+        progress.step(format!("Buscando la última versión de {}", tool.label()));
+        let json = self.fetch_text(tool.latest_release_api()).await?;
+        let (version, url) =
+            catalog::github_asset(&json, tool.asset_suffix()).ok_or_else(|| {
+                AppError::Process(format!(
+                    "No se encontró el zip portable de {} en GitHub. Vuelve a intentarlo más tarde.",
+                    tool.label()
+                ))
+            })?;
+        progress.step(format!("Descargando {} {version}", tool.label()));
+        let zip = deps.paths.downloads().join(format!("{}.zip", tool.key()));
+        self.downloader.download(&url, &zip).await?;
+        let dest = deps.paths.bin_desktop(tool);
+        progress.step(format!("Extrayendo en {}", self.desktop_dir(tool)));
+        let extractor = self.archive.clone();
+        let (archive, out) = (zip.clone(), dest.clone());
+        let extracted =
+            tokio::task::spawn_blocking(move || extractor.extract_zip(&archive, &out, None))
+                .await
+                .map_err(|e| AppError::Process(format!("La extracción se interrumpió: {e}")));
+        let _ = deps.fs.remove_file(&zip);
+        extracted??;
+        if !self.desktop_installed(tool) {
+            return Err(AppError::Process(format!(
+                "El archivo descargado de {} no tiene {}.",
+                tool.label(),
+                tool.exe()
+            )));
+        }
+        let marker = dest.join(tool.portable_marker());
+        if !deps.fs.exists(&marker) {
+            deps.fs.write(&marker, "")?;
+        }
+        Ok(format!("{} {version} instalado.", tool.label()))
+    }
+}
+
+/// Zip de una versión exacta. Solo MariaDB se fija (las finales para
+/// Windows 7 y 8.1); su archivo guarda todas las versiones.
+fn pinned_zip(service: ServiceId, version: &str) -> Result<String, AppError> {
+    match service {
+        ServiceId::Mariadb => Ok(urls::mariadb_zip(version)),
+        _ => Err(AppError::InvalidInput(format!(
+            "No se puede fijar la versión de {}.",
+            service.label()
+        ))),
     }
 }
 

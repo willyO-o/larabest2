@@ -1,10 +1,52 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, watch } from 'vue'
 import { SERVICE_LABEL, useServicesStore } from '../stores/services'
+import { useSettingsStore } from '../stores/settings'
 import type { ServiceId, ServiceStatus } from '../types/ipc'
 
 const props = defineProps<{ status: ServiceStatus }>()
 const services = useServicesStore()
+const settings = useSettingsStore()
+
+// PHP muestra cómo está compilado (NTS · x64 · VS17): importa para elegir
+// extensiones. Se pide al cambiar de versión.
+watch(
+  () => (props.status.id === 'php' ? props.status.version : null),
+  (version) => {
+    if (version) settings.loadPhpBuild(version)
+  },
+  { immediate: true },
+)
+
+const build = computed(() =>
+  props.status.id === 'php' && props.status.version
+    ? (settings.phpBuilds[props.status.version] ?? null)
+    : null,
+)
+
+/** "NTS · x64 · VS17". */
+const buildShort = computed(() => {
+  const b = build.value
+  if (!b) return ''
+  return [b.threadSafe ? 'TS' : 'NTS', b.arch, b.toolset].filter(Boolean).join(' · ')
+})
+
+/** Detalle completo al pasar el cursor. */
+const buildTitle = computed(() => {
+  const b = build.value
+  if (!b) return ''
+  const lines = [
+    `PHP ${b.version}`,
+    b.threadSafe ? 'Thread Safe (TS)' : 'Non Thread Safe (NTS): un proceso php-cgi por petición, vía FastCGI',
+    b.arch === 'x64' ? 'Arquitectura: 64 bits (x64)' : b.arch ? `Arquitectura: ${b.arch}` : null,
+    b.compiler ? `Compilador: ${b.compiler}${b.toolset ? ` (${b.toolset})` : ''}` : null,
+    b.extensionApi ? `API de extensiones: ${b.extensionApi}` : null,
+    b.toolset
+      ? `Las extensiones (.dll) tienen que ser ${b.threadSafe ? 'TS' : 'NTS'} ${b.arch ?? ''} ${b.toolset}.`
+      : null,
+  ]
+  return lines.filter(Boolean).join('\n')
+})
 
 const STATE_LABEL = {
   stopped: 'detenido',
@@ -50,7 +92,10 @@ function toggle() {
   <li class="service" :data-state="status.state">
     <span class="dot" aria-hidden="true" />
     <span class="service-name">{{ SERVICE_LABEL[status.id] }}</span>
-    <span class="service-version">{{ status.version ?? 'sin instalar' }}</span>
+    <span class="service-version">
+      {{ status.version ?? 'sin instalar' }}
+      <span v-if="buildShort" class="service-build" :title="buildTitle">{{ buildShort }}</span>
+    </span>
     <span class="service-port" :title="port">{{ port }}</span>
     <span class="service-state">{{ STATE_LABEL[status.state] }}</span>
     <span class="service-actions">

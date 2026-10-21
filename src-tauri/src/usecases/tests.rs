@@ -830,7 +830,10 @@ async fn phpmyadmin_is_served_registered_and_can_be_the_database_button() {
     assert!(core.open_database().is_err());
     core.set_database_client(crate::domain::DatabaseClient::Phpmyadmin)
         .unwrap();
-    assert_eq!(core.open_database().unwrap().unwrap(), "http://phpmyadmin.test/");
+    assert_eq!(
+        core.open_database().unwrap().unwrap(),
+        "http://phpmyadmin.test/"
+    );
 
     let err = core
         .create_site("phpMyAdmin", SitePreset::Blank)
@@ -927,7 +930,14 @@ async fn homebrew_installs_formulas_and_trusts_the_mongodb_tap() {
 
     h.fs.write(Path::new("/opt/homebrew/bin/brew"), "").unwrap();
     core.install_package("mongodb").await.unwrap();
-    let ran: Vec<String> = h.runner.ran().iter().map(|s| s.args.join(" ")).collect();
+    // Sin las consultas `php -n -i` que siguen a cada instalación.
+    let ran: Vec<String> = h
+        .runner
+        .ran()
+        .iter()
+        .map(|s| s.args.join(" "))
+        .filter(|a| a != "-n -i")
+        .collect();
     assert_eq!(
         ran,
         vec![
@@ -947,7 +957,11 @@ async fn homebrew_installs_formulas_and_trusts_the_mongodb_tap() {
 
     let message = core.install_package("php-8.4").await.unwrap();
     assert_eq!(message, "PHP 8.4.13 instalado con Homebrew.");
-    assert_eq!(h.runner.ran()[3].args, vec!["install", "php@8.4"]);
+    assert!(h
+        .runner
+        .ran()
+        .iter()
+        .any(|s| s.args == ["install", "php@8.4"]));
 }
 
 #[tokio::test]
@@ -1281,55 +1295,67 @@ async fn busy_ports_name_the_other_program_but_not_our_running_services() {
     assert!(!busy.iter().any(|b| b.port == 80), "{busy:?}");
 }
 
-const BUNDLED: &str = "C:/Programas/LARABEST/bundled";
+const HEIDISQL_RELEASE: &str = r#"{"tag_name": "v12.21", "assets": [
+    {"name": "HeidiSQL_12.21_64_Portable.zip",
+     "url": "https://api.github.com/repos/HeidiSQL/HeidiSQL/releases/assets/500350064"}
+]}"#;
 
 #[tokio::test]
-async fn bundled_tools_are_extracted_once_and_keep_user_settings() {
-    use crate::domain::bundled::BundledTool;
+async fn heidisql_is_downloaded_from_github_and_keeps_its_sessions() {
+    use crate::domain::desktop::DesktopTool;
     let h = Harness::new();
+    h.downloader
+        .respond(DesktopTool::Heidisql.latest_release_api(), HEIDISQL_RELEASE);
+    h.archive.contains(&["heidisql.exe", "portable.lock"]);
     let core = h.core();
-    h.fs.write(Path::new(&format!("{BUNDLED}/heidisql-12.21.zip")), "")
-        .unwrap();
-    h.fs.write(Path::new(&format!("{BUNDLED}/notepad++-8.9.8.1.zip")), "")
-        .unwrap();
-    h.fs.write(Path::new(&format!("{BUNDLED}/LICENCIAS.txt")), "GPL")
-        .unwrap();
-    h.archive.contains(&["heidisql.exe", "notepad++.exe"]);
 
-    let done = core.provision_bundled(Path::new(BUNDLED)).await.unwrap();
-    assert_eq!(done, vec!["HeidiSQL 12.21", "Notepad++ 8.9.8.1"]);
-    assert!(core.bundled_installed(BundledTool::Heidisql));
-    // Modo portable: ajustes junto al .exe, no en el registro ni en %APPDATA%.
+    let message = core.install_package("heidisql").await.unwrap();
+    assert_eq!(message, "HeidiSQL 12.21 instalado.");
+    // Por la API: no pasa por github.com.
     assert_eq!(
-        h.fs.read(&format!("{ROOT}/bin/heidisql/portable_settings.txt")),
-        ""
+        h.downloader.urls.lock().unwrap()[1],
+        "https://api.github.com/repos/HeidiSQL/HeidiSQL/releases/assets/500350064"
     );
+    assert!(core.desktop_installed(DesktopTool::Heidisql));
     assert!(h
         .fs
-        .exists(Path::new(&format!("{ROOT}/bin/notepad++/doLocalConf.xml"))));
+        .exists(Path::new(&format!("{ROOT}/bin/heidisql/portable.lock"))));
 
-    // Ya extraídos: no se vuelve a hacer.
-    assert!(core
-        .provision_bundled(Path::new(BUNDLED))
-        .await
-        .unwrap()
-        .is_empty());
-
-    // Otra versión en el instalador: se actualiza sin pisar las sesiones.
+    // Actualizar no borra las sesiones guardadas.
     h.fs.write(
         Path::new(&format!("{ROOT}/bin/heidisql/portable_settings.txt")),
         "Servers.LARABEST",
     )
     .unwrap();
-    h.fs.remove_file(Path::new(&format!("{BUNDLED}/heidisql-12.21.zip")))
-        .unwrap();
-    h.fs.write(Path::new(&format!("{BUNDLED}/heidisql-12.22.zip")), "")
-        .unwrap();
-    let done = core.provision_bundled(Path::new(BUNDLED)).await.unwrap();
-    assert_eq!(done, vec!["HeidiSQL 12.22"]);
+    core.install_package("heidisql").await.unwrap();
     assert_eq!(
         h.fs.read(&format!("{ROOT}/bin/heidisql/portable_settings.txt")),
         "Servers.LARABEST"
+    );
+}
+
+#[tokio::test]
+async fn windows_7_gets_the_last_versions_that_run_there() {
+    use crate::domain::os::OsInfo;
+    let h = Harness::new();
+    let core = h.core_on(OsInfo::Windows {
+        build: 7601,
+        server: false,
+    });
+    let err = core.install_package("mariadb-11.4").await.unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("MariaDB 11.4 no está disponible para Windows 7"),
+        "{err}"
+    );
+
+    h.archive.contains(&["bin/mariadbd.exe"]);
+    let message = core.install_package("mariadb-10.4").await.unwrap();
+    assert_eq!(message, "MariaDB 10.4.12 instalado.");
+    // Versión fija: sin consultar la última.
+    assert_eq!(
+        *h.downloader.urls.lock().unwrap(),
+        vec!["https://archive.mariadb.org/mariadb-10.4.12/winx64-packages/mariadb-10.4.12-winx64.zip"]
     );
 }
 
@@ -1379,13 +1405,171 @@ async fn config_files_open_in_notepadpp_when_installed() {
     let core = h.core();
     core.open_in_editor(Path::new("C:/APP/etc/php/php.ini"))
         .unwrap();
-    assert_eq!(*h.shell.edited.lock().unwrap(), vec!["C:/APP/etc/php/php.ini"]);
+    assert_eq!(
+        *h.shell.edited.lock().unwrap(),
+        vec!["C:/APP/etc/php/php.ini"]
+    );
 
-    h.fs.write(Path::new(&format!("{ROOT}/bin/notepad++/notepad++.exe")), "")
-        .unwrap();
+    h.fs.write(
+        Path::new(&format!("{ROOT}/bin/notepad++/notepad++.exe")),
+        "",
+    )
+    .unwrap();
     core.open_in_editor(Path::new("C:/APP/etc/php/php.ini"))
         .unwrap();
     let launched = h.shell.launched.lock().unwrap().clone();
     assert_eq!(launched[0].0, format!("{ROOT}/bin/notepad++/notepad++.exe"));
     assert_eq!(launched[0].1, vec![r#""C:\APP\etc\php\php.ini""#]);
+}
+
+const NODE_INDEX_JSON: &str = r#"[
+    {"version": "v26.12.0", "lts": false, "files": ["win-x64-zip"]},
+    {"version": "v24.22.0", "lts": "Krypton", "files": ["win-x64-zip"]}
+]"#;
+
+#[tokio::test]
+async fn nodejs_lts_is_added_and_goes_in_the_terminal_path() {
+    use crate::domain::catalog::urls;
+    let h = Harness::new();
+    h.downloader.respond(urls::NODE_INDEX, NODE_INDEX_JSON);
+    h.archive.contains(&["node.exe", "npm.cmd", "npx.cmd"]);
+    let core = h.core();
+
+    let message = core.install_package("nodejs").await.unwrap();
+    assert_eq!(message, "Node.js 24.22.0 instalado.");
+    assert_eq!(
+        h.downloader.urls.lock().unwrap()[1],
+        "https://nodejs.org/dist/v24.22.0/node-v24.22.0-win-x64.zip"
+    );
+    assert_eq!(core.node_versions(), vec!["24.22.0"]);
+    let package = crate::domain::catalog::find("nodejs").unwrap();
+    assert_eq!(core.package_status(&package).as_deref(), Some("24.22.0"));
+
+    let env = core.terminal_env().unwrap();
+    assert!(
+        env["PATH"].contains(r"C:\APP\bin\nodejs\24.22.0"),
+        "{}",
+        env["PATH"]
+    );
+
+    // Agregarlo otra vez no descarga de nuevo la misma versión.
+    let again = core.install_package("nodejs").await.unwrap();
+    assert_eq!(again, "Node.js 24.22.0 ya estaba instalado.");
+}
+
+#[tokio::test]
+async fn the_chosen_node_version_follows_the_user_path() {
+    let h = Harness::new();
+    for v in ["22.23.3", "24.22.0"] {
+        h.fs.write(Path::new(&format!("{ROOT}/bin/nodejs/{v}/node.exe")), "")
+            .unwrap();
+    }
+    let core = h.core();
+    // Sin elegir: la más nueva.
+    assert_eq!(core.active_node().as_deref(), Some("24.22.0"));
+
+    core.set_user_path(true).await.unwrap();
+    core.set_node_version("22.23.3").await.unwrap();
+    assert_eq!(h.config.get().node_version.as_deref(), Some("22.23.3"));
+    let dirs = h.user_path.current().unwrap();
+    assert!(
+        dirs.iter().any(|d| d.ends_with(r"nodejs\22.23.3")),
+        "{dirs:?}"
+    );
+    assert!(!dirs.iter().any(|d| d.contains("24.22.0")), "{dirs:?}");
+
+    assert!(core.set_node_version("18.0.0").await.is_err());
+}
+
+fn recommended(info: &crate::usecases::SetupInfo) -> Vec<&str> {
+    info.packages
+        .iter()
+        .filter(|p| p.recommended)
+        .map(|p| p.id.as_str())
+        .collect()
+}
+
+#[tokio::test]
+async fn setup_recommends_the_newest_versions_for_each_system() {
+    use crate::domain::os::OsInfo;
+    let h = Harness::new();
+    let info = h.core().setup_info();
+    assert!(info.show);
+    assert_eq!(info.os, "Windows 11");
+    assert_eq!(
+        recommended(&info),
+        vec![
+            "php-8.4",
+            "nginx",
+            "mariadb-11.4",
+            "heidisql",
+            "adminer",
+            "composer",
+            "nodejs",
+            "notepadpp"
+        ]
+    );
+    // Lo ya instalado se marca (el arnés trae PHP 8.4.6 y Nginx 1.28.0).
+    let php = info.packages.iter().find(|p| p.id == "php-8.4").unwrap();
+    assert_eq!(php.status.as_deref(), Some("8.4.6"));
+
+    let seven = h.core_on(OsInfo::Windows {
+        build: 7601,
+        server: false,
+    });
+    let info = seven.setup_info();
+    assert_eq!(info.os, "Windows 7");
+    assert_eq!(
+        recommended(&info),
+        vec![
+            "php-8.2",
+            "nginx",
+            "mariadb-10.4",
+            "heidisql",
+            "adminer",
+            "composer",
+            "nodejs-12",
+            "notepadpp"
+        ]
+    );
+
+    let mac = Harness::homebrew();
+    let info = mac.core().setup_info();
+    assert_eq!(info.os, "macOS");
+    assert!(!info.packages.iter().any(|p| p.id == "heidisql"));
+}
+
+#[tokio::test]
+async fn finishing_the_setup_stops_showing_it() {
+    let h = Harness::new();
+    let core = h.core();
+    core.finish_setup().unwrap();
+    assert!(!core.setup_info().show);
+    assert!(h.config.get().setup_done);
+}
+
+#[tokio::test]
+async fn php_build_is_read_from_php_once_and_shown_short() {
+    let h = Harness::new();
+    h.runner.on_run(Box::new(|spec| {
+        (spec.args == ["-n", "-i"]).then(|| crate::ports::CommandOutput {
+            code: Some(0),
+            stdout: "PHP Version => 8.4.6\nCompiler => Visual C++ 2022\nArchitecture => x64\nZend Extension Build => API420240924,NTS,VS17\nThread Safety => disabled\n".into(),
+            stderr: String::new(),
+        })
+    }));
+    let core = h.core();
+    assert!(core.php_build_cached("8.4.6").is_none());
+
+    let build = core.php_build("8.4.6").await.unwrap();
+    assert_eq!(build.short(), "NTS · x64 · VS17");
+    let ran = h.runner.ran();
+    assert_eq!(ran.len(), 1);
+    assert!(ran[0].program.to_string_lossy().contains("8.4.6"));
+
+    // Guardado: ni el menú ni la segunda consulta vuelven a ejecutar PHP.
+    assert_eq!(core.php_build_cached("8.4.6"), Some(build.clone()));
+    assert_eq!(core.php_build("8.4.6").await, Some(build));
+    assert_eq!(h.runner.ran().len(), 1);
+    assert!(core.php_build("7.0.0").await.is_none());
 }

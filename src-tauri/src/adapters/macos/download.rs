@@ -31,15 +31,16 @@ impl Downloader for CurlDownloader {
         // Se descarga a un archivo temporal para no dejar uno a medias.
         let part = dest.with_extension("part");
         let _ = std::fs::remove_file(&part);
-        let spec = ProcessSpec::new("/usr/bin/curl", "/")
+        let mut spec = ProcessSpec::new("/usr/bin/curl", "/")
             .arg("-L")
             .arg("-f")
             .arg("-sS")
             .arg("--retry")
-            .arg("2")
-            .arg("-o")
-            .arg(part.to_string_lossy())
-            .arg(url);
+            .arg("2");
+        if let Some(accept) = crate::domain::catalog::urls::accept_header(url) {
+            spec = spec.arg("-H").arg(format!("Accept: {accept}"));
+        }
+        let spec = spec.arg("-o").arg(part.to_string_lossy()).arg(url);
         let failure = match self.runner.run(&spec, DOWNLOAD_TIMEOUT).await {
             Ok(out) if out.success() => None,
             Ok(out) => Some(out.text()),

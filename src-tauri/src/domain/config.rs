@@ -180,6 +180,8 @@ pub struct AppConfig {
     pub user_path: bool,
     /// Versión de Node.js de la terminal y el PATH. `None`: la más nueva.
     pub node_version: Option<String>,
+    /// El asistente "Preparar LARABEST" ya se terminó u omitió.
+    pub setup_done: bool,
 }
 
 impl Default for AppConfig {
@@ -206,6 +208,7 @@ impl Default for AppConfig {
             mailpit_http_port: 8025,
             user_path: false,
             node_version: None,
+            setup_done: false,
         }
     }
 }

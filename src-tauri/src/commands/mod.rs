@@ -11,7 +11,7 @@ use crate::domain::{
     ThemePreference,
 };
 use crate::error::AppError;
-use crate::usecases::{PortBusy, ServicesChoice, ServicesSettings};
+use crate::usecases::{PortBusy, ServicesChoice, ServicesSettings, SetupInfo};
 use crate::{menu, settings, tray, AppState};
 
 #[tauri::command]
@@ -145,6 +145,40 @@ pub struct Settings {
     pub default_root: String,
     pub theme: ThemePreference,
     pub ssl: bool,
+}
+
+/// Cómo está compilada una versión de PHP (NTS/TS, arquitectura, compilador).
+#[tauri::command]
+pub async fn php_build_info(
+    state: State<'_, AppState>,
+    version: String,
+) -> Result<Option<crate::domain::php_build::PhpBuild>, AppError> {
+    Ok(state.core.php_build(&version).await)
+}
+
+/// Asistente "Preparar LARABEST": qué se puede instalar en este sistema.
+#[tauri::command]
+pub async fn setup_info(state: State<'_, AppState>) -> Result<SetupInfo, AppError> {
+    Ok(state.core.setup_info())
+}
+
+/// Instala un paquete del catálogo (asistente). El progreso llega con
+/// `install:progress` y las filas con `service:state`.
+#[tauri::command]
+pub async fn packages_install(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+) -> Result<String, AppError> {
+    let result = state.core.install_package(&id).await;
+    // Menú y bandeja con lo instalado.
+    tray::rebuild(&app);
+    result
+}
+
+#[tauri::command]
+pub async fn setup_finish(state: State<'_, AppState>) -> Result<(), AppError> {
+    state.core.finish_setup()
 }
 
 /// Preferencias → Servicios y puertos.

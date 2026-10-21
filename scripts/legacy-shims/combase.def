@@ -1,0 +1,32 @@
+; combase.dll para Windows 7, que no lo tiene (llegó en Windows 8): las
+; librerías `windows` de Rust que usa Tauri enlazan estas funciones COM a
+; combase.dll, pero en Windows 7 viven en ole32.dll. Solo reenvía nombres;
+; en Windows 8 o posterior el sistema usa su propio combase.dll (KnownDLL)
+; y este se ignora. build-legacy.mjs comprueba que cubre todo lo importado.
+LIBRARY combase
+EXPORTS
+  CoTaskMemAlloc=ole32.CoTaskMemAlloc
+  CoTaskMemFree=ole32.CoTaskMemFree
+  CoTaskMemRealloc=ole32.CoTaskMemRealloc
+  CoCreateFreeThreadedMarshaler=ole32.CoCreateFreeThreadedMarshaler
+  CoCreateInstance=ole32.CoCreateInstance
+  CoCreateInstanceEx=ole32.CoCreateInstanceEx
+  CoGetClassObject=ole32.CoGetClassObject
+  CoInitializeEx=ole32.CoInitializeEx
+  CoUninitialize=ole32.CoUninitialize
+  CoGetApartmentType=ole32.CoGetApartmentType
+  CoGetObjectContext=ole32.CoGetObjectContext
+  CoCreateGuid=ole32.CoCreateGuid
+  CoWaitForMultipleHandles=ole32.CoWaitForMultipleHandles
+  CoMarshalInterface=ole32.CoMarshalInterface
+  CoUnmarshalInterface=ole32.CoUnmarshalInterface
+  CoReleaseMarshalData=ole32.CoReleaseMarshalData
+  CoGetMarshalSizeMax=ole32.CoGetMarshalSizeMax
+  CoGetStandardMarshal=ole32.CoGetStandardMarshal
+  CoSetProxyBlanket=ole32.CoSetProxyBlanket
+  CoInitializeSecurity=ole32.CoInitializeSecurity
+  StringFromGUID2=ole32.StringFromGUID2
+  StringFromCLSID=ole32.StringFromCLSID
+  CLSIDFromString=ole32.CLSIDFromString
+  IIDFromString=ole32.IIDFromString
+  PropVariantClear=ole32.PropVariantClear

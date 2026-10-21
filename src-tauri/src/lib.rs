@@ -75,6 +75,7 @@ struct Platform {
     trust: Arc<dyn TrustStore>,
     /// Base del PATH de la terminal (ver `Core::new`).
     system_path: String,
+    os: domain::os::OsInfo,
 }
 
 #[cfg(windows)]
@@ -99,6 +100,7 @@ fn platform(app_name: &str, paths: &Paths) -> Platform {
         ports: Arc::new(WindowsPortChecker),
         shell: Arc::new(WindowsShellLauncher),
         system_path: std::env::var("PATH").unwrap_or_default(),
+        os: detect_os(),
     }
 }
 
@@ -128,6 +130,7 @@ fn platform(app_name: &str, paths: &Paths) -> Platform {
         // Una app abierta desde el Finder tiene un PATH mínimo; la terminal
         // antepone el PATH propio al de la shell del usuario.
         system_path: String::new(),
+        os: domain::os::OsInfo::MacOs,
     }
 }
 
@@ -146,6 +149,7 @@ fn platform(_app_name: &str, paths: &Paths) -> Platform {
         downloader: Arc::new(UnsupportedDownloader),
         trust: Arc::new(UnsupportedTrustStore),
         system_path: std::env::var("PATH").unwrap_or_default(),
+        os: domain::os::OsInfo::Other,
     }
 }
 
@@ -213,6 +217,7 @@ fn setup(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
             archive: Arc::new(ZipExtractor),
             ca,
             secrets: Arc::new(OsSecrets),
+            os: platform.os,
         },
         platform.system_path,
     ));
@@ -242,19 +247,8 @@ fn setup(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
             tray::show_error(&app, &e.to_string());
             return;
         }
-        // HeidiSQL y Notepad++ vienen dentro del instalador de Windows: se
-        // extraen en bin/ la primera vez o si el instalador trae otra versión.
-        if let Some(bundled) = app
-            .path()
-            .resource_dir()
-            .ok()
-            .map(|dir| dir.join("bundled"))
-            .filter(|dir| dir.is_dir())
-        {
-            if let Err(e) = core.provision_bundled(&bundled).await {
-                tray::show_error(&app, &e.to_string());
-            }
-        }
+        // NTS/TS, arquitectura y compilador de cada PHP, para el menú.
+        core.load_php_builds().await;
         // Si se cancela el permiso del archivo hosts, los sitios se marcan
         // como pendientes en la interfaz y se puede reintentar.
         let _ = core.sync_sites().await;
@@ -322,6 +316,10 @@ pub fn run() {
             commands::shell_open_site_folder,
             commands::settings_get,
             commands::services_settings_get,
+            commands::setup_info,
+            commands::php_build_info,
+            commands::packages_install,
+            commands::setup_finish,
             commands::services_settings_busy,
             commands::services_settings_save,
             commands::settings_choose_root,
