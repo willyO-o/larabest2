@@ -15,6 +15,13 @@ const mainButton = ref<HTMLButtonElement>()
 const selected = reactive(new Set<string>())
 
 const packages = computed(() => setup.info?.packages ?? [])
+
+/** macOS sin Homebrew o MacPorts: hay que instalarlo antes que lo demás. */
+const manager = computed(() => setup.info?.manager ?? null)
+const needsManager = computed(() => !!manager.value && !manager.value.installed)
+const managerStep = computed(() =>
+  installs.current?.id === 'package-manager' ? `${installs.current.step}…` : 'Preparando…',
+)
 const groups = computed(() =>
   GROUPS.map((label, group) => ({
     label,
@@ -102,7 +109,7 @@ function onCancel(e: Event) {
           type="button"
           class="sheet-close"
           title="Cerrar"
-          :disabled="setup.installing"
+          :disabled="setup.installing || setup.installingManager"
           @click="setup.close()"
         >
           <AppIcon name="close" />
@@ -114,7 +121,32 @@ function onCancel(e: Event) {
         oficiales la versión de cada programa que funciona en tu equipo.
       </p>
 
-      <div class="setup-list">
+      <section v-if="needsManager && manager" class="setup-manager" aria-live="polite">
+        <p class="setup-manager-text">
+          En macOS los programas se instalan con <strong>{{ manager.name }}</strong>, que todavía
+          no está en esta Mac.
+          <template v-if="manager.name === 'MacPorts'">
+            (Homebrew ya no se instala en Macs con procesador Intel.)
+          </template>
+          macOS te pedirá tu contraseña.
+        </p>
+        <p v-if="setup.installingManager" class="setup-manager-step">
+          <span class="task-dot" aria-hidden="true" />{{ managerStep }}
+        </p>
+        <p v-if="setup.managerError" class="sheet-alert is-error" role="alert">
+          {{ setup.managerError }}
+        </p>
+        <button
+          type="button"
+          class="sheet-btn sheet-btn-main"
+          :disabled="setup.installingManager"
+          @click="setup.installManager()"
+        >
+          {{ setup.installingManager ? `Instalando ${manager.name}…` : `Instalar ${manager.name}` }}
+        </button>
+      </section>
+
+      <div class="setup-list" :data-locked="needsManager">
         <section v-for="g in groups" :key="g.label" class="setup-group">
           <h3 class="setup-group-title">{{ g.label }}</h3>
           <label
@@ -126,7 +158,7 @@ function onCancel(e: Event) {
             <input
               type="checkbox"
               :checked="selected.has(p.id) || !!p.status"
-              :disabled="!!p.status || setup.installing || setup.finished"
+              :disabled="!!p.status || setup.installing || setup.finished || needsManager"
               @change="toggle(p)"
             />
             <span class="setup-name">{{ p.label }}</span>
@@ -162,14 +194,19 @@ function onCancel(e: Event) {
           </button>
         </template>
         <template v-else>
-          <button type="button" class="sheet-btn" :disabled="setup.installing" @click="setup.close()">
+          <button
+            type="button"
+            class="sheet-btn"
+            :disabled="setup.installing || setup.installingManager"
+            @click="setup.close()"
+          >
             Omitir
           </button>
           <button
             ref="mainButton"
             type="button"
             class="sheet-btn sheet-btn-main"
-            :disabled="!queue.length || setup.installing"
+            :disabled="!queue.length || setup.installing || needsManager"
             @click="start"
           >
             {{ setup.installing ? 'Instalando…' : queue.length ? `Instalar (${queue.length})` : 'Nada que instalar' }}

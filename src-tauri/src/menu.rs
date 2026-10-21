@@ -189,10 +189,14 @@ pub fn build(app: &AppHandle, from_tray: bool) -> tauri::Result<Menu<Wry>> {
     ];
 
     let mut extensions = Vec::new();
-    let homebrew = sup.deps().layout == BinaryLayout::Homebrew;
+    let layout = sup.deps().layout;
     match core.php_extensions() {
-        _ if homebrew => {
+        _ if layout == BinaryLayout::Homebrew => {
             extensions.push(disabled(app, "(incluidas en el PHP de Homebrew)")?);
+        }
+        // Cada extensión es un paquete de MacPorts: se instalan con PHP.
+        _ if layout == BinaryLayout::MacPorts => {
+            extensions.push(disabled(app, "(paquetes php84-… de MacPorts)")?);
         }
         Ok(list) if !list.is_empty() => {
             for ext in list {
@@ -346,7 +350,7 @@ pub fn build(app: &AppHandle, from_tray: bool) -> tauri::Result<Menu<Wry>> {
 
     // Agregar: descargar versiones y herramientas (el "Quick add"), las que
     // corren en este sistema (Windows 7 recibe PHP 8.2 y MariaDB 10.4).
-    let packages = catalog::packages_for(core.os());
+    let packages = catalog::packages_for(core.os(), sup.deps().layout);
     let mut add = vec![text(app, "setup", "Preparar LARABEST…")?, sep(app)?];
     for (i, package) in packages.iter().enumerate() {
         // Separadores entre la pila base, los opcionales y las herramientas.

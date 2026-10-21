@@ -176,6 +176,18 @@ pub async fn packages_install(
     result
 }
 
+/// macOS: instala Homebrew (Apple Silicon) o MacPorts (Intel). macOS pide
+/// la contraseña; el progreso llega con `install:progress`.
+#[tauri::command]
+pub async fn package_manager_install(
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<String, AppError> {
+    let result = state.core.install_package_manager().await;
+    tray::rebuild(&app);
+    result
+}
+
 #[tauri::command]
 pub async fn setup_finish(state: State<'_, AppState>) -> Result<(), AppError> {
     state.core.finish_setup()

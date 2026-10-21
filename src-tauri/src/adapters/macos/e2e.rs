@@ -39,7 +39,7 @@ async fn e2e_homebrew() {
         binaries: Arc::new(HomebrewBinaryProvider::default()),
         downloader: Arc::new(CurlDownloader::new(runner)),
         system_path: String::new(),
-        os: crate::domain::os::OsInfo::MacOs,
+        os: super::detect_os(),
     };
     let w = e2e::world(e2e::root(), platform, PORTS);
     w.core.bootstrap().await.unwrap();

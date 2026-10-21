@@ -1537,7 +1537,7 @@ async fn setup_recommends_the_newest_versions_for_each_system() {
 
     let mac = Harness::homebrew();
     let info = mac.core().setup_info();
-    assert_eq!(info.os, "macOS");
+    assert_eq!(info.os, "macOS 15 (Apple Silicon)");
     assert!(!info.packages.iter().any(|p| p.id == "heidisql"));
 }
 
@@ -1574,4 +1574,203 @@ async fn php_build_is_read_from_php_once_and_shown_short() {
     assert_eq!(core.php_build("8.4.6").await, Some(build));
     assert_eq!(h.runner.ran().len(), 1);
     assert!(core.php_build("7.0.0").await.is_none());
+}
+
+fn osascript_scripts(h: &Harness) -> Vec<String> {
+    h.runner
+        .ran()
+        .iter()
+        .filter(|s| crate::domain::slash(&s.program) == "/usr/bin/osascript")
+        .map(|s| s.args[1].clone())
+        .collect()
+}
+
+#[tokio::test]
+async fn macports_installs_php_with_its_extensions_asking_for_the_password() {
+    let h = Harness::macports();
+    let core = h.core();
+    let err = core.install_package("php-8.4").await.unwrap_err();
+    assert!(
+        err.to_string().contains("MacPorts no está instalado"),
+        "{err}"
+    );
+
+    h.fs.write(Path::new("/opt/local/bin/port"), "").unwrap();
+    let message = core.install_package("php-8.4").await.unwrap();
+    assert_eq!(message, "PHP 8.4.27 instalado con MacPorts.");
+    let scripts = osascript_scripts(&h);
+    assert_eq!(scripts.len(), 1);
+    let script = &scripts[0];
+    assert!(script.starts_with("do shell script \""), "{script}");
+    assert!(
+        script.ends_with("\" with administrator privileges"),
+        "{script}"
+    );
+    assert!(
+        script.contains("/opt/local/bin/port -N install php84 php84-fpm php84-curl"),
+        "{script}"
+    );
+    assert!(script.contains("php84-intl") && script.contains("php84-mysql"));
+    assert!(script.contains(&format!(">> '{MAC_ROOT}/logs/macports.log' 2>&1")));
+    // El log lo crea la app antes, para que siga siendo del usuario.
+    assert!(h
+        .fs
+        .exists(Path::new(&format!("{MAC_ROOT}/logs/macports.log"))));
+}
+
+#[tokio::test]
+async fn canceling_the_password_dialog_is_explained() {
+    let h = Harness::macports();
+    h.fs.write(Path::new("/opt/local/bin/port"), "").unwrap();
+    h.runner.on_run(Box::new(|spec| {
+        (crate::domain::slash(&spec.program) == "/usr/bin/osascript").then(|| {
+            crate::ports::CommandOutput {
+                code: Some(1),
+                stdout: String::new(),
+                stderr: "execution error: User canceled. (-128)".into(),
+            }
+        })
+    }));
+    let err = h.core().install_package("nginx").await.unwrap_err();
+    assert!(
+        err.to_string().contains("contraseña de administrador"),
+        "{err}"
+    );
+}
+
+const MACPORTS_RELEASE_JSON: &str = r#"{"tag_name": "v2.12.7", "assets": [
+    {"name": "MacPorts-2.12.7-14-Sonoma.pkg", "url": "https://api.github.com/repos/macports/macports-base/releases/assets/14"},
+    {"name": "MacPorts-2.12.7-15-Sequoia.pkg", "url": "https://api.github.com/repos/macports/macports-base/releases/assets/15"},
+    {"name": "MacPorts-2.12.7-26-Tahoe.pkg", "url": "https://api.github.com/repos/macports/macports-base/releases/assets/26"}
+]}"#;
+
+#[tokio::test]
+async fn macports_is_installed_with_the_package_for_this_macos() {
+    let h = Harness::macports();
+    let core = h.core();
+    assert_eq!(core.package_manager(), Some(("MacPorts", false)));
+    h.downloader.respond(
+        "https://api.github.com/repos/macports/macports-base/releases/latest",
+        MACPORTS_RELEASE_JSON,
+    );
+    // El instalador deja `port`; xcode-select -p dice que están las herramientas.
+    let fs = h.fs.clone();
+    h.runner.on_run(Box::new(move |spec| {
+        if crate::domain::slash(&spec.program) == "/usr/bin/osascript" {
+            fs.write(Path::new("/opt/local/bin/port"), "").unwrap();
+        }
+        None
+    }));
+
+    let message = core.install_package_manager().await.unwrap();
+    assert_eq!(message, "MacPorts 2.12.7 instalado.");
+    // El de macOS 15 (el arnés simula una Mac Intel con Sequoia).
+    assert!(h.downloader.urls.lock().unwrap().contains(
+        &"https://api.github.com/repos/macports/macports-base/releases/assets/15".to_string()
+    ));
+    let script = &osascript_scripts(&h)[0];
+    assert!(script.contains("/usr/sbin/installer -pkg '"), "{script}");
+    assert!(script.contains("MacPorts.pkg' -target / && /opt/local/bin/port -N selfupdate"));
+    assert_eq!(core.package_manager(), Some(("MacPorts", true)));
+    assert_eq!(
+        core.install_package_manager().await.unwrap(),
+        "MacPorts ya estaba instalado."
+    );
+}
+
+#[tokio::test]
+async fn macports_needs_apples_command_line_tools_first() {
+    let h = Harness::macports();
+    h.runner.on_run(Box::new(|spec| {
+        (spec.args == ["-p"]).then(|| crate::ports::CommandOutput {
+            code: Some(2),
+            ..Default::default()
+        })
+    }));
+    let err = h.core().install_package_manager().await.unwrap_err();
+    assert!(
+        err.to_string()
+            .contains("herramientas de línea de comandos"),
+        "{err}"
+    );
+    assert!(h.runner.ran().iter().any(|s| s.args == ["--install"]));
+    assert!(h.downloader.urls.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn macports_php_reads_its_extension_inis_and_mariadb_has_no_basedir() {
+    let h = Harness::macports();
+    let core = h.core();
+    core.start_all().await.unwrap();
+    let ctx = h.supervisor.context().unwrap();
+    assert_eq!(
+        crate::drivers::php::scan_dirs(&ctx),
+        format!("/opt/local/var/db/php84:{MAC_ROOT}/etc/php/custom")
+    );
+    let fpm = h
+        .runner
+        .spawned()
+        .into_iter()
+        .find(|s| s.exe_name() == "php-fpm")
+        .unwrap();
+    assert!(fpm.env.contains(&(
+        "PHP_INI_SCAN_DIR".to_string(),
+        format!("/opt/local/var/db/php84:{MAC_ROOT}/etc/php/custom")
+    )));
+    let cnf = h.fs.read(&format!("{MAC_ROOT}/etc/mariadb/my.cnf"));
+    assert!(!cnf.contains("basedir"), "{cnf}");
+    assert!(cnf.contains("socket"), "{cnf}");
+    // La terminal también carga las extensiones de MacPorts.
+    let env = core.terminal_env().unwrap();
+    assert!(env["PHP_INI_SCAN_DIR"].starts_with("/opt/local/var/db/php84:"));
+}
+
+#[tokio::test]
+async fn macports_apache_loads_the_mpm_it_has() {
+    use crate::drivers::ServiceDriver;
+    use crate::ports::ConfigStore;
+    let h = Harness::macports();
+    let shim = format!("{MAC_ROOT}/tmp/macports/apache2");
+    h.binaries.add_at(ServiceId::Apache, "2.4.69", &shim);
+    let mut cfg = h.config.get();
+    cfg.web_server = WebServer::Apache;
+    h.config.save(&cfg).unwrap();
+    let ctx = h.supervisor.context().unwrap();
+    crate::drivers::apache::ApacheDriver
+        .render_config(&ctx)
+        .await
+        .unwrap();
+    let conf = h.fs.read(&format!("{MAC_ROOT}/etc/apache/httpd.conf"));
+    assert!(
+        !conf.contains("mpm_"),
+        "sin módulos de MPM no se carga ninguno"
+    );
+
+    h.fs.write(
+        Path::new(&format!("{shim}/lib/httpd/modules/mod_mpm_prefork.so")),
+        "",
+    )
+    .unwrap();
+    crate::drivers::apache::ApacheDriver
+        .render_config(&ctx)
+        .await
+        .unwrap();
+    let conf = h.fs.read(&format!("{MAC_ROOT}/etc/apache/httpd.conf"));
+    assert!(conf.contains("mpm_prefork_module"), "{conf}");
+}
+
+#[tokio::test]
+async fn nodejs_with_macports_brings_npm_and_mongodb_is_not_offered() {
+    let h = Harness::macports();
+    h.fs.write(Path::new("/opt/local/bin/port"), "").unwrap();
+    let core = h.core();
+    let message = core.install_package("nodejs").await.unwrap();
+    assert_eq!(message, "Node.js 22 instalado con MacPorts.");
+    assert!(osascript_scripts(&h)[0].contains("-N install nodejs22 npm11"));
+
+    let info = core.setup_info();
+    assert_eq!(info.os, "macOS 15 (Intel)");
+    assert!(!info.packages.iter().any(|p| p.id == "mongodb"));
+    let err = core.install_package("mongodb").await.unwrap_err();
+    assert!(err.to_string().contains("no está disponible"), "{err}");
 }

@@ -50,9 +50,24 @@ fn fpm_spec(ctx: &RenderContext) -> Result<ProcessSpec, AppError> {
             .arg(slash(&ctx.paths.php_fpm_conf()))
             .arg("-c")
             .arg(slash(&ctx.paths.php_ini()))
-            .env("PHP_INI_SCAN_DIR", slash(&ctx.paths.php_custom()))
+            .env("PHP_INI_SCAN_DIR", scan_dirs(ctx))
             .log_to(ctx.paths.logs().join("php-fpm-console.log")),
     )
+}
+
+/// `PHP_INI_SCAN_DIR`: los ajustes propios y, con MacPorts, también la
+/// carpeta donde cada paquete de extensión deja su `.ini`
+/// (`/opt/local/var/db/php84`); sin ella PHP no cargaría mysql ni intl.
+pub fn scan_dirs(ctx: &RenderContext) -> String {
+    let custom = slash(&ctx.paths.php_custom());
+    let macports = (ctx.layout == BinaryLayout::MacPorts)
+        .then(|| ctx.versions.get(&ServiceId::Php))
+        .flatten()
+        .and_then(|php| BinaryLayout::macports_php_scan_dir(&php.version));
+    match macports {
+        Some(dir) => format!("{dir}:{custom}"),
+        None => custom,
+    }
 }
 
 /// Windows: `php.ini` junto a `php.exe`. PHP lo busca ahí cuando no hay
@@ -110,7 +125,7 @@ pub fn cli_spec(
         .arg("-c")
         .arg(slash(&ctx.paths.php_ini()))
         .env("PHPRC", slash(&ctx.paths.etc_php()))
-        .env("PHP_INI_SCAN_DIR", slash(&ctx.paths.php_custom()));
+        .env("PHP_INI_SCAN_DIR", scan_dirs(ctx));
     spec.args.extend(args.iter().cloned());
     Ok(spec)
 }
@@ -141,7 +156,7 @@ impl ServiceDriver for PhpDriver {
                 .into_iter()
                 .map(|p| log_for_port(ctx, p))
                 .collect(),
-            BinaryLayout::Homebrew => {
+            BinaryLayout::Homebrew | BinaryLayout::MacPorts => {
                 vec![logs.join("php-fpm.log"), logs.join("php-fpm-console.log")]
             }
         };
@@ -191,7 +206,7 @@ impl ServiceDriver for PhpDriver {
         if portable {
             write_cli_ini(ctx, &install.path, &ini)?;
         }
-        if ctx.layout == BinaryLayout::Homebrew {
+        if ctx.layout.is_macos() {
             let fpm = templates::render(
                 templates::PHP_FPM_CONF,
                 context! {
@@ -211,7 +226,9 @@ impl ServiceDriver for PhpDriver {
     fn start_specs(&self, ctx: &RenderContext) -> Vec<ProcessSpec> {
         match ctx.layout {
             BinaryLayout::Portable => cgi_specs(ctx).unwrap_or_default(),
-            BinaryLayout::Homebrew => fpm_spec(ctx).map(|s| vec![s]).unwrap_or_default(),
+            BinaryLayout::Homebrew | BinaryLayout::MacPorts => {
+                fpm_spec(ctx).map(|s| vec![s]).unwrap_or_default()
+            }
         }
     }
 

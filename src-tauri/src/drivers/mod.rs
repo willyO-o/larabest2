@@ -89,7 +89,7 @@ impl RenderContext {
     pub fn php_ports(&self) -> Vec<u16> {
         match self.layout {
             BinaryLayout::Portable => self.config.php_ports(),
-            BinaryLayout::Homebrew => vec![self.config.php_base_port],
+            BinaryLayout::Homebrew | BinaryLayout::MacPorts => vec![self.config.php_base_port],
         }
     }
 }
@@ -99,8 +99,11 @@ impl RenderContext {
 /// Homebrew todo va en `bin/`, salvo `php-fpm`, que va en `sbin/`.
 pub fn program_subpath(layout: BinaryLayout, id: ServiceId, name: &str) -> PathBuf {
     let dir = match (layout, id) {
-        (BinaryLayout::Homebrew, ServiceId::Php) if name == "php-fpm" => Some("sbin"),
-        (BinaryLayout::Homebrew, _) => Some("bin"),
+        // MacPorts: la misma estructura, armada con enlaces por el adaptador.
+        (BinaryLayout::Homebrew | BinaryLayout::MacPorts, ServiceId::Php) if name == "php-fpm" => {
+            Some("sbin")
+        }
+        (BinaryLayout::Homebrew | BinaryLayout::MacPorts, _) => Some("bin"),
         // Los zip de Apache, MariaDB, PostgreSQL y MongoDB traen todo en bin\.
         (
             BinaryLayout::Portable,
@@ -112,7 +115,7 @@ pub fn program_subpath(layout: BinaryLayout, id: ServiceId, name: &str) -> PathB
     // corran en Windows.
     let file = match layout {
         BinaryLayout::Portable => exe(name),
-        BinaryLayout::Homebrew => name.to_string(),
+        BinaryLayout::Homebrew | BinaryLayout::MacPorts => name.to_string(),
     };
     match dir {
         Some(dir) => Path::new(dir).join(file),
@@ -126,7 +129,7 @@ pub fn server_program(layout: BinaryLayout, id: ServiceId) -> &'static str {
         (ServiceId::Nginx, _) => "nginx",
         (ServiceId::Apache, _) => "httpd",
         (ServiceId::Php, BinaryLayout::Portable) => "php-cgi",
-        (ServiceId::Php, BinaryLayout::Homebrew) => "php-fpm",
+        (ServiceId::Php, BinaryLayout::Homebrew | BinaryLayout::MacPorts) => "php-fpm",
         (ServiceId::Mariadb, _) => "mariadbd",
         (ServiceId::Postgresql, _) => "postgres",
         (ServiceId::Redis, _) => "redis-server",

@@ -392,11 +392,26 @@ Prepara `bin\` como se describe arriba y crea `www\blog\index.php` con `<?php ph
 
 ## macOS
 
-En macOS la app usa los programas de **Homebrew** en vez de copiarlos a `bin/`. Funciona en Apple Silicon y en Intel (el `.dmg` es universal) desde macOS 13 Ventura; Homebrew ofrece binarios listos para macOS 14 o posterior (en versiones anteriores, y en Intel para algunas fórmulas, los compila y tarda bastante).
+En macOS la app instala los programas con un gestor de paquetes en vez de copiarlos a `bin/`. El `.dmg` es universal (Apple Silicon e Intel) y funciona desde macOS 13 Ventura.
 
-### Instalar los servicios
+| Mac | Gestor | Por qué |
+| --- | --- | --- |
+| Apple Silicon (M1 a M5) | **Homebrew** | binarios listos, lo más rápido |
+| Intel | **MacPorts** | el instalador de Homebrew ya no acepta Macs Intel (desde 2026) y en septiembre de 2027 Homebrew deja de funcionar en ellas |
 
-1. Instala Homebrew si no lo tienes: <https://brew.sh> (pide la contraseña de administrador una vez).
+La app usa el que ya esté instalado (Homebrew primero). Si no hay ninguno, el asistente **Preparar LARABEST** muestra **Instalar Homebrew** o **Instalar MacPorts** antes de la lista de programas: descarga el instalador oficial (`Homebrew.pkg`, o el `MacPorts-<versión>-<macOS>.pkg` de tu versión de macOS), macOS pide tu contraseña de administrador y queda listo. MacPorts necesita además las herramientas de línea de comandos de Apple: si faltan, la app abre su instalador y, al terminar, se vuelve a pulsar **Instalar MacPorts**.
+
+### MacPorts (Macs Intel)
+
+- Cada programa se instala con `sudo port install` desde **Menú → Agregar** o el asistente; macOS pide la contraseña en cada instalación. La salida queda en `~/LARABEST/logs/macports.log`.
+- Paquetes que usa la app: `php84` y `php83` con `php84-fpm` y las extensiones `curl`, `exif`, `gd`, `iconv`, `intl`, `mbstring`, `mysql`, `opcache`, `openssl`, `sqlite` y `zip`; `nginx`, `apache2`, `mariadb-11.4`, `postgresql17`, `redis`, `mailpit` y `nodejs22` con `npm11`. Composer lo descarga la app. MongoDB no se ofrece (MacPorts solo tiene la 6.0, sin soporte).
+- Si MacPorts no tiene el paquete ya compilado para tu versión de macOS, lo compila: la primera instalación de PHP o MariaDB puede tardar bastante.
+- Los programas quedan en `/opt/local`. La app los presenta con enlaces en `~/LARABEST/tmp/macports/` (por ejemplo `php84/sbin/php-fpm` → `/opt/local/sbin/php-fpm84`), y PHP lee los `.ini` de extensiones de `/opt/local/var/db/php84` además de tus ajustes de `etc/php/custom`.
+- No hace falta `port load`: la app arranca y detiene cada programa con su propia configuración.
+
+### Instalar los servicios con Homebrew
+
+1. Instala Homebrew si no lo tienes, desde el asistente o en <https://brew.sh> (pide la contraseña de administrador una vez).
 2. En la Terminal:
 
    ```bash

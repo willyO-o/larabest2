@@ -18,10 +18,21 @@ use crate::ports::ProcessSpec;
 const BREW_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 const BREW_PATHS: [&str; 2] = ["/opt/homebrew/bin/brew", "/usr/local/bin/brew"];
 const BREW_NODE_PATHS: [&str; 2] = ["/opt/homebrew/bin/node", "/usr/local/bin/node"];
+/// `port install` compila desde el código fuente lo que no tiene paquete
+/// binario para esa versión de macOS: puede tardar mucho más que Homebrew.
+const MACPORTS_TIMEOUT: Duration = Duration::from_secs(3 * 60 * 60);
+const PORT_PATH: &str = "/opt/local/bin/port";
+const MACPORTS_NODE_PATH: &str = "/opt/local/bin/node";
+const HOMEBREW_RELEASE: &str = "https://api.github.com/repos/Homebrew/brew/releases/latest";
+const MACPORTS_RELEASE: &str =
+    "https://api.github.com/repos/macports/macports-base/releases/latest";
 
 struct Progress<'a> {
     core: &'a Core,
-    package: Package,
+    /// `Package::id`, o "package-manager" al instalar Homebrew o MacPorts.
+    id: &'static str,
+    label: &'static str,
+    pinned: Option<&'static str>,
 }
 
 impl Progress<'_> {
@@ -31,8 +42,8 @@ impl Progress<'_> {
             .deps()
             .events
             .install_progress(&InstallProgress {
-                id: self.package.id.to_string(),
-                label: self.package.label.to_string(),
+                id: self.id.to_string(),
+                label: self.label.to_string(),
                 step: step.into(),
                 state,
                 detail,
@@ -61,7 +72,11 @@ impl Core {
     pub async fn install_package(&self, id: &str) -> Result<String, AppError> {
         let package = catalog::find(id)
             .ok_or_else(|| AppError::NotFound(format!("No existe el paquete {id}")))?;
-        if !catalog::packages_for(self.os).iter().any(|p| p.id == id) {
+        let layout = self.supervisor.deps().layout;
+        if !catalog::packages_for(self.os, layout)
+            .iter()
+            .any(|p| p.id == id)
+        {
             return Err(AppError::InvalidInput(format!(
                 "{} no está disponible para {}.",
                 package.label,
@@ -75,7 +90,9 @@ impl Core {
         };
         let progress = Progress {
             core: self,
-            package,
+            id: package.id,
+            label: package.label,
+            pinned: package.pinned,
         };
         let layout = self.supervisor.deps().layout;
         let result = match package.kind {
@@ -85,6 +102,7 @@ impl Core {
                         .await
                 }
                 BinaryLayout::Homebrew => self.install_brew(&progress, service, branch).await,
+                BinaryLayout::MacPorts => self.install_macports(&progress, service, branch).await,
             },
             PackageKind::Tool(tool) => self.install_tool(&progress, tool).await,
         };
@@ -193,7 +211,7 @@ impl Core {
         pinned: Option<&str>,
     ) -> Result<String, AppError> {
         let deps = self.supervisor.deps();
-        let label = progress.package.label;
+        let label = progress.label;
         let (version, url) = match pinned {
             Some(version) => (version.to_string(), pinned_zip(service, version)?),
             None => {
@@ -339,9 +357,18 @@ impl Core {
         pinned: Option<&str>,
     ) -> Result<String, AppError> {
         let deps = self.supervisor.deps();
-        if deps.layout == BinaryLayout::Homebrew {
-            self.brew_install(progress, "node", None).await?;
-            return Ok("Node.js instalado con Homebrew.".into());
+        match deps.layout {
+            BinaryLayout::Homebrew => {
+                self.brew_install(progress, "node", None).await?;
+                return Ok("Node.js instalado con Homebrew.".into());
+            }
+            BinaryLayout::MacPorts => {
+                // En MacPorts npm es un paquete aparte.
+                self.port_install(progress, &["nodejs22".into(), "npm11".into()])
+                    .await?;
+                return Ok("Node.js 22 instalado con MacPorts.".into());
+            }
+            BinaryLayout::Portable => {}
         }
         let version = match pinned {
             Some(version) => version.to_string(),
@@ -384,11 +411,11 @@ impl Core {
     /// plataformas.
     async fn install_tool(&self, progress: &Progress<'_>, tool: Tool) -> Result<String, AppError> {
         let deps = self.supervisor.deps();
-        let label = progress.package.label;
+        let label = progress.label;
         let downloading = format!("Descargando {label}");
         match tool {
             // Node.js no se sirve como sitio y va por versiones.
-            Tool::Nodejs => return self.install_node(progress, progress.package.pinned).await,
+            Tool::Nodejs => return self.install_node(progress, progress.pinned).await,
             Tool::Desktop(desktop) => return self.install_desktop(progress, desktop).await,
             Tool::Adminer => {
                 progress.step(downloading);
@@ -462,6 +489,9 @@ impl Core {
                         (BinaryLayout::Homebrew, _) => {
                             BREW_NODE_PATHS.iter().any(|p| deps.fs.exists(Path::new(p)))
                         }
+                        (BinaryLayout::MacPorts, _) => {
+                            deps.fs.exists(Path::new(MACPORTS_NODE_PATH))
+                        }
                     },
                     Tool::Desktop(desktop) => self.desktop_installed(desktop),
                 };
@@ -522,6 +552,242 @@ impl Core {
             deps.fs.write(&marker, "")?;
         }
         Ok(format!("{} {version} instalado.", tool.label()))
+    }
+}
+
+/// Entre comillas simples para `sh`.
+fn sh_quote(text: &str) -> String {
+    format!("'{}'", text.replace('\'', r"'\''"))
+}
+
+/// Dentro de una cadena de AppleScript.
+fn applescript_quote(text: &str) -> String {
+    text.replace('\\', r"\\").replace('"', "\\\"")
+}
+
+impl Core {
+    /// Gestor de paquetes de macOS y si está instalado (`None` en Windows).
+    pub fn package_manager(&self) -> Option<(&'static str, bool)> {
+        let deps = self.supervisor.deps();
+        let exists = |p: &str| deps.fs.exists(Path::new(p));
+        match deps.layout {
+            BinaryLayout::Homebrew => Some(("Homebrew", BREW_PATHS.iter().any(|p| exists(p)))),
+            BinaryLayout::MacPorts => Some(("MacPorts", exists(PORT_PATH))),
+            BinaryLayout::Portable => None,
+        }
+    }
+
+    /// Instala el gestor de paquetes que falta: Homebrew en Apple Silicon o
+    /// MacPorts en Intel (Homebrew ya no se instala ahí). macOS pide la
+    /// contraseña de administrador.
+    pub async fn install_package_manager(&self) -> Result<String, AppError> {
+        let Some((name, installed)) = self.package_manager() else {
+            return Err(AppError::Unsupported(
+                "El gestor de paquetes solo hace falta en macOS.".into(),
+            ));
+        };
+        if installed {
+            return Ok(format!("{name} ya estaba instalado."));
+        }
+        let Ok(_guard) = self.install_lock.try_lock() else {
+            return Err(AppError::InvalidInput(
+                "Ya se está agregando otro paquete. Espera a que termine.".into(),
+            ));
+        };
+        let progress = Progress {
+            core: self,
+            id: "package-manager",
+            label: name,
+            pinned: None,
+        };
+        let result = match self.supervisor.deps().layout {
+            BinaryLayout::MacPorts => self.install_macports_base(&progress).await,
+            _ => self.install_homebrew(&progress).await,
+        };
+        match &result {
+            Ok(message) => {
+                progress.emit("Listo", ProgressState::Done, Some(message.clone()));
+                self.supervisor.emit_all();
+            }
+            Err(e) => progress.emit(
+                format!("No se pudo instalar {name}"),
+                ProgressState::Failed,
+                Some(e.to_string()),
+            ),
+        }
+        result
+    }
+
+    async fn install_homebrew(&self, progress: &Progress<'_>) -> Result<String, AppError> {
+        let deps = self.supervisor.deps();
+        progress.step("Buscando el instalador de Homebrew");
+        let json = self.fetch_text(HOMEBREW_RELEASE).await?;
+        let (version, url) = catalog::github_asset(&json, "Homebrew.pkg").ok_or_else(|| {
+            AppError::Process(
+                "No se encontró el instalador de Homebrew en GitHub. Vuelve a intentarlo más tarde."
+                    .into(),
+            )
+        })?;
+        let pkg = deps.paths.downloads().join("Homebrew.pkg");
+        progress.step(format!("Descargando Homebrew {version}"));
+        self.downloader.download(&url, &pkg).await?;
+        progress.step("Instalando Homebrew (macOS pide tu contraseña)");
+        let installed = self
+            .run_as_admin(
+                &format!(
+                    "/usr/sbin/installer -pkg {} -target /",
+                    sh_quote(&slash(&pkg))
+                ),
+                BREW_TIMEOUT,
+            )
+            .await;
+        let _ = deps.fs.remove_file(&pkg);
+        installed?;
+        if !BREW_PATHS.iter().any(|p| deps.fs.exists(Path::new(p))) {
+            return Err(AppError::Process(
+                "El instalador de Homebrew terminó, pero no se encuentra brew.".into(),
+            ));
+        }
+        Ok(format!("Homebrew {version} instalado."))
+    }
+
+    async fn install_macports_base(&self, progress: &Progress<'_>) -> Result<String, AppError> {
+        let deps = self.supervisor.deps();
+        progress.step("Comprobando las herramientas de línea de comandos de Apple");
+        let root = deps.paths.root().to_path_buf();
+        let check = ProcessSpec::new("/usr/bin/xcode-select", &root).arg("-p");
+        let has_tools = deps
+            .runner
+            .run(&check, Duration::from_secs(30))
+            .await
+            .is_ok_and(|out| out.success());
+        if !has_tools {
+            // Abre el instalador de Apple; MacPorts no funciona sin ellas.
+            let open = ProcessSpec::new("/usr/bin/xcode-select", &root).arg("--install");
+            let _ = deps.runner.run(&open, Duration::from_secs(30)).await;
+            return Err(AppError::InvalidInput(
+                "MacPorts necesita las herramientas de línea de comandos de Apple. Se abrió su instalador: termínalo y vuelve a pulsar Instalar MacPorts.".into(),
+            ));
+        }
+        let tag = self
+            .os
+            .macports_pkg_tag()
+            .ok_or_else(|| AppError::Unsupported("MacPorts solo se instala en macOS.".into()))?;
+        progress.step("Buscando el instalador de MacPorts para tu macOS");
+        let json = self.fetch_text(MACPORTS_RELEASE).await?;
+        let (version, url) = catalog::github_asset_where(&json, |name| {
+            name.contains(&tag) && name.ends_with(".pkg")
+        })
+        .ok_or_else(|| {
+            AppError::Process(format!(
+                "No hay un instalador de MacPorts para {}.",
+                self.os.label()
+            ))
+        })?;
+        let pkg = deps.paths.downloads().join("MacPorts.pkg");
+        progress.step(format!("Descargando MacPorts {version}"));
+        self.downloader.download(&url, &pkg).await?;
+        progress.step(
+            "Instalando MacPorts y su lista de paquetes (macOS pide tu contraseña; tarda unos minutos)",
+        );
+        let installed = self
+            .run_as_admin(
+                &format!(
+                    "/usr/sbin/installer -pkg {} -target / && {PORT_PATH} -N selfupdate",
+                    sh_quote(&slash(&pkg))
+                ),
+                MACPORTS_TIMEOUT,
+            )
+            .await;
+        let _ = deps.fs.remove_file(&pkg);
+        installed?;
+        if !deps.fs.exists(Path::new(PORT_PATH)) {
+            return Err(AppError::Process(
+                "El instalador de MacPorts terminó, pero no se encuentra port.".into(),
+            ));
+        }
+        Ok(format!("MacPorts {version} instalado."))
+    }
+
+    /// Un servicio con MacPorts: PHP con su `php-fpm` y las extensiones que
+    /// piden Laravel y WordPress; MariaDB, Nginx, etc. con su paquete.
+    async fn install_macports(
+        &self,
+        progress: &Progress<'_>,
+        service: ServiceId,
+        branch: &str,
+    ) -> Result<String, AppError> {
+        let ports = BinaryLayout::macports_ports(service, branch);
+        if ports.is_empty() {
+            return Err(AppError::Unsupported(format!(
+                "{} no está disponible con MacPorts.",
+                service.label()
+            )));
+        }
+        self.port_install(progress, &ports).await?;
+        let version = self.versions(service)?.into_iter().find(|v| {
+            branch.is_empty() || v.version == branch || v.version.starts_with(&format!("{branch}."))
+        });
+        Ok(match version {
+            Some(v) => format!("{} {} instalado con MacPorts.", service.label(), v.version),
+            None => format!("{} instalado con MacPorts.", service.label()),
+        })
+    }
+
+    /// `sudo port -N install ...` con la contraseña de administrador.
+    async fn port_install(
+        &self,
+        progress: &Progress<'_>,
+        ports: &[String],
+    ) -> Result<(), AppError> {
+        let deps = self.supervisor.deps();
+        if !deps.fs.exists(Path::new(PORT_PATH)) {
+            return Err(AppError::NotFound(
+                "MacPorts no está instalado. Instálalo desde Menú → Agregar → Preparar LARABEST."
+                    .into(),
+            ));
+        }
+        let list = ports.join(" ");
+        progress.step(format!(
+            "port install {list} (macOS pide tu contraseña; si MacPorts compila, puede tardar)"
+        ));
+        self.run_as_admin(&format!("{PORT_PATH} -N install {list}"), MACPORTS_TIMEOUT)
+            .await
+    }
+
+    /// Un comando como administrador: macOS muestra su ventana de
+    /// contraseña. La salida va a `logs/macports.log` (creado antes por el
+    /// usuario, así sigue siendo suyo).
+    async fn run_as_admin(&self, command: &str, timeout: Duration) -> Result<(), AppError> {
+        let deps = self.supervisor.deps();
+        let log = deps.paths.logs().join("macports.log");
+        if !deps.fs.exists(&log) {
+            deps.fs.write(&log, "")?;
+        }
+        let shell = format!("{command} >> {} 2>&1", sh_quote(&slash(&log)));
+        let script = format!(
+            "do shell script \"{}\" with administrator privileges",
+            applescript_quote(&shell)
+        );
+        let spec = ProcessSpec::new("/usr/bin/osascript", deps.paths.root())
+            .arg("-e")
+            .arg(script);
+        let out = deps.runner.run(&spec, timeout).await?;
+        if out.success() {
+            return Ok(());
+        }
+        // -128: el usuario canceló la ventana de contraseña.
+        if out.text().contains("-128") {
+            return Err(AppError::InvalidInput(
+                "Se canceló: hace falta la contraseña de administrador de macOS.".into(),
+            ));
+        }
+        let text = deps.fs.read_to_string(&log).unwrap_or_default();
+        let lines: Vec<&str> = text.lines().collect();
+        Err(AppError::Process(format!(
+            "Falló: {command}\n{}",
+            lines[lines.len().saturating_sub(12)..].join("\n")
+        )))
     }
 }
 

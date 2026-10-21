@@ -7,7 +7,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 
 use super::{force_stop, wait_for_exit, RenderContext, ServiceDriver};
-use crate::domain::{slash, BinaryLayout, Health, ServiceId};
+use crate::domain::{slash, Health, ServiceId};
 use crate::error::AppError;
 use crate::ports::{ProcessRunner, ProcessSpec};
 
@@ -108,7 +108,7 @@ impl ServiceDriver for PostgresqlDriver {
             .arg(ctx.config.postgresql_port.to_string())
             .arg("-c")
             .arg("listen_addresses=127.0.0.1");
-        if ctx.layout == BinaryLayout::Homebrew {
+        if ctx.layout.is_macos() {
             // Socket propio, no el /tmp de otro PostgreSQL de Homebrew.
             spec = spec.arg("-c").arg(format!(
                 "unix_socket_directories={}",

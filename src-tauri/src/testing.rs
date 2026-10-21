@@ -635,6 +635,21 @@ impl Harness {
         Self::build(MAC_ROOT, crate::domain::BinaryLayout::Homebrew, binaries)
     }
 
+    /// Una Mac Intel con MacPorts: Nginx, PHP 8.4.27 y MariaDB 11.4.13,
+    /// presentados por el adaptador en `tmp/macports/<paquete>`.
+    pub fn macports() -> Self {
+        let binaries = FakeBinaries::default();
+        let shims = format!("{MAC_ROOT}/tmp/macports");
+        binaries.add_at(ServiceId::Nginx, "1.30.6", &format!("{shims}/nginx"));
+        binaries.add_at(ServiceId::Php, "8.4.27", &format!("{shims}/php84"));
+        binaries.add_at(
+            ServiceId::Mariadb,
+            "11.4.13",
+            &format!("{shims}/mariadb-11.4"),
+        );
+        Self::build(MAC_ROOT, crate::domain::BinaryLayout::MacPorts, binaries)
+    }
+
     fn build(root: &str, layout: crate::domain::BinaryLayout, binaries: FakeBinaries) -> Self {
         use std::sync::Arc;
         let fs = Arc::new(FakeFs::default());
@@ -692,7 +707,16 @@ impl Harness {
                 build: 26200,
                 server: false,
             },
-            crate::domain::BinaryLayout::Homebrew => crate::domain::os::OsInfo::MacOs,
+            crate::domain::BinaryLayout::Homebrew => crate::domain::os::OsInfo::MacOs {
+                major: 15,
+                minor: 1,
+                apple_silicon: true,
+            },
+            crate::domain::BinaryLayout::MacPorts => crate::domain::os::OsInfo::MacOs {
+                major: 15,
+                minor: 1,
+                apple_silicon: false,
+            },
         };
         self.core_on(os)
     }
@@ -714,7 +738,9 @@ impl Harness {
             // En macOS el PATH base lo pone la propia terminal.
             match self.supervisor.deps().layout {
                 crate::domain::BinaryLayout::Portable => "C:\\Windows".into(),
-                crate::domain::BinaryLayout::Homebrew => String::new(),
+                crate::domain::BinaryLayout::Homebrew | crate::domain::BinaryLayout::MacPorts => {
+                    String::new()
+                }
             },
         )
     }

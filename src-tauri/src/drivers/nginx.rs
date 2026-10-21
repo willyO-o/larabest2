@@ -26,7 +26,7 @@ fn base_spec(ctx: &RenderContext) -> Result<ProcessSpec, AppError> {
     Ok(match ctx.layout {
         // El Nginx de Homebrew abre su log de Homebrew antes de leer la
         // configuración; `-e` lo manda a `logs/` desde el arranque.
-        BinaryLayout::Homebrew => spec
+        BinaryLayout::Homebrew | BinaryLayout::MacPorts => spec
             .arg("-e")
             .arg(slash(&ctx.paths.logs().join("nginx-error.log"))),
         BinaryLayout::Portable => spec,

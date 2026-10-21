@@ -109,9 +109,19 @@ fn platform(app_name: &str, paths: &Paths) -> Platform {
     use adapters::macos::*;
     let runner: Arc<dyn ProcessRunner> = Arc::new(UnixProcessRunner::default());
     let exe = std::env::current_exe().unwrap_or_default();
+    // Homebrew o MacPorts: el que esté instalado o, si no hay ninguno, el
+    // que corresponde al procesador (Homebrew ya no se instala en Intel).
+    let os = detect_os();
+    let layout = choose_layout(os, |p| p.exists());
+    let binaries: Arc<dyn BinaryProvider> = match layout {
+        BinaryLayout::MacPorts => {
+            Arc::new(MacPortsBinaryProvider::new(paths.tmp().join("macports")))
+        }
+        _ => Arc::new(HomebrewBinaryProvider::default()),
+    };
     Platform {
-        layout: BinaryLayout::Homebrew,
-        binaries: Arc::new(HomebrewBinaryProvider::default()),
+        layout,
+        binaries,
         hosts: Arc::new(MacHostsManager::new(
             app_name,
             exe,
@@ -130,7 +140,7 @@ fn platform(app_name: &str, paths: &Paths) -> Platform {
         // Una app abierta desde el Finder tiene un PATH mínimo; la terminal
         // antepone el PATH propio al de la shell del usuario.
         system_path: String::new(),
-        os: domain::os::OsInfo::MacOs,
+        os,
     }
 }
 
@@ -319,6 +329,7 @@ pub fn run() {
             commands::setup_info,
             commands::php_build_info,
             commands::packages_install,
+            commands::package_manager_install,
             commands::setup_finish,
             commands::services_settings_busy,
             commands::services_settings_save,

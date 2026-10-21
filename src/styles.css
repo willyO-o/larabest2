@@ -1166,6 +1166,36 @@ button:disabled {
   color: var(--ink-2);
 }
 
+/* macOS sin Homebrew o MacPorts: se instala antes que lo demás. */
+.setup-manager {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--sunken);
+}
+
+.setup-manager-text {
+  margin: 0;
+  color: var(--ink-2);
+}
+
+.setup-manager-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--ink);
+  font-size: 12px;
+}
+
+.setup-list[data-locked='true'] {
+  opacity: 0.55;
+}
+
 /* ---------------------------------------------------------------- hover */
 
 @media (hover: hover) and (pointer: fine) {

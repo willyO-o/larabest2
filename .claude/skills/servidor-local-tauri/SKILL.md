@@ -351,4 +351,4 @@ Decidido por el usuario: el botón "Base de datos" abre HeidiSQL en Windows (Adm
 Preguntar al usuario en lugar de asumir:
 
 - Nombre e identidad visual de la app.
-- Si los pasantes con Mac pueden instalar Homebrew.
+- (Resuelto) En Macs Intel se usa MacPorts (`BinaryLayout::MacPorts`, `adapters/macos/macports.rs`), porque Homebrew ya no se instala ahí; en Apple Silicon, Homebrew. El asistente instala el que falte.

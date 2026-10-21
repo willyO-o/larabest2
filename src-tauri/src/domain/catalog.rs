@@ -7,7 +7,7 @@ use serde_json::Value;
 
 use super::desktop::DesktopTool;
 use super::os::{OsInfo, WindowsTier};
-use super::{ProgressState, ServiceId};
+use super::{BinaryLayout, ProgressState, ServiceId};
 
 /// Carga de `install:progress` mientras se agrega un paquete.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -154,8 +154,10 @@ pub fn find(id: &str) -> Option<Package> {
         .find(|p| p.id == id)
 }
 
-/// Lo que se puede agregar en este sistema, en el orden del menú.
-pub fn packages_for(os: OsInfo) -> Vec<Package> {
+/// Lo que se puede agregar en este sistema, en el orden del menú. En
+/// macOS depende también del gestor: con MacPorts no hay MongoDB (solo
+/// tiene la 6.0, sin soporte).
+pub fn packages_for(os: OsInfo, layout: BinaryLayout) -> Vec<Package> {
     let ids: &[&str] = match os.windows_tier() {
         // Sin MongoDB, Mailpit, PostgreSQL 17 ni Redis: sus versiones
         // actuales piden Windows 10 o Server 2016.
@@ -193,6 +195,16 @@ pub fn packages_for(os: OsInfo) -> Vec<Package> {
                 .iter()
                 .copied()
                 .filter(|p| !matches!(p.kind, PackageKind::Tool(Tool::Desktop(_))))
+                .filter(|p| {
+                    layout != BinaryLayout::MacPorts
+                        || !matches!(
+                            p.kind,
+                            PackageKind::Service {
+                                service: ServiceId::Mongodb,
+                                ..
+                            }
+                        )
+                })
                 .collect()
         }
     };
@@ -201,8 +213,8 @@ pub fn packages_for(os: OsInfo) -> Vec<Package> {
 
 /// El paquete más reciente de un servicio para este sistema (el primero
 /// del menú): PHP 8.4 en Windows 10, PHP 8.2 en Windows 7.
-pub fn first_for(os: OsInfo, service: ServiceId) -> Option<Package> {
-    packages_for(os)
+pub fn first_for(os: OsInfo, layout: BinaryLayout, service: ServiceId) -> Option<Package> {
+    packages_for(os, layout)
         .into_iter()
         .find(|p| matches!(p.kind, PackageKind::Service { service: s, .. } if s == service))
 }
@@ -440,6 +452,12 @@ pub fn node_lts(json: &str) -> Option<String> {
 /// Release de GitHub: la versión (etiqueta sin "v") y la URL del asset
 /// en la API del archivo que termina en `suffix`.
 pub fn github_asset(json: &str, suffix: &str) -> Option<(String, String)> {
+    github_asset_where(json, |name| name.ends_with(suffix))
+}
+
+/// Como `github_asset`, con el primer archivo cuyo nombre cumpla `wanted`
+/// (el instalador de MacPorts para una versión de macOS).
+pub fn github_asset_where(json: &str, wanted: impl Fn(&str) -> bool) -> Option<(String, String)> {
     let doc: Value = serde_json::from_str(json).ok()?;
     let version = doc
         .get("tag_name")?
@@ -448,7 +466,7 @@ pub fn github_asset(json: &str, suffix: &str) -> Option<(String, String)> {
         .to_string();
     let url = doc.get("assets")?.as_array()?.iter().find_map(|asset| {
         let name = asset.get("name")?.as_str()?;
-        name.ends_with(suffix)
+        wanted(name)
             .then(|| asset.get("url")?.as_str().map(str::to_string))
             .flatten()
     })?;
@@ -582,7 +600,12 @@ mod tests {
 
     #[test]
     fn each_windows_gets_versions_that_run_there() {
-        let ids = |os| -> Vec<&str> { packages_for(os).iter().map(|p| p.id).collect() };
+        let ids = |os| -> Vec<&str> {
+            packages_for(os, BinaryLayout::Portable)
+                .iter()
+                .map(|p| p.id)
+                .collect()
+        };
         let modern = ids(OsInfo::Windows {
             build: 26200,
             server: false,
@@ -605,8 +628,22 @@ mod tests {
         assert!(!seven.contains(&"php-8.4") && !seven.contains(&"apache"));
         assert_eq!(find("mariadb-10.4").unwrap().pinned, Some("10.4.12"));
 
-        let mac = ids(OsInfo::MacOs);
+        let mac_os = OsInfo::MacOs {
+            major: 15,
+            minor: 1,
+            apple_silicon: true,
+        };
+        let mac: Vec<&str> = packages_for(mac_os, BinaryLayout::Homebrew)
+            .iter()
+            .map(|p| p.id)
+            .collect();
         assert!(mac.contains(&"php-8.4") && !mac.contains(&"heidisql"));
+        assert!(mac.contains(&"mongodb"));
+        let macports: Vec<&str> = packages_for(mac_os, BinaryLayout::MacPorts)
+            .iter()
+            .map(|p| p.id)
+            .collect();
+        assert!(macports.contains(&"php-8.4") && !macports.contains(&"mongodb"));
 
         assert_eq!(
             first_for(
@@ -614,6 +651,7 @@ mod tests {
                     build: 7601,
                     server: false
                 },
+                BinaryLayout::Portable,
                 ServiceId::Php
             )
             .unwrap()

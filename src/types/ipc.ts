@@ -145,12 +145,20 @@ export interface SetupPackage {
   recommended: boolean
 }
 
+/** Gestor de paquetes de macOS (Homebrew o MacPorts). */
+export interface SetupManager {
+  name: string
+  installed: boolean
+}
+
 /** Resultado de `setup_info`. */
 export interface SetupInfo {
   /** Abrirlo al iniciar: todavía no se terminó ni se omitió. */
   show: boolean
   /** "Windows 11", "Windows 7", "macOS". */
   os: string
+  /** En macOS, con qué se instala todo; null en Windows. */
+  manager: SetupManager | null
   packages: SetupPackage[]
 }
 

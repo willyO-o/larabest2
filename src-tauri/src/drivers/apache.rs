@@ -35,20 +35,46 @@ fn modules_dir(ctx: &RenderContext) -> Result<PathBuf, AppError> {
     let dir = ctx.install_dir(ServiceId::Apache)?;
     Ok(match ctx.layout {
         BinaryLayout::Portable => dir.join("modules"),
-        BinaryLayout::Homebrew => dir.join("lib").join("httpd").join("modules"),
+        // MacPorts: el adaptador enlaza `lib/httpd/modules` a sus módulos.
+        BinaryLayout::Homebrew | BinaryLayout::MacPorts => {
+            dir.join("lib").join("httpd").join("modules")
+        }
     })
+}
+
+/// MPM a cargar en macOS: el que esté en la carpeta de módulos, `event`
+/// primero. Homebrew los trae todos; el `apache2` de MacPorts puede traer
+/// solo `prefork`, o ninguno si viene dentro de httpd (y entonces no se
+/// carga nada: cargar uno que no existe impide arrancar).
+fn mpm_module(ctx: &RenderContext) -> Option<(&'static str, &'static str)> {
+    const MPMS: [(&str, &str); 3] = [
+        ("mpm_event_module", "mod_mpm_event.so"),
+        ("mpm_prefork_module", "mod_mpm_prefork.so"),
+        ("mpm_worker_module", "mod_mpm_worker.so"),
+    ];
+    let dir = modules_dir(ctx).ok();
+    let found = dir.and_then(|dir| {
+        MPMS.into_iter()
+            .find(|(_, file)| ctx.fs.exists(&dir.join(file)))
+    });
+    match (found, ctx.layout) {
+        (Some(mpm), _) => Some(mpm),
+        // Sin poder mirar (o en las pruebas), lo de siempre con Homebrew.
+        (None, BinaryLayout::Homebrew) => Some(MPMS[0]),
+        (None, _) => None,
+    }
 }
 
 /// Módulos que se cargan: lo que piden los sitios PHP con `.htaccess`
 /// (WordPress, Laravel y sus plugins), la lista de proyectos y HTTPS.
 fn modules(ctx: &RenderContext, balancer: bool) -> Vec<(&'static str, &'static str)> {
     let mut list = Vec::new();
-    if ctx.layout == BinaryLayout::Homebrew {
+    if ctx.layout.is_macos() {
         // En Unix el MPM y unixd son módulos aparte; en Windows vienen dentro.
-        list.extend([
-            ("mpm_event_module", "mod_mpm_event.so"),
-            ("unixd_module", "mod_unixd.so"),
-        ]);
+        if let Some(mpm) = mpm_module(ctx) {
+            list.push(mpm);
+        }
+        list.push(("unixd_module", "mod_unixd.so"));
     }
     list.extend([
         ("authz_core_module", "mod_authz_core.so"),
@@ -221,7 +247,7 @@ impl ServiceDriver for ApacheDriver {
             return Vec::new();
         };
         let spec = match ctx.layout {
-            BinaryLayout::Homebrew => spec.arg("-D").arg("FOREGROUND"),
+            BinaryLayout::Homebrew | BinaryLayout::MacPorts => spec.arg("-D").arg("FOREGROUND"),
             BinaryLayout::Portable => spec,
         };
         vec![spec.log_to(ctx.paths.logs().join("apache-console.log"))]
@@ -259,7 +285,7 @@ impl ServiceDriver for ApacheDriver {
     /// Windows Apache en consola no se puede recargar desde otro proceso:
     /// el supervisor lo reinicia.
     fn reloads_in_place(&self, ctx: &RenderContext) -> bool {
-        ctx.layout == BinaryLayout::Homebrew
+        ctx.layout.is_macos()
     }
 
     async fn reload(&self, ctx: &RenderContext) -> Result<(), AppError> {

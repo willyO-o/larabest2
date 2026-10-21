@@ -20,7 +20,7 @@ pub use config::{
 };
 pub use dotenv::set_env;
 pub use hosts::{decode_request, encode_request, merge_block, parse_block, HostEntry};
-pub use layout::BinaryLayout;
+pub use layout::{BinaryLayout, MACPORTS_PHP_PARTS, MACPORTS_PREFIX};
 pub use paths::{slash, Paths};
 pub use service::{
     explain_exit_code, Health, ServiceId, ServiceState, ServiceStatus, STATUS_DLL_NOT_FOUND,

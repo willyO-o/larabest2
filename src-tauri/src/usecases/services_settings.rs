@@ -53,7 +53,7 @@ impl Core {
                 .load()
                 .map(|c| c.php_processes.max(1))
                 .unwrap_or(1),
-            BinaryLayout::Homebrew => 1,
+            BinaryLayout::Homebrew | BinaryLayout::MacPorts => 1,
         }
     }
 

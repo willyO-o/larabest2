@@ -10,7 +10,13 @@ pub enum OsInfo {
         build: u32,
         server: bool,
     },
-    MacOs,
+    /// `major`/`minor`: 15.1 = Sequoia; 10.15 = Catalina. En Intel, Homebrew
+    /// ya no se instala y se usa MacPorts.
+    MacOs {
+        major: u32,
+        minor: u32,
+        apple_silicon: bool,
+    },
     Other,
 }
 
@@ -31,6 +37,17 @@ impl OsInfo {
             OsInfo::Windows { build, .. } if build < 9200 => Some(WindowsTier::Seven),
             OsInfo::Windows { build, .. } if build < 10240 => Some(WindowsTier::Eight),
             OsInfo::Windows { .. } => Some(WindowsTier::Modern),
+            _ => None,
+        }
+    }
+
+    /// Parte del nombre del instalador de MacPorts para esta versión de
+    /// macOS: `MacPorts-2.12.7-15-Sequoia.pkg` lleva "-15-"; los de 10.x,
+    /// "-10.15-".
+    pub fn macports_pkg_tag(self) -> Option<String> {
+        match self {
+            OsInfo::MacOs { major, .. } if major >= 11 => Some(format!("-{major}-")),
+            OsInfo::MacOs { major, minor, .. } => Some(format!("-{major}.{minor}-")),
             _ => None,
         }
     }
@@ -66,7 +83,23 @@ impl OsInfo {
                 };
                 format!("Windows {name}")
             }
-            OsInfo::MacOs => "macOS".into(),
+            OsInfo::MacOs {
+                major,
+                minor,
+                apple_silicon,
+            } => {
+                let version = if major >= 11 {
+                    major.to_string()
+                } else {
+                    format!("{major}.{minor}")
+                };
+                let cpu = if apple_silicon {
+                    "Apple Silicon"
+                } else {
+                    "Intel"
+                };
+                format!("macOS {version} ({cpu})")
+            }
             OsInfo::Other => "este sistema".into(),
         }
     }
@@ -75,6 +108,12 @@ impl OsInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const MAC_INTEL: OsInfo = OsInfo::MacOs {
+        major: 15,
+        minor: 1,
+        apple_silicon: false,
+    };
 
     fn win(build: u32, server: bool) -> OsInfo {
         OsInfo::Windows { build, server }
@@ -87,7 +126,7 @@ mod tests {
         assert_eq!(win(9600, false).windows_tier(), Some(WindowsTier::Eight));
         assert_eq!(win(14393, true).windows_tier(), Some(WindowsTier::Modern));
         assert_eq!(win(26200, false).windows_tier(), Some(WindowsTier::Modern));
-        assert_eq!(OsInfo::MacOs.windows_tier(), None);
+        assert_eq!(MAC_INTEL.windows_tier(), None);
     }
 
     #[test]
@@ -99,6 +138,27 @@ mod tests {
         assert_eq!(win(9200, true).label(), "Windows Server 2012");
         assert_eq!(win(9600, true).label(), "Windows Server 2012 R2");
         assert_eq!(win(20348, true).label(), "Windows Server 2022");
-        assert_eq!(OsInfo::MacOs.label(), "macOS");
+        assert_eq!(MAC_INTEL.label(), "macOS 15 (Intel)");
+        assert_eq!(
+            OsInfo::MacOs {
+                major: 10,
+                minor: 15,
+                apple_silicon: false
+            }
+            .label(),
+            "macOS 10.15 (Intel)"
+        );
+    }
+
+    #[test]
+    fn macports_installer_matches_the_macos_version() {
+        assert_eq!(MAC_INTEL.macports_pkg_tag().as_deref(), Some("-15-"));
+        let catalina = OsInfo::MacOs {
+            major: 10,
+            minor: 15,
+            apple_silicon: false,
+        };
+        assert_eq!(catalina.macports_pkg_tag().as_deref(), Some("-10.15-"));
+        assert_eq!(win(26200, false).macports_pkg_tag(), None);
     }
 }

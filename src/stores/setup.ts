@@ -26,6 +26,9 @@ export const useSetupStore = defineStore('setup', () => {
   const finished = ref(false)
   /** Error al leer el catálogo. */
   const error = ref<string | null>(null)
+  /** Instalando Homebrew o MacPorts. */
+  const installingManager = ref(false)
+  const managerError = ref<string | null>(null)
 
   async function load() {
     try {
@@ -66,9 +69,23 @@ export const useSetupStore = defineStore('setup', () => {
     await load()
   }
 
+  /** macOS: instala Homebrew o MacPorts antes que lo demás. */
+  async function installManager() {
+    installingManager.value = true
+    managerError.value = null
+    try {
+      await invoke<string>('package_manager_install')
+    } catch (e) {
+      managerError.value = messageOf(e)
+    } finally {
+      installingManager.value = false
+      await load()
+    }
+  }
+
   /** Cerrar u omitir: no se vuelve a abrir solo. */
   async function close() {
-    if (installing.value) return
+    if (installing.value || installingManager.value) return
     try {
       await invoke('setup_finish')
     } catch (e) {
@@ -78,5 +95,19 @@ export const useSetupStore = defineStore('setup', () => {
     open.value = false
   }
 
-  return { open, info, results, installing, finished, error, init, show, install, close }
+  return {
+    open,
+    info,
+    results,
+    installing,
+    finished,
+    error,
+    installingManager,
+    managerError,
+    init,
+    show,
+    install,
+    installManager,
+    close,
+  }
 })

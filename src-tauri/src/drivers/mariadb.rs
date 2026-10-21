@@ -115,14 +115,16 @@ impl ServiceDriver for MariadbDriver {
             context! {
                 app_name => ctx.app_name,
                 version => install.version,
-                basedir => install.path,
+                // MacPorts guarda los archivos de MariaDB en otras carpetas
+                // (`share/mariadb-11.4`): sin basedir usa las de su compilación.
+                basedir => (ctx.layout != BinaryLayout::MacPorts).then(|| install.path.clone()),
                 datadir => slash(&ctx.paths.data_mariadb()),
                 port => ctx.config.mariadb_port,
                 logs => slash(&ctx.paths.logs()),
                 tmp => slash(&ctx.paths.tmp()),
                 custom_dir => slash(&ctx.paths.mariadb_custom()),
                 // En macOS el socket propio evita chocar con otro MySQL.
-                socket => (ctx.layout == BinaryLayout::Homebrew)
+                socket => ctx.layout.is_macos()
                     .then(|| slash(&ctx.paths.mariadb_socket())),
             },
         )?;
@@ -145,19 +147,22 @@ impl ServiceDriver for MariadbDriver {
             )));
         }
         let mut spec = tool(ctx, "mariadb-install-db")?;
-        if ctx.layout == BinaryLayout::Homebrew {
-            // El script de Unix necesita la carpeta de la fórmula y, sin
-            // `normal`, root solo entraría por socket como usuario del
+        if ctx.layout.is_macos() {
+            // Sin `normal`, root solo entraría por socket como usuario del
             // sistema: Adminer, WordPress y Laravel entran por TCP.
-            spec = spec
-                .arg(format!(
-                    "--defaults-file={}",
-                    slash(&ctx.paths.mariadb_cnf())
-                ))
-                .arg(format!(
+            spec = spec.arg(format!(
+                "--defaults-file={}",
+                slash(&ctx.paths.mariadb_cnf())
+            ));
+            // El script de Homebrew necesita la carpeta de la fórmula; el de
+            // MacPorts encuentra sus archivos solo (están en otra carpeta).
+            if ctx.layout == BinaryLayout::Homebrew {
+                spec = spec.arg(format!(
                     "--basedir={}",
                     ctx.install(ServiceId::Mariadb)?.path
-                ))
+                ));
+            }
+            spec = spec
                 .arg("--auth-root-authentication-method=normal")
                 .arg("--skip-test-db");
         }

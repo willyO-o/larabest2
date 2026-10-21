@@ -12,7 +12,7 @@ mod ssl;
 
 pub use create_site::{COMPOSER_URL, WORDPRESS_URL};
 pub use services_settings::{PortBusy, ServiceToggle, ServicesChoice, ServicesSettings};
-pub use setup::{SetupInfo, SetupPackage};
+pub use setup::{SetupInfo, SetupManager, SetupPackage};
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::PathBuf;
@@ -143,7 +143,7 @@ impl Core {
             .map(|&id| deps.paths.bin_service(id))
             .collect();
         for dir in deps.paths.layout_dirs() {
-            if deps.layout == BinaryLayout::Homebrew && service_bins.contains(&dir) {
+            if deps.layout.is_macos() && service_bins.contains(&dir) {
                 continue;
             }
             deps.fs.create_dir_all(&dir)?;
@@ -275,7 +275,7 @@ impl Core {
     /// Homebrew no hay nada que elegir: vienen compiladas dentro de PHP.
     pub fn php_extensions(&self) -> Result<Vec<PhpExtension>, AppError> {
         let deps = self.supervisor.deps();
-        if deps.layout == BinaryLayout::Homebrew {
+        if deps.layout.is_macos() {
             return Ok(Vec::new());
         }
         let ctx = self.supervisor.context()?;
@@ -727,7 +727,9 @@ impl Core {
         if deps.fs.exists(&phar) {
             let (template, file) = match deps.layout {
                 BinaryLayout::Portable => (templates::COMPOSER_BAT, "composer.bat"),
-                BinaryLayout::Homebrew => (templates::COMPOSER_SH, "composer"),
+                BinaryLayout::Homebrew | BinaryLayout::MacPorts => {
+                    (templates::COMPOSER_SH, "composer")
+                }
             };
             let script = templates::render(
                 template,
@@ -766,9 +768,9 @@ impl Core {
         env.insert("PHPRC".to_string(), slash(&deps.paths.etc_php()));
         env.insert(
             "PHP_INI_SCAN_DIR".to_string(),
-            slash(&deps.paths.php_custom()),
+            crate::drivers::php::scan_dirs(&self.supervisor.context()?),
         );
-        if deps.layout == BinaryLayout::Homebrew {
+        if deps.layout.is_macos() {
             // Así `mariadb -u root` entra sin indicar el socket.
             env.insert(
                 "MYSQL_UNIX_PORT".to_string(),

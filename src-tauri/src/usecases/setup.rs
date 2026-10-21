@@ -24,6 +24,14 @@ pub struct SetupPackage {
     pub recommended: bool,
 }
 
+/// Gestor de paquetes de macOS (Homebrew o MacPorts) y si ya está.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetupManager {
+    pub name: String,
+    pub installed: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SetupInfo {
@@ -31,12 +39,14 @@ pub struct SetupInfo {
     pub show: bool,
     /// "Windows 11", "Windows 7", "macOS".
     pub os: String,
+    /// En macOS, con qué se instala todo; `None` en Windows.
+    pub manager: Option<SetupManager>,
     pub packages: Vec<SetupPackage>,
 }
 
 impl Core {
     pub fn setup_info(&self) -> SetupInfo {
-        let packages = catalog::packages_for(self.os);
+        let packages = catalog::packages_for(self.os, self.supervisor.deps().layout);
         // Lo recomendado: la versión más nueva de PHP y MariaDB que corre
         // aquí (la primera del menú), Nginx y las herramientas de uso diario.
         let mut seen: HashSet<ServiceId> = HashSet::new();
@@ -74,6 +84,12 @@ impl Core {
         SetupInfo {
             show,
             os: self.os.label(),
+            manager: self
+                .package_manager()
+                .map(|(name, installed)| SetupManager {
+                    name: name.to_string(),
+                    installed,
+                }),
             packages: list,
         }
     }
