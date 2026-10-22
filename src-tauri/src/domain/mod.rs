@@ -2,6 +2,7 @@
 
 pub mod catalog;
 mod config;
+pub mod database;
 pub mod desktop;
 mod dotenv;
 mod hosts;

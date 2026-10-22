@@ -26,8 +26,8 @@ impl Core {
         )))
     }
 
-    /// HeidiSQL conectado a MariaDB como root sin contraseña (solo escucha
-    /// en 127.0.0.1). Los parámetros siguen su ayuda: el host va entre
+    /// HeidiSQL conectado a MariaDB como root con la contraseña de la app
+    /// (solo escucha en 127.0.0.1). Los parámetros siguen su ayuda: el host va entre
     /// comillas porque lleva puntos, y `-n=0` es MariaDB/MySQL por TCP.
     pub(crate) fn open_heidisql(&self) -> Result<(), AppError> {
         self.require_desktop(DesktopTool::Heidisql)?;
@@ -37,13 +37,14 @@ impl Core {
                 "Inicia MariaDB para abrir HeidiSQL.".into(),
             ));
         }
-        let port = deps.config.load()?.mariadb_port;
+        let cfg = deps.config.load()?;
+        let port = cfg.mariadb_port;
         let args: Vec<String> = [
             "-n=0".to_string(),
             "-h=\"127.0.0.1\"".to_string(),
             format!("-P={port}"),
             "-u=root".to_string(),
-            "-p=".to_string(),
+            format!("-p={}", cfg.mariadb_root_password),
         ]
         .into();
         self.shell

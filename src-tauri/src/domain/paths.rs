@@ -234,6 +234,11 @@ impl Paths {
         self.root.join("tmp")
     }
 
+    /// Respaldos de las bases de datos (`.sql`).
+    pub fn backups(&self) -> PathBuf {
+        self.root.join("backups")
+    }
+
     pub fn pid_file(&self, id: ServiceId) -> PathBuf {
         self.tmp().join(format!("{}.pids", id.key()))
     }

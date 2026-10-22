@@ -79,6 +79,16 @@ impl RenderContext {
             .unwrap_or_else(|| self.versions.contains_key(&id))
     }
 
+    /// Sitios que llevan host virtual: todos, o ninguno si se desactivaron
+    /// en Servicios y puertos (Adminer y phpMyAdmin los llevan siempre).
+    pub fn vhost_sites(&self) -> &[Site] {
+        if self.config.auto_vhosts {
+            &self.sites
+        } else {
+            &[]
+        }
+    }
+
     /// Servidor web elegido en Preferencias (Nginx o Apache).
     pub fn web(&self) -> ServiceId {
         self.config.web_server.service()

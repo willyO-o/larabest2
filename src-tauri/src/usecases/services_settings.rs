@@ -1,10 +1,11 @@
 //! Preferencias → Servicios y puertos: qué servicios forman parte de la
-//! pila, qué servidor web se usa y en qué puertos escucha cada uno.
+//! pila, qué servidor web se usa, en qué puertos escucha cada uno y cómo se
+//! llaman los sitios (hosts virtuales y su extensión).
 
 use serde::{Deserialize, Serialize};
 
 use super::Core;
-use crate::domain::{BinaryLayout, PortSettings, ServiceId, WebServer};
+use crate::domain::{database, BinaryLayout, PortSettings, ServiceId, WebServer};
 use crate::error::AppError;
 
 /// Lo que muestra el panel. Versiones y estado llegan aparte, con los
@@ -16,6 +17,16 @@ pub struct ServicesSettings {
     pub ports: PortSettings,
     /// Cuántos puertos seguidos usa PHP desde `ports.php`.
     pub php_port_count: u16,
+    pub sites: SiteSettings,
+}
+
+/// Como en Laragon: un dominio `<carpeta>.<tld>` por cada carpeta de
+/// `www/` (o ninguno) y la extensión de esos dominios.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SiteSettings {
+    pub auto_vhosts: bool,
+    pub tld: String,
 }
 
 /// Lo que guarda el panel de una vez.
@@ -26,6 +37,9 @@ pub struct ServicesChoice {
     /// Servicios que se pueden quitar de la pila (`can_disable`).
     pub enabled: Vec<ServiceToggle>,
     pub ports: PortSettings,
+    /// Hosts virtuales y extensión. Si falta, no se cambian.
+    #[serde(default)]
+    pub sites: Option<SiteSettings>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
@@ -63,6 +77,10 @@ impl Core {
             web_server: cfg.web_server,
             ports: cfg.ports(),
             php_port_count: self.php_port_count(),
+            sites: SiteSettings {
+                auto_vhosts: cfg.auto_vhosts,
+                tld: cfg.tld,
+            },
         })
     }
 
@@ -106,6 +124,9 @@ impl Core {
             .ports
             .validate(self.php_port_count())
             .map_err(AppError::InvalidInput)?;
+        if let Some(sites) = &choice.sites {
+            database::normalize_tld(&sites.tld).map_err(AppError::InvalidInput)?;
+        }
         for toggle in &choice.enabled {
             if !toggle.id.can_disable() {
                 return Err(AppError::InvalidInput(format!(
@@ -120,7 +141,31 @@ impl Core {
             }
         }
         self.set_web_server(choice.web_server).await?;
-        self.set_ports(choice.ports).await
+        self.set_ports(choice.ports).await?;
+        if let Some(sites) = choice.sites {
+            self.set_site_settings(sites).await?;
+        }
+        Ok(())
+    }
+
+    /// Activa o desactiva los hosts virtuales y cambia la extensión: el
+    /// servidor web, los certificados y el archivo hosts quedan al día (un
+    /// solo pedido de permiso) y las URLs de los sitios cambian.
+    pub async fn set_site_settings(&self, sites: SiteSettings) -> Result<(), AppError> {
+        let tld = database::normalize_tld(&sites.tld).map_err(AppError::InvalidInput)?;
+        let deps = self.supervisor.deps();
+        let mut cfg = deps.config.load()?;
+        if cfg.auto_vhosts == sites.auto_vhosts && cfg.tld == tld {
+            return Ok(());
+        }
+        cfg.auto_vhosts = sites.auto_vhosts;
+        cfg.tld = tld;
+        deps.config.save(&cfg)?;
+        // Crea los certificados de la extensión nueva (con HTTPS), reescribe
+        // los vhosts, pone al día el archivo hosts y recarga el servidor web
+        // si cambió algo (siempre cambia: cambian los dominios o los vhosts).
+        self.sync_sites().await?;
+        Ok(())
     }
 
     /// Cambia los puertos y reinicia solo los servicios afectados que

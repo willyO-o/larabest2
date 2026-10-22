@@ -4,10 +4,10 @@
  * Puedes editar este archivo: no se regenera.
  */
 
-// Base de datos local (MariaDB de {{ app_name }}, root sin contraseña).
+// Base de datos local (MariaDB de {{ app_name }}, usuario root).
 define( 'DB_NAME', '{{ db_name }}' );
 define( 'DB_USER', 'root' );
-define( 'DB_PASSWORD', '' );
+define( 'DB_PASSWORD', '{{ db_password }}' );
 define( 'DB_HOST', '127.0.0.1:{{ db_port }}' );
 define( 'DB_CHARSET', 'utf8mb4' );
 define( 'DB_COLLATE', '' );

@@ -95,6 +95,10 @@ export interface Settings {
   defaultRoot: string
   theme: ThemePreference
   ssl: boolean
+  /** Extensión de los dominios, sin punto. */
+  tld: string
+  /** Un dominio por carpeta de www; si no, `localhost/<carpeta>/`. */
+  autoVhosts: boolean
 }
 
 export type WebServer = 'nginx' | 'apache'
@@ -118,7 +122,27 @@ export interface ServicesSettings {
   webServer: WebServer
   ports: PortSettings
   phpPortCount: number
+  sites: SiteSettings
 }
+
+/** Hosts virtuales automáticos y extensión de los dominios. */
+export interface SiteSettings {
+  /** Un dominio `<carpeta>.<tld>` por carpeta de www; si no, `localhost/<carpeta>/`. */
+  autoVhosts: boolean
+  /** Sin punto: "test". */
+  tld: string
+}
+
+/** Panel de bases de datos (`db_info`). */
+export interface DatabaseInfo {
+  running: boolean
+  databases: string[]
+  hasPassword: boolean
+  backupsDir: string
+}
+
+/** Qué pide el menú MariaDB al abrir el panel. */
+export type DatabaseMode = 'create' | 'backup' | 'password'
 
 export interface ServiceToggle {
   id: ServiceId
@@ -131,6 +155,7 @@ export interface ServicesChoice {
   /** Solo servicios que se pueden quitar: MariaDB y los opcionales. */
   enabled: ServiceToggle[]
   ports: PortSettings
+  sites: SiteSettings
 }
 
 /** Un puerto que ya ocupa otro programa (`services_settings_busy`). */
@@ -200,5 +225,7 @@ export const EVENTS = {
   uiServices: 'ui:services',
   /** El menú contextual pide abrir el asistente "Preparar LARABEST". */
   uiSetup: 'ui:setup',
+  /** El menú MariaDB pide el panel de bases de datos (con su pestaña). */
+  uiDatabase: 'ui:database',
   installProgress: 'install:progress',
 } as const

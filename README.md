@@ -34,13 +34,13 @@ Clic derecho en cualquier parte de la ventana, el botón **Menú** o el ícono d
 | www | un sitio por carpeta (abre `http://<carpeta>.test`), **Crear sitio** (en blanco, WordPress, Laravel), abrir la carpeta www, actualizar sitios y archivo hosts |
 | Nginx o Apache | el servidor web elegido: versión, recargar configuración, carpeta de configuración propia por sitio (`etc\nginx\custom\<sitio>.conf` o `etc\apache\custom\<sitio>.conf`), configuración generada, logs |
 | PHP | versión, `php.ini` de ajustes propios, extensiones (marcar o desmarcar), `php.ini` generado, log de errores |
-| MariaDB | versión, `my.cnf` de ajustes propios, Adminer, phpMyAdmin, `my.cnf` generado, carpeta de datos, log de errores |
+| MariaDB | versión, `my.cnf` de ajustes propios, HeidiSQL, Adminer, phpMyAdmin, **Nueva base de datos…**, **Respaldar base de datos…**, **Cambiar contraseña de root…**, carpeta de respaldos, `my.cnf` generado, carpeta de datos, log de errores |
 | PostgreSQL, Redis, MongoDB, Mailpit | uno por cada servicio opcional en la pila (ver abajo) |
 | Logs | errores y accesos del servidor web, errores de PHP y de MariaDB, logs de los opcionales, carpeta de logs |
 | Herramientas | Web, Base de datos, Correo (con Mailpit), Terminal, carpeta www, PATH (agregar o quitar la app del PATH) |
 | Carpeta raíz (`C:\LARABEST`) | abre la carpeta raíz en uso; muestra su ruta |
 | Agregar | descargar versiones y herramientas (ver abajo) |
-| Preferencias | tema (Sistema, Claro, Oscuro), servidor web (Nginx o Apache), **Servicios y puertos…** (qué servicios arrancan y en qué puertos), botón Base de datos (Adminer o phpMyAdmin), iniciar todo al abrir, HTTPS para los sitios `.test`, carpeta de certificados, cambiar la carpeta raíz, abrir `app.json` |
+| Preferencias | tema (Sistema, Claro, Oscuro), servidor web (Nginx o Apache), **Servicios y puertos…** (qué servicios arrancan y en qué puertos), botón Base de datos (Adminer o phpMyAdmin), iniciar todo al abrir, HTTPS para los sitios, **hosts virtuales automáticos** y **extensión de los dominios…**, carpeta de certificados, cambiar la carpeta raíz, abrir `app.json` |
 
 Lo generado (`etc\nginx\nginx.conf`, `etc\php\php.ini`, `etc\mariadb\my.cnf`) se regenera en cada inicio: ábrelo solo para consultarlo. Tus ajustes van en archivos que nunca se regeneran:
 
@@ -107,7 +107,7 @@ La primera vez que se abre la app aparece **Preparar LARABEST**: una lista de lo
 
 ## HeidiSQL y Notepad++
 
-En Windows, el botón **Base de datos** abre **HeidiSQL** ya conectado a MariaDB (root sin contraseña, `127.0.0.1` y el puerto configurado); MariaDB tiene que estar en marcha. Si HeidiSQL no está instalado, el botón abre Adminer. **Menú → MariaDB → Abrir HeidiSQL** hace lo mismo.
+En Windows, el botón **Base de datos** abre **HeidiSQL** ya conectado a MariaDB (root con la contraseña de la app, o sin contraseña; `127.0.0.1` y el puerto configurado); MariaDB tiene que estar en marcha. Si HeidiSQL no está instalado, el botón abre Adminer. **Menú → MariaDB → Abrir HeidiSQL** hace lo mismo.
 
 Las configuraciones y los logs del menú se abren en **Notepad++** si está instalado (si no, en el Bloc de notas). **Menú → Herramientas → Notepad++** lo abre vacío.
 
@@ -155,12 +155,22 @@ El **engranaje** de la cabecera (junto al tema y a **Menú**) abre un panel con 
 | MariaDB | activar o quitar de la pila (por ejemplo, si usas el MySQL de otro programa) y su puerto |
 | PostgreSQL, Redis, MongoDB | activar o quitar, y su puerto. Sin instalar, la casilla está apagada: agrégalos desde **Menú → Agregar** |
 | Mailpit | activar o quitar, y sus puertos SMTP y web |
+| Hosts virtuales | como en Laragon: un dominio `<carpeta>.<extensión>` por cada carpeta de `www/` (casilla) y la extensión (`test` por defecto) |
 
 - No deja guardar dos servicios en el mismo puerto (aunque uno esté desactivado: al activarlo chocarían) ni puertos fuera de 1–65535.
 - Mientras escribes, avisa si un puerto ya lo ocupa otro programa (por ejemplo `mysqld.exe` de Laragon o XAMPP en el 3306) para que cambies el puerto o cierres ese programa. Es solo un aviso: se puede guardar igual.
 - Al guardar, solo se reinician los servicios afectados que estén en marcha: cambiar el puerto de MariaDB reinicia MariaDB; el de PHP reinicia PHP y el servidor web; el SMTP de Mailpit reinicia Mailpit y PHP (va en su `php.ini`). Los detenidos solo regeneran su configuración.
 - Con un puerto HTTP o HTTPS distinto de 80 o 443, las direcciones de los sitios lo llevan (`http://blog.test:8080`). Adminer y phpMyAdmin usan el puerto nuevo de MariaDB solos.
 - Los sitios ya creados guardan el puerto de MariaDB, Redis o el SMTP en su `wp-config.php` o `.env`: si cambias alguno, el panel lo recuerda para que lo cambies también ahí.
+- **Hosts virtuales:** al cambiar la extensión (por ejemplo a `lab` o `localhost`) se regeneran los vhosts, los certificados (con HTTPS) y el archivo hosts, con un solo pedido de permiso. Sin hosts virtuales no se escriben vhosts ni entradas en hosts y cada sitio se abre en `http://localhost/<carpeta>/` (los Laravel en `.../<carpeta>/public/`); Adminer y phpMyAdmin siguen en su dominio. No se aceptan `dev`, `app`, `page` y otras que el navegador fuerza a HTTPS, ni `local` (macOS la usa para buscar equipos).
+
+## Bases de datos: crear, respaldar y contraseña de root
+
+**Menú → MariaDB** abre un panel con tres pestañas (MariaDB tiene que estar en marcha; si no, el panel ofrece iniciarlo):
+
+- **Nueva base:** crea una base vacía en utf8mb4. El nombre se pasa a minúsculas y los guiones a guiones bajos (`Mi-Tienda` → `mi_tienda`).
+- **Respaldar:** `mariadb-dump` de la base elegida (tablas, datos, rutinas, triggers y eventos, sin bloquear las tablas) a `backups\<base>-<fecha>_<hora>.sql`. El botón **Carpeta de respaldos** la abre.
+- **Contraseña de root:** cambia la contraseña de `root` (en `localhost`, `127.0.0.1` y `::1`). Desde ese momento la usan la app (iniciar, detener, crear bases), Adminer, phpMyAdmin, HeidiSQL y los sitios WordPress y Laravel nuevos. Se guarda en `app.json` (`mariadbRootPassword`). Acepta letras, números y `-_.@!*+=:,~^` (nada de comillas, espacios, `#` ni `$`, que romperían `.env` o `wp-config.php`). Los sitios ya creados guardan la anterior: cámbiala también en su `.env` o `wp-config.php`. Vacía, quita la contraseña.
 
 | Servicio | Puerto | Para qué | Windows (en `bin\<servicio>\<versión>\`) | macOS |
 | --- | --- | --- | --- | --- |
@@ -211,6 +221,7 @@ C:\LARABEST\
     php\custom\   user.ini con tus ajustes de PHP (nunca se regenera)
     mariadb\custom\ user.cnf con tus ajustes de MariaDB (nunca se regenera)
   data\mariadb\   bases de datos
+  backups\        respaldos .sql de MariaDB (Menú → MariaDB → Respaldar)
   logs\           logs de Nginx, PHP y MariaDB
   tmp\            PID y temporales
   app.json        versión activa de cada servicio, puertos

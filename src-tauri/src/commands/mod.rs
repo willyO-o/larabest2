@@ -11,7 +11,7 @@ use crate::domain::{
     ThemePreference,
 };
 use crate::error::AppError;
-use crate::usecases::{PortBusy, ServicesChoice, ServicesSettings, SetupInfo};
+use crate::usecases::{DatabaseInfo, PortBusy, ServicesChoice, ServicesSettings, SetupInfo};
 use crate::{menu, settings, tray, AppState};
 
 #[tauri::command]
@@ -100,6 +100,44 @@ pub async fn shell_open_root(app: AppHandle, state: State<'_, AppState>) -> Resu
     open_path(&app, state.core.www())
 }
 
+/// Panel de bases de datos: si MariaDB está en marcha y qué bases hay.
+#[tauri::command]
+pub async fn db_info(state: State<'_, AppState>) -> Result<DatabaseInfo, AppError> {
+    state.core.database_info().await
+}
+
+/// Crea una base vacía; devuelve el nombre con el que quedó.
+#[tauri::command]
+pub async fn db_create(state: State<'_, AppState>, name: String) -> Result<String, AppError> {
+    state.core.create_database(&name).await
+}
+
+/// Respalda una base en `backups/`; devuelve la ruta del archivo.
+#[tauri::command]
+pub async fn db_backup(
+    state: State<'_, AppState>,
+    name: String,
+    stamp: String,
+) -> Result<String, AppError> {
+    state.core.backup_database(&name, &stamp).await
+}
+
+#[tauri::command]
+pub async fn db_set_root_password(
+    state: State<'_, AppState>,
+    password: String,
+) -> Result<(), AppError> {
+    state.core.set_root_password(&password).await
+}
+
+#[tauri::command]
+pub async fn db_open_backups(app: AppHandle, state: State<'_, AppState>) -> Result<(), AppError> {
+    let dir = state.core.backups_dir();
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| AppError::io(format!("No se pudo crear {}", slash(&dir)), e))?;
+    open_path(&app, dir)
+}
+
 #[tauri::command]
 pub async fn shell_open_web(app: AppHandle, state: State<'_, AppState>) -> Result<(), AppError> {
     open_url(&app, &state.core.web_url()?)
@@ -145,6 +183,10 @@ pub struct Settings {
     pub default_root: String,
     pub theme: ThemePreference,
     pub ssl: bool,
+    /// Extensión de los dominios ("test").
+    pub tld: String,
+    /// Un dominio por carpeta de www; si no, `localhost/<carpeta>/`.
+    pub auto_vhosts: bool,
 }
 
 /// Cómo está compilada una versión de PHP (NTS/TS, arquitectura, compilador).
@@ -228,12 +270,15 @@ pub async fn settings_get(
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<Settings, AppError> {
+    let sites = state.core.services_settings()?.sites;
     Ok(Settings {
         app_name: state.core.supervisor.deps().app_name.clone(),
         root: slash(&state.core.root()),
         default_root: slash(&settings::default_root(&settings::app_name(&app))),
         theme: state.core.theme(),
         ssl: state.core.ssl_enabled(),
+        tld: sites.tld,
+        auto_vhosts: sites.auto_vhosts,
     })
 }
 

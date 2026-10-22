@@ -57,6 +57,7 @@ pub fn prepare(ctx: &RenderContext, name: &str) -> Result<(PathBuf, bool), AppEr
                 context! {
                     app_name => ctx.app_name,
                     adminer_php => slash(&ctx.paths.adminer_php()),
+                    password => ctx.config.mariadb_root_password,
                 },
             )?;
             let index = ctx.paths.etc_adminer().join("index.php");
@@ -78,6 +79,7 @@ pub fn prepare(ctx: &RenderContext, name: &str) -> Result<(PathBuf, bool), AppEr
                     app_name => ctx.app_name,
                     secret => blowfish_secret(&ctx.paths, &ctx.app_name),
                     port => ctx.config.mariadb_port,
+                    password => ctx.config.mariadb_root_password,
                     tmp => slash(&tmp),
                     custom => slash(&ctx.paths.phpmyadmin_custom()),
                 },
@@ -116,6 +118,7 @@ mod tests {
         assert_eq!(secret.len(), 32);
         // Sin cambios no reescribe, y el secreto no cambia.
         assert!(!prepare(&f.ctx, PHPMYADMIN).unwrap().1);
+        assert!(config.contains("$cfg['Servers'][$i]['password'] = '';"));
         assert!(f
             .fs
             .read("C:/APP/etc/phpmyadmin/custom.inc.php")
@@ -138,5 +141,29 @@ mod tests {
         assert!(served(&f.ctx, &[project]).is_empty());
         assert!(is_reserved("phpMyAdmin"));
         assert!(!is_reserved("blog"));
+    }
+
+    #[test]
+    fn tools_use_the_root_password() {
+        let mut f = fixture();
+        f.fs.write(Path::new("C:/APP/bin/adminer/adminer.php"), "<?php")
+            .unwrap();
+        f.fs.write(Path::new("C:/APP/bin/phpmyadmin/index.php"), "<?php")
+            .unwrap();
+        prepare(&f.ctx, ADMINER).unwrap();
+        assert!(!f
+            .fs
+            .read("C:/APP/etc/adminer/index.php")
+            .contains("credentials"));
+
+        f.ctx.config.mariadb_root_password = "Secreta_1".into();
+        prepare(&f.ctx, ADMINER).unwrap();
+        prepare(&f.ctx, PHPMYADMIN).unwrap();
+        let adminer = f.fs.read("C:/APP/etc/adminer/index.php");
+        assert!(adminer.contains("function credentials()"));
+        assert!(adminer.contains("isset($_GET['pgsql']) ? '' : 'Secreta_1'"));
+        assert!(adminer.contains(r"constant('Adminer\SERVER')"));
+        let config = f.fs.read("C:/APP/bin/phpmyadmin/config.inc.php");
+        assert!(config.contains("$cfg['Servers'][$i]['password'] = 'Secreta_1';"));
     }
 }

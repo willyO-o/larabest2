@@ -236,7 +236,7 @@ impl ServiceDriver for ApacheDriver {
             },
         )?;
         write_if_changed(fs, &ctx.paths.apache_conf(), &conf)?;
-        render_sites(ctx, &ctx.sites)?;
+        render_sites(ctx, ctx.vhost_sites())?;
         Ok(())
     }
 

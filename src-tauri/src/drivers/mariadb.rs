@@ -1,40 +1,166 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use async_trait::async_trait;
 use minijinja::context;
 
 use super::{force_stop, templates, wait_for_exit, RenderContext, ServiceDriver};
-use crate::domain::{slash, BinaryLayout, Health, ServiceId};
+use crate::domain::{database, slash, BinaryLayout, Health, ServiceId};
 use crate::error::AppError;
 use crate::ports::{write_if_changed, ProcessRunner, ProcessSpec};
 
 const INSTALL_TIMEOUT: Duration = Duration::from_secs(120);
 const ADMIN_TIMEOUT: Duration = Duration::from_secs(5);
+/// Un respaldo grande puede tardar.
+const DUMP_TIMEOUT: Duration = Duration::from_secs(30 * 60);
+const SQL_TIMEOUT: Duration = Duration::from_secs(20);
 
 pub struct MariadbDriver;
 
+/// Nombre anterior de cada programa: las versiones viejas para Windows 7
+/// (10.4) pueden no traer los `mariadb-*`.
+fn legacy_name(name: &str) -> Option<&'static str> {
+    Some(match name {
+        "mariadb" => "mysql",
+        "mariadb-admin" => "mysqladmin",
+        "mariadb-dump" => "mysqldump",
+        "mariadbd" => "mysqld",
+        "mariadb-install-db" => "mysql_install_db",
+        _ => return None,
+    })
+}
+
 fn tool(ctx: &RenderContext, name: &str) -> Result<ProcessSpec, AppError> {
     let dir = ctx.install_dir(ServiceId::Mariadb)?;
-    Ok(ProcessSpec::new(
-        ctx.program(ServiceId::Mariadb, name)?,
-        &dir,
-    ))
+    let mut program = ctx.program(ServiceId::Mariadb, name)?;
+    if !ctx.fs.exists(&program) {
+        if let Some(old) = legacy_name(name) {
+            let old = ctx.program(ServiceId::Mariadb, old)?;
+            if ctx.fs.exists(&old) {
+                program = old;
+            }
+        }
+    }
+    Ok(ProcessSpec::new(program, &dir))
 }
 
 /// Cliente de MariaDB sin leer otros `my.cnf` (por ejemplo el de Homebrew
-/// o un `~/.my.cnf` con contraseña): todo va en la línea de comandos.
+/// o un `~/.my.cnf` con contraseña): todo va en la línea de comandos. Se
+/// conecta a 127.0.0.1 como root; la contraseña, si hay, va en `MYSQL_PWD`
+/// para que no se vea en la lista de procesos.
 fn client(ctx: &RenderContext, name: &str) -> Result<ProcessSpec, AppError> {
-    Ok(tool(ctx, name)?.arg("--no-defaults"))
-}
-
-/// `mariadb-admin` contra 127.0.0.1 como root sin contraseña.
-fn admin(ctx: &RenderContext, command: &str) -> Result<ProcessSpec, AppError> {
-    Ok(client(ctx, "mariadb-admin")?
+    let mut spec = tool(ctx, name)?
+        .arg("--no-defaults")
         .arg("--host=127.0.0.1")
         .arg(format!("--port={}", ctx.config.mariadb_port))
-        .arg("--user=root")
-        .arg(command))
+        .arg("--user=root");
+    if !ctx.config.mariadb_root_password.is_empty() {
+        spec = spec.env("MYSQL_PWD", &ctx.config.mariadb_root_password);
+    }
+    Ok(spec)
+}
+
+/// `mariadb-admin <comando>` como root.
+fn admin(ctx: &RenderContext, command: &str) -> Result<ProcessSpec, AppError> {
+    Ok(client(ctx, "mariadb-admin")?.arg(command))
+}
+
+/// Una o varias sentencias SQL con el cliente `mariadb`, sin encabezados.
+pub fn sql_spec(ctx: &RenderContext, sql: &str) -> Result<ProcessSpec, AppError> {
+    Ok(client(ctx, "mariadb")?
+        .arg("--batch")
+        .arg("--skip-column-names")
+        .arg("-e")
+        .arg(sql))
+}
+
+async fn run_sql(ctx: &RenderContext, sql: &str, what: &str) -> Result<String, AppError> {
+    let out = ctx.runner.run(&sql_spec(ctx, sql)?, SQL_TIMEOUT).await?;
+    if out.success() {
+        Ok(out.stdout)
+    } else {
+        Err(AppError::Process(explain_client_error(what, &out.text())))
+    }
+}
+
+/// "Access denied" quiere decir que la contraseña guardada no es la de
+/// MariaDB (se cambió por fuera de la app).
+fn explain_client_error(what: &str, output: &str) -> String {
+    if output.contains("Access denied") {
+        format!(
+            "{what}: MariaDB rechazó la contraseña de root guardada en la app. Si la cambiaste por fuera, vuelve a ponerla con «Cambiar contraseña de root» o edita mariadbRootPassword en app.json.\n{output}"
+        )
+    } else {
+        format!("{what}: {output}")
+    }
+}
+
+/// Bases de datos de los usuarios (sin las del sistema), en orden.
+pub async fn list_databases(ctx: &RenderContext) -> Result<Vec<String>, AppError> {
+    let out = run_sql(
+        ctx,
+        "SHOW DATABASES;",
+        "No se pudieron leer las bases de datos",
+    )
+    .await?;
+    let mut names: Vec<String> = out
+        .lines()
+        .map(str::trim)
+        .filter(|n| !n.is_empty() && !database::SYSTEM_DATABASES.contains(n))
+        .map(String::from)
+        .collect();
+    names.sort();
+    Ok(names)
+}
+
+/// Cambia la contraseña de root en todas sus variantes de host. Se conecta
+/// con la contraseña guardada (la anterior). `new` ya viene validada.
+pub async fn set_root_password(ctx: &RenderContext, new: &str) -> Result<(), AppError> {
+    database::validate_root_password(new).map_err(AppError::InvalidInput)?;
+    let mut sql = String::new();
+    for host in ["localhost", "127.0.0.1", "::1", "%"] {
+        sql.push_str(&format!(
+            "ALTER USER IF EXISTS 'root'@'{host}' IDENTIFIED BY '{new}'; "
+        ));
+    }
+    sql.push_str("FLUSH PRIVILEGES;");
+    run_sql(ctx, &sql, "No se pudo cambiar la contraseña").await?;
+    Ok(())
+}
+
+/// `mariadb-dump` de una base a un archivo `.sql` (con rutinas, triggers
+/// y eventos, en una transacción para no bloquear las tablas).
+pub fn dump_spec(ctx: &RenderContext, db: &str, file: &Path) -> Result<ProcessSpec, AppError> {
+    if !database::is_safe_database_name(db) {
+        return Err(AppError::InvalidInput(format!(
+            "Nombre de base de datos no válido: {db}"
+        )));
+    }
+    Ok(client(ctx, "mariadb-dump")?
+        .arg("--single-transaction")
+        .arg("--routines")
+        .arg("--triggers")
+        .arg("--events")
+        .arg("--default-character-set=utf8mb4")
+        .arg(format!("--result-file={}", slash(file)))
+        .arg("--databases")
+        .arg(db))
+}
+
+/// Respalda la base en `file`. MariaDB debe estar en marcha.
+pub async fn dump(ctx: &RenderContext, db: &str, file: &Path) -> Result<(), AppError> {
+    let out = ctx
+        .runner
+        .run(&dump_spec(ctx, db, file)?, DUMP_TIMEOUT)
+        .await?;
+    if out.success() && ctx.fs.exists(file) {
+        Ok(())
+    } else {
+        Err(AppError::Process(explain_client_error(
+            &format!("No se pudo respaldar {db}"),
+            &out.text(),
+        )))
+    }
 }
 
 /// `CREATE DATABASE` con el cliente `mariadb`. El nombre debe venir ya
@@ -49,14 +175,9 @@ pub fn create_database_spec(ctx: &RenderContext, db: &str) -> Result<ProcessSpec
             "Nombre de base de datos no válido: {db}"
         )));
     }
-    Ok(client(ctx, "mariadb")?
-        .arg("--host=127.0.0.1")
-        .arg(format!("--port={}", ctx.config.mariadb_port))
-        .arg("--user=root")
-        .arg("-e")
-        .arg(format!(
-            "CREATE DATABASE IF NOT EXISTS `{db}` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
-        )))
+    Ok(client(ctx, "mariadb")?.arg("-e").arg(format!(
+        "CREATE DATABASE IF NOT EXISTS `{db}` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+    )))
 }
 
 /// Crea la base de datos si no existe. MariaDB debe estar en marcha.
@@ -68,9 +189,9 @@ pub async fn create_database(ctx: &RenderContext, db: &str) -> Result<(), AppErr
     if out.success() {
         Ok(())
     } else {
-        Err(AppError::Process(format!(
-            "No se pudo crear la base de datos {db}: {}",
-            out.text()
+        Err(AppError::Process(explain_client_error(
+            &format!("No se pudo crear la base de datos {db}"),
+            &out.text(),
         )))
     }
 }
@@ -411,5 +532,112 @@ mod tests {
             MariadbDriver.health(&f.ctx).await,
             Health::Down("connect failed".into())
         );
+    }
+
+    #[test]
+    fn password_goes_in_the_environment_not_the_arguments() {
+        let mut f = fixture();
+        assert!(admin(&f.ctx, "ping").unwrap().env.is_empty());
+        f.ctx.config.mariadb_root_password = "Secreta_1".into();
+        for spec in [
+            admin(&f.ctx, "ping").unwrap(),
+            create_database_spec(&f.ctx, "blog").unwrap(),
+            sql_spec(&f.ctx, "SELECT 1;").unwrap(),
+            dump_spec(&f.ctx, "blog", Path::new("C:/APP/backups/b.sql")).unwrap(),
+        ] {
+            assert_eq!(
+                spec.env,
+                vec![("MYSQL_PWD".to_string(), "Secreta_1".to_string())]
+            );
+            assert!(
+                !spec.args.iter().any(|a| a.contains("Secreta_1")),
+                "{:?}",
+                spec.args
+            );
+        }
+    }
+
+    #[test]
+    fn old_windows_builds_fall_back_to_mysql_names() {
+        let f = fixture();
+        f.fs.write(
+            &Path::new("C:/APP/bin/mariadb/11.4.5/bin").join(exe("mysqldump")),
+            "",
+        )
+        .unwrap();
+        let spec = dump_spec(&f.ctx, "blog", Path::new("C:/APP/backups/b.sql")).unwrap();
+        assert!(slash(&spec.program).ends_with(&exe("mysqldump")));
+        // Con el nombre nuevo presente se usa ese.
+        f.fs.write(
+            &Path::new("C:/APP/bin/mariadb/11.4.5/bin").join(exe("mariadb-dump")),
+            "",
+        )
+        .unwrap();
+        let spec = dump_spec(&f.ctx, "blog", Path::new("C:/APP/backups/b.sql")).unwrap();
+        assert!(slash(&spec.program).ends_with(&exe("mariadb-dump")));
+    }
+
+    #[tokio::test]
+    async fn lists_only_user_databases() {
+        let f = fixture();
+        f.runner.set_run_output(CommandOutput {
+            code: Some(0),
+            stdout: "information_schema\nwp_blog\nmysql\nperformance_schema\nsys\nlaravel\n".into(),
+            stderr: String::new(),
+        });
+        assert_eq!(
+            list_databases(&f.ctx).await.unwrap(),
+            vec!["laravel", "wp_blog"]
+        );
+        let args = &f.runner.ran()[0].args;
+        assert_eq!(args.last().unwrap(), "SHOW DATABASES;");
+        assert!(args.contains(&"--skip-column-names".to_string()));
+    }
+
+    #[tokio::test]
+    async fn root_password_changes_every_root_host() {
+        let f = fixture();
+        set_root_password(&f.ctx, "Nueva-1").await.unwrap();
+        let sql = f.runner.ran()[0].args.last().unwrap().clone();
+        for host in ["localhost", "127.0.0.1", "::1", "%"] {
+            assert!(
+                sql.contains(&format!(
+                    "ALTER USER IF EXISTS 'root'@'{host}' IDENTIFIED BY 'Nueva-1';"
+                )),
+                "{sql}"
+            );
+        }
+        assert!(sql.ends_with("FLUSH PRIVILEGES;"));
+        assert!(set_root_password(&f.ctx, "a'b").await.is_err());
+    }
+
+    #[tokio::test]
+    async fn wrong_saved_password_is_explained() {
+        let f = fixture();
+        f.runner.set_run_output(CommandOutput {
+            code: Some(1),
+            stdout: String::new(),
+            stderr: "ERROR 1045 (28000): Access denied for user 'root'@'localhost'".into(),
+        });
+        let err = set_root_password(&f.ctx, "x")
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("contraseña de root guardada"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn dump_writes_one_database_to_a_file() {
+        let f = fixture();
+        let file = Path::new("C:/APP/backups/blog-1.sql");
+        // El cliente falso no escribe el archivo: sin él, falla.
+        assert!(dump(&f.ctx, "blog", file).await.is_err());
+        f.fs.write(file, "-- dump").unwrap();
+        dump(&f.ctx, "blog", file).await.unwrap();
+        let args = &f.runner.ran()[1].args;
+        assert!(args.contains(&"--result-file=C:/APP/backups/blog-1.sql".to_string()));
+        assert!(args.contains(&"--single-transaction".to_string()));
+        assert_eq!(&args[args.len() - 2..], ["--databases", "blog"]);
+        assert!(dump_spec(&f.ctx, "a b", file).is_err());
     }
 }

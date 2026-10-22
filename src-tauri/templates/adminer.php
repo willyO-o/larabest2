@@ -1,7 +1,7 @@
 <?php
 // Generado por {{ app_name }}. No editar: se regenera al cambiar www/.
-// Carga Adminer y permite entrar como root sin contraseña: la base de datos
-// solo escucha en 127.0.0.1.
+// Carga Adminer y entra como root con la contraseña de la app (o sin
+// contraseña): la base de datos solo escucha en 127.0.0.1.
 
 function adminer_object()
 {
@@ -17,6 +17,17 @@ function adminer_object()
         {
             return true;
         }
+{% if password %}
+
+        // MariaDB con la contraseña de root de la app; PostgreSQL entra sin
+        // contraseña, como siempre.
+        function credentials()
+        {
+            $server = defined('Adminer\SERVER') ? constant('Adminer\SERVER') : constant('SERVER');
+            $password = isset($_GET['pgsql']) ? '' : '{{ password }}';
+            return array($server, $_GET['username'], $password);
+        }
+{% endif %}
     }
 
     return new LocalAdminer();

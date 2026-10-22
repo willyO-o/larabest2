@@ -23,8 +23,7 @@ pub fn parse_content_length(headers: &str) -> Option<u64> {
                 .then(|| value.trim().parse::<u64>().ok())
                 .flatten()
         })
-        .filter(|n| *n > 0)
-        .last()
+        .rfind(|n| *n > 0)
 }
 
 /// Corre la descarga y, mientras tanto, informa el tamaño de `part`. Al

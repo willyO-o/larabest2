@@ -1165,6 +1165,7 @@ fn choice(ports: crate::domain::PortSettings) -> crate::usecases::ServicesChoice
         web_server: WebServer::Nginx,
         enabled: Vec::new(),
         ports,
+        sites: None,
     }
 }
 
@@ -1793,7 +1794,8 @@ async fn first_run_chooses_apache_or_nginx_where_apache_is_missing() {
 
     // Con app.json ya creado no es la primera vez ni cambia nada.
     let h = Harness::new();
-    h.fs.write(Path::new(&format!("{ROOT}/app.json")), "{}").unwrap();
+    h.fs.write(Path::new(&format!("{ROOT}/app.json")), "{}")
+        .unwrap();
     assert!(!h.core().bootstrap().await.unwrap());
     assert_eq!(h.config.get().web_server, WebServer::Nginx);
 }
@@ -1821,4 +1823,205 @@ async fn downloads_report_bytes_total_and_speed() {
     assert_eq!(downloading[0].total, Some(1000));
     assert_eq!(downloading[1].downloaded, Some(1000));
     assert_eq!(downloading[1].step, "Descargando Adminer");
+}
+
+// ---------------------------------------------------------------- bases de datos
+
+/// MariaDB falso: responde `SHOW DATABASES` y escribe el archivo del
+/// respaldo como haría `mariadb-dump`.
+fn fake_mariadb(h: &Harness, databases: &'static str) {
+    let fs = h.fs.clone();
+    h.runner.on_run(Box::new(move |spec| {
+        if spec.args.last().map(String::as_str) == Some("SHOW DATABASES;") {
+            return Some(crate::ports::CommandOutput {
+                code: Some(0),
+                stdout: databases.into(),
+                stderr: String::new(),
+            });
+        }
+        if let Some(file) = spec
+            .args
+            .iter()
+            .find_map(|a| a.strip_prefix("--result-file="))
+        {
+            fs.write(Path::new(file), "-- respaldo").unwrap();
+        }
+        None
+    }));
+}
+
+#[tokio::test]
+async fn database_actions_need_mariadb_running() {
+    let h = Harness::new();
+    fake_mariadb(&h, "mysql\nblog\n");
+    let core = h.core();
+    let info = core.database_info().await.unwrap();
+    assert!(!info.running && info.databases.is_empty() && !info.has_password);
+    assert_eq!(info.backups_dir, format!("{ROOT}/backups"));
+    for err in [
+        core.create_database("tienda").await.unwrap_err(),
+        core.backup_database("blog", "2026-10-22_1130")
+            .await
+            .unwrap_err(),
+        core.set_root_password("Secreta_1").await.unwrap_err(),
+    ] {
+        assert!(err.to_string().contains("Inicia MariaDB"), "{err}");
+    }
+}
+
+#[tokio::test]
+async fn creates_and_backs_up_databases() {
+    let h = Harness::new();
+    fake_mariadb(&h, "information_schema\nblog\nmysql\n");
+    let core = h.core();
+    core.start(ServiceId::Mariadb).await.unwrap();
+
+    let info = core.database_info().await.unwrap();
+    assert!(info.running);
+    assert_eq!(info.databases, vec!["blog"]);
+
+    assert_eq!(
+        core.create_database("Mi-Tienda").await.unwrap(),
+        "mi_tienda"
+    );
+    let create = h.runner.ran().last().unwrap().args.last().unwrap().clone();
+    assert!(
+        create.contains("CREATE DATABASE IF NOT EXISTS `mi_tienda`"),
+        "{create}"
+    );
+    let err = core.create_database("blog").await.unwrap_err();
+    assert!(err.to_string().contains("Ya existe"));
+    assert!(core.create_database("año").await.is_err());
+
+    let file = core
+        .backup_database("blog", "2026-10-22_1130")
+        .await
+        .unwrap();
+    assert_eq!(file, format!("{ROOT}/backups/blog-2026-10-22_1130.sql"));
+    assert!(h.fs.exists(Path::new(&file)));
+    assert!(core
+        .backup_database("nada", "2026-10-22_1130")
+        .await
+        .is_err());
+    assert!(core.backup_database("blog", "../../x").await.is_err());
+}
+
+#[tokio::test]
+async fn root_password_reaches_every_client() {
+    let h = Harness::new();
+    fake_mariadb(&h, "blog\n");
+    h.fs.write(
+        Path::new(&format!("{ROOT}/bin/phpmyadmin/index.php")),
+        "<?php",
+    )
+    .unwrap();
+    let core = h.core();
+    core.start(ServiceId::Mariadb).await.unwrap();
+
+    assert!(core.set_root_password("con espacio").await.is_err());
+    core.set_root_password("Secreta_1").await.unwrap();
+    assert_eq!(h.config.get().mariadb_root_password, "Secreta_1");
+    // El ALTER USER se hizo sin contraseña (la anterior) y lo siguiente ya
+    // lleva la nueva.
+    let alter = h
+        .runner
+        .ran()
+        .into_iter()
+        .find(|s| s.args.iter().any(|a| a.contains("ALTER USER")))
+        .unwrap();
+    assert!(alter.env.is_empty());
+    core.database_info().await.unwrap();
+    let last = h.runner.ran().last().unwrap().clone();
+    assert_eq!(
+        last.env,
+        vec![("MYSQL_PWD".to_string(), "Secreta_1".to_string())]
+    );
+    let pma = h.fs.read(&format!("{ROOT}/bin/phpmyadmin/config.inc.php"));
+    assert!(pma.contains("['password'] = 'Secreta_1';"));
+    assert!(core.database_info().await.unwrap().has_password);
+}
+
+// ---------------------------------------------------------------- hosts virtuales
+
+#[tokio::test]
+async fn vhosts_can_be_turned_off_and_the_tld_changed() {
+    let h = Harness::new();
+    h.fs.create_dir_all(Path::new(&format!("{ROOT}/www/blog")))
+        .unwrap();
+    let core = h.core();
+    core.sync_sites().await.unwrap();
+    assert!(h
+        .fs
+        .exists(Path::new(&format!("{ROOT}/etc/nginx/sites/blog.conf"))));
+    assert!(h
+        .hosts
+        .entries
+        .lock()
+        .unwrap()
+        .contains(&HostEntry::local("blog.test")));
+
+    // Extensión nueva: vhost, hosts y URL cambian.
+    core.set_site_settings(crate::usecases::SiteSettings {
+        auto_vhosts: true,
+        tld: ".Lab".into(),
+    })
+    .await
+    .unwrap();
+    assert_eq!(h.config.get().tld, "lab");
+    let conf = h.fs.read(&format!("{ROOT}/etc/nginx/sites/blog.conf"));
+    assert!(conf.contains("blog.lab"), "{conf}");
+    let entries = h.hosts.entries.lock().unwrap().clone();
+    assert!(entries.contains(&HostEntry::local("blog.lab")));
+    assert!(!entries.contains(&HostEntry::local("blog.test")));
+    assert_eq!(core.sites().await.unwrap()[0].url, "http://blog.lab/");
+
+    // Sin hosts virtuales: ni vhost ni hosts; se abre en localhost/blog/.
+    core.set_site_settings(crate::usecases::SiteSettings {
+        auto_vhosts: false,
+        tld: "lab".into(),
+    })
+    .await
+    .unwrap();
+    assert!(!h
+        .fs
+        .exists(Path::new(&format!("{ROOT}/etc/nginx/sites/blog.conf"))));
+    assert!(h.hosts.entries.lock().unwrap().is_empty());
+    let sites = core.sites().await.unwrap();
+    assert_eq!(sites[0].url, "http://localhost/blog/");
+    assert!(sites[0].in_hosts, "sin vhosts no se pide el archivo hosts");
+
+    // Extensiones que no sirven: no se guarda nada.
+    let err = core
+        .set_site_settings(crate::usecases::SiteSettings {
+            auto_vhosts: true,
+            tld: "dev".into(),
+        })
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("HTTPS"));
+    assert!(!h.config.get().auto_vhosts);
+}
+
+#[tokio::test]
+async fn services_panel_shows_and_saves_site_settings() {
+    let h = Harness::new();
+    let core = h.core();
+    let settings = core.services_settings().unwrap();
+    assert!(settings.sites.auto_vhosts);
+    assert_eq!(settings.sites.tld, "test");
+
+    let mut choice = choice(settings.ports);
+    choice.sites = Some(crate::usecases::SiteSettings {
+        auto_vhosts: true,
+        tld: "app".into(),
+    });
+    assert!(core.save_services(choice.clone()).await.is_err());
+    choice.sites = Some(crate::usecases::SiteSettings {
+        auto_vhosts: false,
+        tld: "localhost".into(),
+    });
+    core.save_services(choice).await.unwrap();
+    let cfg = h.config.get();
+    assert!(!cfg.auto_vhosts);
+    assert_eq!(cfg.tld, "localhost");
 }

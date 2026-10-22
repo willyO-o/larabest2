@@ -31,6 +31,15 @@ export const useSettingsStore = defineStore('settings', () => {
     await listen<boolean>(EVENTS.settingsSsl, (e) => {
       ssl.value = e.payload
     })
+    // La extensión o los hosts virtuales cambian en Servicios y puertos y
+    // siempre terminan en una sincronización de sitios.
+    await listen(EVENTS.sitesChanged, async () => {
+      try {
+        settings.value = await invoke<Settings>('settings_get')
+      } catch {
+        // Se queda con lo anterior.
+      }
+    })
     appVersion.value = (await attempt(() => getVersion())) ?? ''
     settings.value = (await attempt(() => invoke<Settings>('settings_get'))) ?? null
     if (settings.value) {

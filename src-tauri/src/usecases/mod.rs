@@ -1,6 +1,7 @@
 //! Casos de uso. Los comandos de Tauri solo llaman a estos métodos.
 
 mod create_site;
+mod database;
 mod desktop;
 mod install;
 mod nodejs;
@@ -11,7 +12,10 @@ pub mod sites;
 mod ssl;
 
 pub use create_site::{COMPOSER_URL, WORDPRESS_URL};
-pub use services_settings::{PortBusy, ServiceToggle, ServicesChoice, ServicesSettings};
+pub use database::DatabaseInfo;
+pub use services_settings::{
+    PortBusy, ServiceToggle, ServicesChoice, ServicesSettings, SiteSettings,
+};
 pub use setup::{SetupInfo, SetupManager, SetupPackage};
 
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -57,6 +61,7 @@ pub enum ConfigTarget {
     MariadbUserCnf,
     MariadbData,
     MariadbErrorLog,
+    Backups,
     Ssl,
     PostgresqlConf,
     PostgresqlHba,
@@ -483,6 +488,10 @@ impl Core {
                 })
             }
             ConfigTarget::MariadbErrorLog => log("mariadb-error.log"),
+            ConfigTarget::Backups => {
+                deps.fs.create_dir_all(&paths.backups())?;
+                Ok(paths.backups())
+            }
             ConfigTarget::Ssl => {
                 fs.create_dir_all(&paths.etc_ssl())?;
                 Ok(paths.etc_ssl())
@@ -519,6 +528,20 @@ impl Core {
     }
 
     async fn mark_in_hosts(&self, sites: &mut [Site]) {
+        // Sin hosts virtuales los sitios no van en el archivo hosts.
+        let vhosts = self
+            .supervisor
+            .deps()
+            .config
+            .load()
+            .map(|c| c.auto_vhosts)
+            .unwrap_or(true);
+        if !vhosts {
+            for site in sites {
+                site.in_hosts = true;
+            }
+            return;
+        }
         let present: HashSet<String> = self
             .hosts
             .list()
@@ -541,12 +564,13 @@ impl Core {
         let ctx = self.supervisor.context()?;
         let mut sites = ctx.sites.clone();
         let web = ctx.web();
+        let vhost_sites = ctx.vhost_sites();
         let changed = match web {
-            ServiceId::Apache => apache::render_sites(&ctx, &sites)?,
-            _ => nginx::render_sites(&ctx, &sites)?,
+            ServiceId::Apache => apache::render_sites(&ctx, vhost_sites)?,
+            _ => nginx::render_sites(&ctx, vhost_sites)?,
         };
 
-        let mut wanted: BTreeSet<HostEntry> = sites
+        let mut wanted: BTreeSet<HostEntry> = vhost_sites
             .iter()
             .map(|s| HostEntry::local(s.domain.clone()))
             .collect();

@@ -433,7 +433,7 @@ button:disabled {
   display: grid;
   grid-template-columns: 8px 32px 76px minmax(0, 1fr) 112px auto;
   align-items: center;
-  column-gap: 10px;
+  column-gap: 8px;
   row-gap: 6px;
   min-height: 48px;
   padding: 6px 2px 6px 4px;
@@ -524,7 +524,7 @@ button:disabled {
 }
 
 .service-port {
-  flex: 0 1 auto;
+  flex: none;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -582,7 +582,7 @@ button:disabled {
   align-items: center;
   justify-content: center;
   gap: 6px;
-  width: 96px;
+  width: 90px;
   height: 30px;
   border-radius: 7px;
   border: 1px solid transparent;
@@ -1187,6 +1187,11 @@ button:disabled {
   color: var(--warn);
 }
 
+.sheet-alert.is-ok {
+  background: var(--ok-ground);
+  color: var(--ok);
+}
+
 /* ---------------------------------------------------------------- servicios y puertos */
 
 .svc-table {
@@ -1283,6 +1288,75 @@ button:disabled {
 
 .port-input[data-busy='true']:not([aria-invalid='true']) {
   border-color: var(--warn);
+}
+
+/* Extensión de los dominios: texto, no número. */
+.tld-input {
+  width: 96px;
+  text-align: left;
+}
+
+.port-input:disabled {
+  opacity: 0.6;
+}
+
+/* ---------------------------------------------------------------- bases de datos */
+
+.db-tabs {
+  flex: none;
+}
+
+/* MariaDB detenido: el panel ofrece iniciarlo. */
+.db-off {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 18px 16px;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius-card);
+  color: var(--ink-2);
+  text-align: center;
+}
+
+.db-off > .icon {
+  width: 24px;
+  height: 24px;
+  color: var(--ink-3);
+}
+
+.db-off p {
+  margin: 0;
+  max-width: 44ch;
+}
+
+.db-list-note {
+  margin: -4px 0 0;
+  color: var(--ink-2);
+  overflow-wrap: anywhere;
+}
+
+select.field-input {
+  cursor: pointer;
+}
+
+.db-reveal {
+  align-self: flex-start;
+  margin-top: -6px;
+  color: var(--ink-2);
+}
+
+.db-folder {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-right: auto;
+}
+
+.db-folder .icon {
+  width: 15px;
+  height: 15px;
+  color: var(--ink-2);
 }
 
 /* ---------------------------------------------------------------- asistente */

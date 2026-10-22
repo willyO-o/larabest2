@@ -242,6 +242,12 @@ pub fn build(app: &AppHandle, from_tray: bool) -> tauri::Result<Menu<Wry>> {
         text(app, "adminer:mariadb", "Abrir Adminer")?,
         text(app, "phpmyadmin", "Abrir phpMyAdmin")?,
         sep(app)?,
+        // Se escriben nombres y contraseñas: un panel en la ventana.
+        text(app, "db:create", "Nueva base de datos…")?,
+        text(app, "db:backup", "Respaldar base de datos…")?,
+        text(app, "db:password", "Cambiar contraseña de root…")?,
+        open(app, "backups", "Carpeta de respaldos")?,
+        sep(app)?,
         open(app, "mariadbCnf", "my.cnf generado (solo lectura)")?,
         open(app, "mariadbData", "Carpeta de datos")?,
         open(app, "mariadbErrorLog", "Log de errores")?,
@@ -409,6 +415,15 @@ pub fn build(app: &AppHandle, from_tray: bool) -> tauri::Result<Menu<Wry>> {
         };
         web_servers.push(check(app, &format!("webserver:{key}"), &label, id == web)?);
     }
+    // Hosts virtuales y extensión (se cambia en Servicios y puertos).
+    let sites_settings =
+        core.services_settings()
+            .map(|s| s.sites)
+            .unwrap_or(crate::usecases::SiteSettings {
+                auto_vhosts: true,
+                tld: "test".into(),
+            });
+    let tld = sites_settings.tld.clone();
     let prefs = vec![
         Box::new(submenu(app, "Tema", themes)?) as Item,
         Box::new(submenu(app, "Servidor web", web_servers)?) as Item,
@@ -425,9 +440,16 @@ pub fn build(app: &AppHandle, from_tray: bool) -> tauri::Result<Menu<Wry>> {
         check(
             app,
             "ssl_toggle",
-            "HTTPS para los sitios .test",
+            &format!("HTTPS para los sitios .{tld}"),
             core.ssl_enabled(),
         )?,
+        check(
+            app,
+            "vhosts_toggle",
+            &format!("Hosts virtuales automáticos (<carpeta>.{tld})"),
+            sites_settings.auto_vhosts,
+        )?,
+        text(app, "sites_panel", "Extensión de los dominios…")?,
         open(app, "ssl", "Carpeta de certificados")?,
         sep(app)?,
         text(app, "choose_root", "Cambiar carpeta raíz…")?,
@@ -584,7 +606,17 @@ async fn run(app: &AppHandle, id: &str) -> Result<(), AppError> {
         let _ = app.emit("ui:setup", ());
         return Ok(());
     }
-    if id == "services_panel" {
+    if let Some(mode) = id.strip_prefix("db:") {
+        tray::show_main(app);
+        let _ = app.emit("ui:database", mode);
+        return Ok(());
+    }
+    if id == "vhosts_toggle" {
+        let mut sites = core.services_settings()?.sites;
+        sites.auto_vhosts = !sites.auto_vhosts;
+        return core.set_site_settings(sites).await;
+    }
+    if id == "services_panel" || id == "sites_panel" {
         tray::show_main(app);
         let _ = app.emit("ui:services", ());
         return Ok(());

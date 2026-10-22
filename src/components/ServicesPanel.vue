@@ -4,6 +4,7 @@ import AppIcon from './AppIcon.vue'
 import { useServicesPanelStore } from '../stores/servicesPanel'
 import { SERVICE_LABEL, useServicesStore } from '../stores/services'
 import { useSitesStore } from '../stores/sites'
+import { tldProblem } from '../lib/tld'
 import type { PortSettings, ServiceId, WebServer } from '../types/ipc'
 
 const panel = useServicesPanelStore()
@@ -87,6 +88,23 @@ const text = reactive<Record<PortKey, string>>({
 
 const phpCount = computed(() => panel.current?.phpPortCount ?? 1)
 
+/** Hosts virtuales automáticos y extensión de los dominios. */
+const autoVhosts = ref(true)
+const tld = ref('test')
+const cleanTld = computed(() => tld.value.trim().replace(/^\.+/, '').toLowerCase())
+const tldError = computed(() => (autoVhosts.value ? tldProblem(tld.value) : null))
+
+/** Cómo queda un proyecto de ejemplo con lo elegido. */
+const siteExample = computed(() =>
+  autoVhosts.value ? `www/blog → blog.${cleanTld.value || 'test'}` : 'www/blog → localhost/blog/',
+)
+
+/** Cambiar la extensión o los vhosts toca el archivo hosts (pide permiso). */
+const sitesChanged = computed(() => {
+  const saved = panel.current?.sites
+  return !!saved && (saved.autoVhosts !== autoVhosts.value || saved.tld !== cleanTld.value)
+})
+
 function installed(id: ServiceId) {
   return !!services.byId[id]?.version
 }
@@ -100,6 +118,8 @@ function load() {
   const current = panel.current
   if (!current) return
   webServer.value = current.webServer
+  autoVhosts.value = current.sites.autoVhosts
+  tld.value = current.sites.tld
   for (const key of Object.keys(text) as PortKey[]) text[key] = String(current.ports[key])
   for (const row of ROWS) {
     if (row.toggle) enabled[row.id] = services.byId[row.id]?.enabled ?? false
@@ -158,10 +178,10 @@ const problems = computed(() => {
   return out
 })
 
-const firstProblem = computed(() => Object.values(problems.value)[0] ?? null)
+const firstProblem = computed(() => Object.values(problems.value)[0] ?? tldError.value)
 
 const ports = computed<PortSettings | null>(() => {
-  if (firstProblem.value) return null
+  if (Object.keys(problems.value).length) return null
   const out = {} as PortSettings
   for (const key of Object.keys(text) as PortKey[]) out[key] = parse(text[key])!
   return out
@@ -219,7 +239,7 @@ function phpRange() {
 }
 
 function submit() {
-  if (!ports.value || panel.saving) return
+  if (!ports.value || tldError.value || panel.saving) return
   panel.save({
     webServer: webServer.value,
     enabled: ROWS.filter((r) => r.toggle).map((r) => ({
@@ -227,6 +247,12 @@ function submit() {
       enabled: !!enabled[r.id],
     })),
     ports: ports.value,
+    // Con los vhosts apagados se guarda la extensión anterior si la
+    // escrita no sirve: solo importa al volver a encenderlos.
+    sites: {
+      autoVhosts: autoVhosts.value,
+      tld: tldProblem(tld.value) ? (panel.current?.sites.tld ?? 'test') : cleanTld.value,
+    },
   })
 }
 
@@ -324,6 +350,30 @@ function onCancel(e: Event) {
             </label>
           </div>
         </div>
+
+        <!-- Como Laragon: un dominio por carpeta de www y su extensión. -->
+        <div class="svc-row" :data-off="!autoVhosts">
+          <label class="svc-name svc-check" title="Un dominio por cada carpeta de www">
+            <input v-model="autoVhosts" type="checkbox" />
+            <span>Hosts virtuales</span>
+          </label>
+          <span class="svc-detail svc-version">{{ siteExample }}</span>
+          <div class="svc-ports">
+            <label class="port">
+              <span class="port-caption">Extensión</span>
+              <input
+                v-model="tld"
+                class="field-input port-input tld-input"
+                maxlength="24"
+                spellcheck="false"
+                autocapitalize="off"
+                aria-label="Extensión de los dominios"
+                :disabled="!autoVhosts"
+                :aria-invalid="!!tldError"
+              />
+            </label>
+          </div>
+        </div>
       </div>
 
       <p v-if="panel.error" class="sheet-alert is-error" role="alert">{{ panel.error }}</p>
@@ -335,11 +385,19 @@ function onCancel(e: Event) {
       </p>
 
       <footer class="sheet-foot">
-        <span class="sheet-note">Los servicios en marcha se reinician solos.</span>
+        <span class="sheet-note">{{
+          sitesChanged
+            ? 'Se actualizará el archivo hosts: el sistema pedirá permiso.'
+            : 'Los servicios en marcha se reinician solos.'
+        }}</span>
         <button type="button" class="sheet-btn" :disabled="panel.saving" @click="panel.close()">
           Cancelar
         </button>
-        <button type="submit" class="sheet-btn sheet-btn-main" :disabled="!ports || panel.saving">
+        <button
+          type="submit"
+          class="sheet-btn sheet-btn-main"
+          :disabled="!ports || !!tldError || panel.saving"
+        >
           {{ panel.saving ? 'Guardando…' : 'Guardar' }}
         </button>
       </footer>

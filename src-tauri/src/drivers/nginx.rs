@@ -133,7 +133,7 @@ impl ServiceDriver for NginxDriver {
             },
         )?;
         write_if_changed(fs, &ctx.paths.nginx_conf(), &conf)?;
-        render_sites(ctx, &ctx.sites)?;
+        render_sites(ctx, ctx.vhost_sites())?;
         Ok(())
     }
 

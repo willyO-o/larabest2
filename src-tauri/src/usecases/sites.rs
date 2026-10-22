@@ -15,6 +15,29 @@ pub fn site_url(cfg: &AppConfig, domain: &str) -> String {
     }
 }
 
+/// Sin hosts virtuales: la carpeta dentro de `http://localhost/` (y su
+/// `public/` si la tiene, como Laravel). Siempre por HTTP: el servidor de
+/// `localhost` no tiene certificado.
+pub fn localhost_url(cfg: &AppConfig, name: &str, public: bool) -> String {
+    let host = if cfg.http_port == 80 {
+        "localhost".to_string()
+    } else {
+        format!("localhost:{}", cfg.http_port)
+    };
+    let tail = if public { "public/" } else { "" };
+    format!("http://{host}/{name}/{tail}")
+}
+
+/// URL de un proyecto de `www/`: su dominio `<carpeta>.<tld>` o, sin hosts
+/// virtuales, su carpeta en `localhost`.
+pub fn project_url(cfg: &AppConfig, name: &str, public: bool) -> String {
+    if cfg.auto_vhosts {
+        site_url(cfg, &format!("{}.{}", name.to_ascii_lowercase(), cfg.tld))
+    } else {
+        localhost_url(cfg, name, public)
+    }
+}
+
 /// Cada subcarpeta válida de `www/` es un sitio. Las que no sirven como
 /// dominio (espacios, puntos, guiones bajos) se ignoran.
 pub fn scan_sites(fs: &dyn FileStore, paths: &Paths, cfg: &AppConfig) -> Vec<Site> {
@@ -27,20 +50,18 @@ pub fn scan_sites(fs: &dyn FileStore, paths: &Paths, cfg: &AppConfig) -> Vec<Sit
         .map(|name| {
             let dir = www.join(&name);
             let public = dir.join("public");
-            let document_root = if fs.exists(&public) {
-                public
-            } else {
-                dir.clone()
-            };
+            let has_public = fs.exists(&public);
+            let document_root = if has_public { public } else { dir.clone() };
             let domain = format!("{}.{}", name.to_ascii_lowercase(), cfg.tld);
-            let url = site_url(cfg, &domain);
+            let url = project_url(cfg, &name, has_public);
             Site {
                 name,
                 domain,
                 url,
                 path: slash(&dir),
                 document_root: slash(&document_root),
-                in_hosts: false,
+                // Sin hosts virtuales no hace falta el archivo hosts.
+                in_hosts: !cfg.auto_vhosts,
             }
         })
         .collect()
@@ -94,5 +115,32 @@ mod tests {
         };
         let sites = scan_sites(&fs, &Paths::new("C:/APP"), &cfg);
         assert_eq!(sites[0].url, "http://blog.test:8080/");
+    }
+
+    #[test]
+    fn without_vhosts_sites_open_under_localhost() {
+        let fs = FakeFs::default();
+        fs.create_dir_all(Path::new("C:/APP/www/laravel/public"))
+            .unwrap();
+        fs.create_dir_all(Path::new("C:/APP/www/Blog")).unwrap();
+        let mut cfg = AppConfig {
+            auto_vhosts: false,
+            ssl: true,
+            ..AppConfig::default()
+        };
+        let sites = scan_sites(&fs, &Paths::new("C:/APP"), &cfg);
+        assert_eq!(sites[0].url, "http://localhost/Blog/");
+        assert_eq!(sites[1].url, "http://localhost/laravel/public/");
+        assert!(sites.iter().all(|s| s.in_hosts));
+
+        cfg.http_port = 8080;
+        assert_eq!(
+            project_url(&cfg, "blog", false),
+            "http://localhost:8080/blog/"
+        );
+        cfg.auto_vhosts = true;
+        cfg.tld = "lab".into();
+        cfg.ssl = false;
+        assert_eq!(project_url(&cfg, "Blog", false), "http://blog.lab:8080/");
     }
 }

@@ -182,6 +182,13 @@ pub struct AppConfig {
     pub node_version: Option<String>,
     /// El asistente "Preparar LARABEST" ya se terminó u omitió.
     pub setup_done: bool,
+    /// Un dominio `<carpeta>.<tld>` por cada carpeta de `www/` (hosts
+    /// virtuales). Sin ellos los sitios se abren en `localhost/<carpeta>/`.
+    pub auto_vhosts: bool,
+    /// Contraseña de root de MariaDB que puso el usuario (vacía: sin
+    /// contraseña). La usan la app, Adminer, phpMyAdmin, HeidiSQL y los
+    /// sitios nuevos. Solo escucha en 127.0.0.1.
+    pub mariadb_root_password: String,
 }
 
 impl Default for AppConfig {
@@ -209,6 +216,8 @@ impl Default for AppConfig {
             user_path: false,
             node_version: None,
             setup_done: false,
+            auto_vhosts: true,
+            mariadb_root_password: String::new(),
         }
     }
 }

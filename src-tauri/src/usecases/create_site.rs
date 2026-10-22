@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use minijinja::context;
 
-use super::sites::site_url;
+use super::sites::project_url;
 use super::Core;
 use crate::domain::{
     database_name, is_valid_site_name, set_env, slash, ProgressState, ServiceId, ServiceState,
@@ -213,6 +213,7 @@ impl Core {
                 app_name => deps.app_name,
                 db_name => db,
                 db_port => ctx.config.mariadb_port,
+                db_password => ctx.config.mariadb_root_password,
                 keys => keys,
             },
         )?;
@@ -270,10 +271,8 @@ impl Core {
             .fs
             .read_to_string(&env_path)
             .or_else(|_| deps.fs.read_to_string(&dir.join(".env.example")))?;
-        let url = site_url(
-            &ctx.config,
-            &format!("{}.{}", name.to_ascii_lowercase(), ctx.config.tld),
-        );
+        // Laravel tiene public/: sin hosts virtuales la URL termina ahí.
+        let url = project_url(&ctx.config, name, true);
         let port = ctx.config.mariadb_port.to_string();
         let mut values: Vec<(&str, String)> = vec![
             ("APP_URL", url.trim_end_matches('/').to_string()),
@@ -282,7 +281,7 @@ impl Core {
             ("DB_PORT", port),
             ("DB_DATABASE", db.clone()),
             ("DB_USERNAME", "root".into()),
-            ("DB_PASSWORD", String::new()),
+            ("DB_PASSWORD", ctx.config.mariadb_root_password.clone()),
         ];
         // Con Mailpit, el correo de Laravel se ve en su bandeja.
         if ctx.is_enabled(ServiceId::Mailpit) {

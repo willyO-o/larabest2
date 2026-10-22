@@ -120,16 +120,16 @@ components:
 
 ## Marca
 
-El logo (`src-tauri/icons/logo.svg`, del que salen todos los íconos con `npx tauri icon`) es un servidor isométrico de tres bandejas en azul marino con `</>` en azul eléctrico, dentro de un anillo azul sobre disco blanco. En la banda va a 26 px con una sombra mínima, seguido de la palabra en dos tonos: «Lara» en blanco y «Best» en `#b4d2ff`, el azul claro que pasa 4,5:1 sobre los seis colores de la banda. El nombre técnico de la app (ventana, instalador) sigue siendo LARABEST.
+El logo (`src-tauri/icons/logo.svg`, del que salen todos los íconos con `npx tauri icon`) es un servidor isométrico de tres bandejas en azul marino con `</>` en azul eléctrico, dentro de un anillo azul sobre disco blanco. En la banda va a 28 px con una sombra mínima, seguido de la palabra en dos tonos: «Lara» en blanco y «Best» en `#b4d2ff`, el azul claro que pasa 4,5:1 sobre la banda. El nombre técnico de la app (ventana, instalador) sigue siendo LARABEST.
 
 - **Azul eléctrico** (`accent`): la acción principal, el foco, la selección y los enlaces. En oscuro se aclara (`#6ea6ff`) con texto oscuro encima.
-- **Azul marino** (`band-stopped`, `ink`): la banda en reposo y el texto. Los neutros llevan un leve tinte azul frío; el oscuro es azul marino profundo, no gris.
+- **Azul marino** (`band-stopped`, `ink`): la banda y el texto. Los neutros llevan un leve tinte azul frío; el oscuro es azul marino profundo, no gris.
 - Los colores de estado (verde, ámbar, rojo) no son marca: son información y no cambian.
 - Profundidad con desplazamiento y desenfoque (`--shadow`, azul marino translúcido). El botón principal suma una luz arriba y una sombra azul debajo.
 
 ## Overview
 
-LARABEST es una herramienta de trabajo que queda abierta junto al editor y el navegador. Toma de Laragon la estructura que los pasantes ya conocen: una ventana compacta, una fila de texto por servicio con sus botones Recargar y Detener, cinco botones grandes abajo y un menú contextual nativo en árbol con clic derecho, el botón Menú y la bandeja. La identidad es propia: nombre, marca de tres bandejas apiladas, índigo como acento y una banda superior que cambia de color con el estado de toda la pila, para leerla de reojo aunque la ventana esté medio tapada.
+LARABEST es una herramienta de trabajo que queda abierta junto al editor y el navegador. Toma de Laragon la estructura que los pasantes ya conocen: una ventana compacta, una fila por servicio con su distintivo, su estado en cápsula y su botón Iniciar o Detener, cinco botones grandes abajo y un menú contextual nativo en árbol con clic derecho, el botón Menú y la bandeja. La identidad es propia: nombre, marca de tres bandejas apiladas, azul eléctrico como acento y una banda superior azul marino con una cápsula que resume el estado de toda la pila con su luz de color, para leerla de reojo aunque la ventana esté medio tapada.
 
 Modo Operate: lo familiar es una virtud. Una sola familia tipográfica del sistema, cifras tabulares, filas densas sin tarjetas y color que siempre hace un trabajo (acción principal o estado).
 
@@ -144,9 +144,9 @@ Modo Operate: lo familiar es una virtud. Una sola familia tipográfica del siste
 - Tema oscuro: los mismos roles con prefijo `dark-`; el LED de la marca usa `dark-ok`, `led-busy` y `dark-bad` sobre la banda en ambos temas porque se leen mejor sobre fondos oscuros.
 
 ### Named Rules
-- **Dos temas, una banda.** Los neutros y los colores de estado tienen versión clara y oscura; la banda conserva sus cinco colores en ambos temas porque comunica estado, no superficie.
-- **La banda es el semáforo.** La banda superior usa un color por estado de la pila: grafito detenido, ámbar iniciando o deteniendo, azul petróleo con parte en marcha, verde todo en marcha y rojo con un fallo. El texto siempre es blanco. No se usa para nada más.
-- **El estado nunca va solo en color.** Cada punto va acompañado de su palabra (en marcha, detenido, error) y la banda de su resumen ("Todo en marcha", "PHP con error").
+- **Dos temas, una banda.** Los neutros y los colores de estado tienen versión clara y oscura; la banda es azul marino en ambos temas y sus luces (`led-*`) son las mismas.
+- **La cápsula de la banda es el semáforo.** El resumen de la banda lleva una luz por estado de la pila: gris detenido, ámbar (late) iniciando o deteniendo, azul con parte en marcha, verde todo en marcha y rojo con un fallo. Cada fila repite la idea con su punto y su cápsula de estado (Ejecutándose verde, Detenido gris, Iniciando… ámbar, Error rojo).
+- **El estado nunca va solo en color.** Cada punto va acompañado de su palabra (Ejecutándose, Detenido, Error) y la banda de su resumen ("Todo en marcha", "PHP con error").
 - **El rojo explica.** El fondo `bad-ground` solo aparece con el detalle de un fallo o el error de una acción, y siempre lleva la causa y cómo resolverla.
 
 ## Typography
@@ -162,7 +162,7 @@ Segoe UI Variable (la del sistema en Windows 10/11) en todos los textos; cifras 
 
 ## Layout
 
-Ventana fija de 700×380 (crece en alto con los servicios opcionales y los paneles). De arriba abajo: banda (46px), lista de servicios (flexible; rejilla de 6 columnas: punto, nombre, versión —en PHP con su compilación, NTS · x64 · VS17—, puerto, estado, acciones), error de acción si existe, fila de cinco botones (el primero 1.25 veces más ancho) y línea de estado (26px). Márgenes laterales de 12 a 16px, separación de 6 a 8px entre controles.
+Ventana fija de 700×380 (crece en alto con los servicios opcionales y los paneles). De arriba abajo: banda (48px), tarjeta blanca de servicios (borde `line`, radio 10px; filas de 48px en rejilla de 6 columnas: punto, distintivo del servicio, nombre, «versión · puerto» —en PHP con su compilación, NTS · x64 · VS17, que se recorta antes que el puerto—, cápsula de estado y acciones: Iniciar azul relleno o Detener suave, más Recargar como ícono), error de acción si existe, tarjeta `panel` con los cinco botones grandes (ícono arriba, texto abajo; el primero relleno de acento y 1.15 veces más ancho) y línea de estado (32px) pegada abajo. Márgenes de 12px alrededor de las tarjetas. Márgenes laterales de 12 a 16px, separación de 6 a 8px entre controles.
 
 ## Elevation & Depth
 
@@ -184,7 +184,7 @@ Radios pequeños y constantes: 6px en botones de fila y detalles, 8px en los bot
 - **Menú contextual nativo** en árbol: el mismo menú en clic derecho, botón Menú y bandeja (www, Nginx, PHP, MariaDB, Logs, Herramientas, Preferencias). Usa los controles del sistema: marcas de verificación para la versión activa, las extensiones y las preferencias.
 
 ### Banda de estado (componente propio)
-Marca, nombre, versión, resumen del estado alineado a la derecha, selector de tema y botón Menú translúcido. El LED de la marca repite el color del estado.
+Siempre azul marino. Marca, nombre, versión, cápsula con la luz y el resumen del estado alineada a la derecha, tres botones de tema y el engranaje (cuadrados de 30px translúcidos), un divisor y el botón Menú.
 
 ### Hoja "Nuevo sitio"
 Se abre bajo la banda (la banda sigue visible y viva) como `<dialog>` nativo: Esc cierra salvo mientras se crea el sitio. Formulario: campo con vista previa de la URL (`www/<nombre> → https://<nombre>.test`) que pasa a rojo con el motivo si el nombre no sirve; control segmentado de tres plantillas con una línea que explica la elegida; Cancelar y Crear sitio abajo a la derecha. Durante la creación: lista de pasos con marca (punto ámbar que late = en curso, check verde = hecho, cruz roja = falló), aviso ámbar si terminó con advertencias y alerta roja con la causa si falló.

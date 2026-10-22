@@ -349,6 +349,11 @@ pub fn run() {
             commands::settings_set_theme,
             commands::app_ready,
             commands::window_fit,
+            commands::db_info,
+            commands::db_create,
+            commands::db_backup,
+            commands::db_set_root_password,
+            commands::db_open_backups,
         ])
         .build(tauri::generate_context!())
         .expect("error al iniciar la aplicación");

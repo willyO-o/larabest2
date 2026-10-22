@@ -63,11 +63,14 @@ impl Core {
         if !cfg.ssl {
             return Ok(());
         }
-        let mut domains: Vec<String> =
+        let mut domains: Vec<String> = if cfg.auto_vhosts {
             super::sites::scan_sites(deps.fs.as_ref(), &deps.paths, &cfg)
                 .into_iter()
                 .map(|s| s.domain)
-                .collect();
+                .collect()
+        } else {
+            Vec::new()
+        };
         for tool in tools::ALL {
             if tools::installed(deps.fs.as_ref(), &deps.paths, tool) {
                 domains.push(format!("{tool}.{}", cfg.tld));

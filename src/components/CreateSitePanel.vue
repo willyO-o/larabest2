@@ -40,9 +40,13 @@ const nameError = computed(() => {
   return null
 })
 
-const url = computed(
-  () => `${settings.ssl ? 'https' : 'http'}://${(name.value || 'mi-sitio').toLowerCase()}.test`,
-)
+/** Como quedará: `https://blog.test` o, sin hosts virtuales, `localhost/blog/`. */
+const url = computed(() => {
+  const folder = name.value || 'mi-sitio'
+  const s = settings.settings
+  if (s && !s.autoVhosts) return `http://localhost/${folder}/`
+  return `${settings.ssl ? 'https' : 'http'}://${folder.toLowerCase()}.${s?.tld ?? 'test'}`
+})
 const currentPreset = computed(() => PRESETS.find((p) => p.value === preset.value)!)
 const canCreate = computed(() => !!name.value && !nameError.value && !sites.creating)
 
