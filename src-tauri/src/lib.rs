@@ -253,9 +253,20 @@ fn setup(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
 
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
-        if let Err(e) = core.bootstrap().await {
-            tray::show_error(&app, &e.to_string());
-            return;
+        let first_run = match core.bootstrap().await {
+            Ok(first_run) => first_run,
+            Err(e) => {
+                tray::show_error(&app, &e.to_string());
+                return;
+            }
+        };
+        // Primera vez: aviso de que faltan los servicios; el asistente
+        // "Preparar LARABEST" se abre solo en la ventana.
+        if first_run {
+            tray::show_info(
+                &app,
+                "Bienvenido a LaraBest. Antes de empezar hay que descargar e instalar los servicios (servidor web, PHP y base de datos). Ahora se abre el asistente Preparar LARABEST: revisa lo marcado y pulsa Instalar.",
+            );
         }
         // NTS/TS, arquitectura y compilador de cada PHP, para el menú.
         core.load_php_builds().await;

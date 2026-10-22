@@ -790,6 +790,19 @@ impl crate::ports::Downloader for FakeDownloader {
             &body.unwrap_or_else(|| format!("descargado de {url}")),
         )
     }
+
+    /// Informa la mitad y luego el total, como haría una descarga real.
+    async fn download_with_progress(
+        &self,
+        url: &str,
+        dest: &Path,
+        on_progress: &(dyn Fn(u64, Option<u64>) + Send + Sync),
+    ) -> Result<(), AppError> {
+        on_progress(500, Some(1000));
+        self.download(url, dest).await?;
+        on_progress(1000, Some(1000));
+        Ok(())
+    }
 }
 
 /// "Extrae" un WordPress mínimo (o nada si `broken`).

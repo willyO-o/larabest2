@@ -49,6 +49,20 @@ impl Core {
         let packages = catalog::packages_for(self.os, self.supervisor.deps().layout);
         // Lo recomendado: la versión más nueva de PHP y MariaDB que corre
         // aquí (la primera del menú), Nginx y las herramientas de uso diario.
+        // Servidor web: Apache donde está disponible; si no (Windows 7), Nginx.
+        let web = if packages.iter().any(|p| {
+            matches!(
+                p.kind,
+                PackageKind::Service {
+                    service: ServiceId::Apache,
+                    ..
+                }
+            )
+        }) {
+            ServiceId::Apache
+        } else {
+            ServiceId::Nginx
+        };
         let mut seen: HashSet<ServiceId> = HashSet::new();
         let mut node_seen = false;
         let list = packages
@@ -56,10 +70,8 @@ impl Core {
             .map(|p| {
                 let recommended = match p.kind {
                     PackageKind::Service { service, .. } => {
-                        matches!(
-                            service,
-                            ServiceId::Php | ServiceId::Mariadb | ServiceId::Nginx
-                        ) && seen.insert(service)
+                        (matches!(service, ServiceId::Php | ServiceId::Mariadb) || service == web)
+                            && seen.insert(service)
                     }
                     PackageKind::Tool(Tool::Nodejs) => !std::mem::replace(&mut node_seen, true),
                     PackageKind::Tool(Tool::Phpmyadmin) => false,

@@ -5,12 +5,14 @@ use std::time::Duration;
 use async_trait::async_trait;
 
 use super::system32;
+use crate::adapters::shared::download_progress::{parse_content_length, track_part};
 use crate::domain::catalog::urls::accept_header;
 use crate::domain::slash;
 use crate::error::AppError;
 use crate::ports::{Downloader, ProcessRunner, ProcessSpec};
 
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(15 * 60);
+const HEAD_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// Descarga con `curl.exe` (incluido desde Windows 10 1803) y, si falla o no
 /// existe (Windows 7 y 8), con PowerShell, que usa el proxy configurado en
@@ -22,6 +24,23 @@ pub struct WindowsDownloader {
 impl WindowsDownloader {
     pub fn new(runner: Arc<dyn ProcessRunner>) -> Self {
         WindowsDownloader { runner }
+    }
+
+    /// Tamaño del archivo según las cabeceras (`curl -sIL`). Sin curl
+    /// (Windows 7 y 8) o si el servidor no lo dice, `None`: se muestra lo
+    /// descargado sin porcentaje.
+    async fn content_length(&self, url: &str) -> Option<u64> {
+        let mut spec = ProcessSpec::new(system32().join("curl.exe"), system32())
+            .arg("-sSIL")
+            .arg("--max-time")
+            .arg("15");
+        if let Some(accept) = accept_header(url) {
+            spec = spec.arg("-H").arg(format!("Accept: {accept}"));
+        }
+        let out = self.runner.run(&spec.arg(url), HEAD_TIMEOUT).await.ok()?;
+        out.success()
+            .then(|| parse_content_length(&out.stdout))
+            .flatten()
     }
 
     async fn try_run(&self, spec: &ProcessSpec) -> Result<(), String> {
@@ -64,6 +83,17 @@ fn powershell_script(url: &str, out: &str, accept: Option<&str>) -> String {
 
 #[async_trait]
 impl Downloader for WindowsDownloader {
+    async fn download_with_progress(
+        &self,
+        url: &str,
+        dest: &Path,
+        on_progress: &(dyn Fn(u64, Option<u64>) + Send + Sync),
+    ) -> Result<(), AppError> {
+        let total = self.content_length(url).await;
+        let part = dest.with_extension("part");
+        track_part(self.download(url, dest), &part, dest, total, on_progress).await
+    }
+
     async fn download(&self, url: &str, dest: &Path) -> Result<(), AppError> {
         if let Some(parent) = dest.parent() {
             std::fs::create_dir_all(parent)

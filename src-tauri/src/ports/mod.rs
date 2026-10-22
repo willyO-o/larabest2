@@ -201,6 +201,18 @@ pub trait EventSink: Send + Sync {
 pub trait Downloader: Send + Sync {
     /// Descarga `url` en `dest`, reemplazándolo. Crea la carpeta si falta.
     async fn download(&self, url: &str, dest: &Path) -> Result<(), AppError>;
+
+    /// Como `download`, informando cada poco los bytes descargados y el
+    /// total si el servidor lo dice (para el porcentaje y la velocidad).
+    async fn download_with_progress(
+        &self,
+        url: &str,
+        dest: &Path,
+        on_progress: &(dyn Fn(u64, Option<u64>) + Send + Sync),
+    ) -> Result<(), AppError> {
+        let _ = on_progress;
+        self.download(url, dest).await
+    }
 }
 
 pub trait ArchiveExtractor: Send + Sync {

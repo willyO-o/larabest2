@@ -58,6 +58,12 @@ export interface InstallProgress {
   step: string
   state: ProgressState
   detail?: string
+  /** Durante una descarga: bytes descargados... */
+  downloaded?: number
+  /** ...del total, si el servidor lo informa... */
+  total?: number
+  /** ...y la velocidad en bytes por segundo. */
+  speed?: number
 }
 
 /** Cómo está compilado un PHP (`php_build_info`, `PhpBuild` en Rust). */

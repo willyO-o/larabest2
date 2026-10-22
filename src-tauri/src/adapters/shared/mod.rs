@@ -4,6 +4,7 @@ pub mod archive;
 pub mod binaries;
 pub mod ca;
 pub mod config;
+pub mod download_progress;
 pub mod fs;
 pub mod hosts_file;
 pub mod netstat;

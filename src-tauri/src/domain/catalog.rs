@@ -20,6 +20,15 @@ pub struct InstallProgress {
     pub state: ProgressState,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub detail: Option<String>,
+    /// Durante una descarga: bytes ya descargados...
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub downloaded: Option<u64>,
+    /// ...del total, si el servidor lo informa...
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total: Option<u64>,
+    /// ...y la velocidad en bytes por segundo.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub speed: Option<u64>,
 }
 
 /// Un paquete del menú Agregar.
@@ -105,8 +114,10 @@ impl Package {
 pub const PACKAGES: [Package; 15] = [
     service("php-8.4", "PHP 8.4", ServiceId::Php, "8.4"),
     service("php-8.3", "PHP 8.3", ServiceId::Php, "8.3"),
-    service("nginx", "Nginx", ServiceId::Nginx, ""),
+    // Apache primero: es el servidor web por defecto de las instalaciones
+    // nuevas (los .htaccess de WordPress y Laravel funcionan tal cual).
     service("apache", "Apache", ServiceId::Apache, ""),
+    service("nginx", "Nginx", ServiceId::Nginx, ""),
     service("mariadb-11.4", "MariaDB 11.4", ServiceId::Mariadb, "11.4"),
     service(
         "postgresql-17",
@@ -165,8 +176,8 @@ pub fn packages_for(os: OsInfo, layout: BinaryLayout) -> Vec<Package> {
             "php-8.4",
             "php-8.3",
             "php-8.2",
-            "nginx",
             "apache",
+            "nginx",
             "mariadb-10.6",
             "heidisql",
             "adminer",

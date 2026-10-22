@@ -134,9 +134,25 @@ impl Core {
         }
     }
 
-    /// Crea la estructura de carpetas y limpia procesos huérfanos.
-    pub async fn bootstrap(&self) -> Result<(), AppError> {
+    /// Crea la estructura de carpetas y limpia procesos huérfanos. Devuelve
+    /// `true` la primera vez (no había `app.json`): entonces crea la
+    /// configuración con Apache como servidor web, o Nginx donde Apache no
+    /// está disponible (Windows 7).
+    pub async fn bootstrap(&self) -> Result<bool, AppError> {
         let deps = self.supervisor.deps();
+        let first_run = !deps.fs.exists(&deps.paths.app_json());
+        if first_run {
+            let mut cfg = deps.config.load()?;
+            let apache = crate::domain::catalog::packages_for(self.os, deps.layout)
+                .iter()
+                .any(|p| p.id == "apache");
+            cfg.web_server = if apache {
+                WebServer::Apache
+            } else {
+                WebServer::Nginx
+            };
+            deps.config.save(&cfg)?;
+        }
         // Con Homebrew los programas no van en bin/<servicio>.
         let service_bins: Vec<PathBuf> = ServiceId::ALL
             .iter()
@@ -149,6 +165,25 @@ impl Core {
             deps.fs.create_dir_all(&dir)?;
         }
         self.supervisor.cleanup_orphans().await;
+        Ok(first_run)
+    }
+
+    /// Si el servidor web elegido no está instalado y el otro sí, usa el
+    /// instalado (por ejemplo, Nginx en Windows 7, donde no hay Apache).
+    pub(crate) fn adopt_installed_web_server(&self) -> Result<(), AppError> {
+        let deps = self.supervisor.deps();
+        let mut cfg = deps.config.load()?;
+        let (current, other) = match cfg.web_server {
+            WebServer::Apache => (ServiceId::Apache, WebServer::Nginx),
+            WebServer::Nginx => (ServiceId::Nginx, WebServer::Apache),
+        };
+        if self.versions(current)?.is_empty()
+            && !self.versions(other.service())?.is_empty()
+            && !self.supervisor.state(current).is_active()
+        {
+            cfg.web_server = other;
+            deps.config.save(&cfg)?;
+        }
         Ok(())
     }
 

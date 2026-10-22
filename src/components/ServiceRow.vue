@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { computed, watch } from 'vue'
+import AppIcon from './AppIcon.vue'
+import ServiceLogo from './ServiceLogo.vue'
 import { SERVICE_LABEL, useServicesStore } from '../stores/services'
 import { useSettingsStore } from '../stores/settings'
 import type { ServiceId, ServiceStatus } from '../types/ipc'
@@ -49,11 +51,11 @@ const buildTitle = computed(() => {
 })
 
 const STATE_LABEL = {
-  stopped: 'detenido',
-  starting: 'iniciando…',
-  running: 'en marcha',
-  stopping: 'deteniendo…',
-  failed: 'error',
+  stopped: 'Detenido',
+  starting: 'Iniciando…',
+  running: 'Ejecutándose',
+  stopping: 'Deteniendo…',
+  failed: 'Error',
 } as const
 
 const busy = computed(
@@ -76,7 +78,7 @@ const port = computed(() => {
   const ports = [...(props.status.ports.length ? props.status.ports : [props.status.port])].sort(
     (a, b) => a - b,
   )
-  const word = ports.length > 1 ? 'puertos' : 'puerto'
+  const word = ports.length > 1 ? 'Puertos' : 'Puerto'
   const consecutive = ports.every((p, i) => i === 0 || p === ports[i - 1] + 1)
   if (ports.length > 2 && consecutive) return `${word} ${ports[0]}–${ports[ports.length - 1]}`
   return `${word} ${ports.join('/')}`
@@ -91,24 +93,32 @@ function toggle() {
 <template>
   <li class="service" :data-state="status.state">
     <span class="dot" aria-hidden="true" />
+    <ServiceLogo :id="status.id" />
     <span class="service-name">{{ SERVICE_LABEL[status.id] }}</span>
-    <span class="service-version">
-      {{ status.version ?? 'sin instalar' }}
+    <span class="service-meta">
+      <span class="service-version">{{ status.version ?? 'sin instalar' }}</span>
       <span v-if="buildShort" class="service-build" :title="buildTitle">{{ buildShort }}</span>
+      <span class="service-sep" aria-hidden="true">·</span>
+      <span class="service-port" :title="port">{{ port }}</span>
     </span>
-    <span class="service-port" :title="port">{{ port }}</span>
-    <span class="service-state">{{ STATE_LABEL[status.state] }}</span>
+    <span class="service-state"><span class="state-dot" aria-hidden="true" />{{ STATE_LABEL[status.state] }}</span>
     <span class="service-actions">
       <button
         class="row-btn"
+        :class="isUp ? 'is-stop' : 'is-start'"
+        :disabled="busy"
+        @click="toggle"
+      >
+        <AppIcon :name="isUp ? 'stop' : 'play'" />{{ isUp ? 'Detener' : 'Iniciar' }}
+      </button>
+      <button
+        class="row-icon"
         :disabled="busy || !isUp"
         :title="RELOAD_TITLE[status.id] ?? 'Reiniciar'"
+        :aria-label="`Recargar ${SERVICE_LABEL[status.id]}`"
         @click="services.reload(status.id)"
       >
-        Recargar
-      </button>
-      <button class="row-btn" :class="{ 'is-stop': isUp }" :disabled="busy" @click="toggle">
-        {{ isUp ? 'Detener' : 'Iniciar' }}
+        <AppIcon name="refresh" />
       </button>
     </span>
     <p v-if="status.state === 'failed' && status.detail" class="service-detail">

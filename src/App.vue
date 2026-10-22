@@ -10,6 +10,7 @@ import ServicesPanel from './components/ServicesPanel.vue'
 import SetupPanel from './components/SetupPanel.vue'
 import ThemeSwitch from './components/ThemeSwitch.vue'
 import { attempt, lastError } from './lib/errors'
+import { progressDetail, progressText } from './lib/progress'
 import { SERVICE_LABEL, useServicesStore } from './stores/services'
 import { useInstallsStore } from './stores/installs'
 import { useServicesPanelStore } from './stores/servicesPanel'
@@ -38,7 +39,7 @@ onMounted(async () => {
 })
 
 /** Alto de una fila de servicio (`.service` en styles.css). */
-const ROW_HEIGHT = 46
+const ROW_HEIGHT = 48
 /** Alto de la ventana con las tres filas de la pila base. */
 const BASE_HEIGHT = 380
 /** Alto mínimo con Servicios y puertos abierto: entran todas sus filas. */
@@ -134,6 +135,7 @@ function openMenu(e?: MouseEvent) {
       >
         <AppIcon name="gear" />
       </button>
+      <span class="band-divider" aria-hidden="true" />
       <button class="band-menu" aria-haspopup="menu" @click="openMenu($event)">
         Menú <AppIcon name="chevron" class="band-chev" />
       </button>
@@ -178,7 +180,7 @@ function openMenu(e?: MouseEvent) {
           class="statusline-task"
           :data-state="installs.current.state"
           role="status"
-          :title="installs.current.detail ?? installs.current.step"
+          :title="progressDetail(installs.current)"
         >
           <span v-if="installs.current.state === 'running'" class="task-dot" aria-hidden="true" />
           <AppIcon v-else :name="installs.current.state === 'done' ? 'check' : 'alert'" />
@@ -187,7 +189,7 @@ function openMenu(e?: MouseEvent) {
               ? installs.current.detail
               : installs.current.state === 'failed'
                 ? `No se pudo agregar ${installs.current.label}`
-                : `${installs.current.step}…`
+                : progressText(installs.current)
           }}</span>
         </span>
       </template>

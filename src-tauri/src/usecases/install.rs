@@ -37,17 +37,38 @@ struct Progress<'a> {
 
 impl Progress<'_> {
     fn emit(&self, step: impl Into<String>, state: ProgressState, detail: Option<String>) {
+        self.send(InstallProgress {
+            id: self.id.to_string(),
+            label: self.label.to_string(),
+            step: step.into(),
+            state,
+            detail,
+            downloaded: None,
+            total: None,
+            speed: None,
+        });
+    }
+
+    fn send(&self, progress: InstallProgress) {
         self.core
             .supervisor
             .deps()
             .events
-            .install_progress(&InstallProgress {
-                id: self.id.to_string(),
-                label: self.label.to_string(),
-                step: step.into(),
-                state,
-                detail,
-            });
+            .install_progress(&progress);
+    }
+
+    /// Un paso de descarga con lo descargado, el total y la velocidad.
+    fn downloading(&self, step: &str, downloaded: u64, total: Option<u64>, speed: Option<u64>) {
+        self.send(InstallProgress {
+            id: self.id.to_string(),
+            label: self.label.to_string(),
+            step: step.to_string(),
+            state: ProgressState::Running,
+            detail: None,
+            downloaded: Some(downloaded),
+            total,
+            speed,
+        });
     }
 
     fn step(&self, step: impl Into<String>) {
@@ -112,6 +133,7 @@ impl Core {
                 // Filas, versiones y menús con lo nuevo (con la compilación
                 // de un PHP recién agregado).
                 self.load_php_builds().await;
+                self.adopt_installed_web_server()?;
                 self.supervisor.emit_all();
                 self.refresh_user_path().await?;
                 Ok(message)
@@ -232,12 +254,17 @@ impl Core {
                 service.label()
             ));
         }
-        progress.step(format!("Descargando {} {version}", service.label()));
         let zip = deps
             .paths
             .downloads()
             .join(format!("{}-{version}.zip", service.key()));
-        self.downloader.download(&url, &zip).await?;
+        self.download_tracked(
+            progress,
+            &format!("Descargando {} {version}", service.label()),
+            &url,
+            &zip,
+        )
+        .await?;
         progress.step(format!("Extrayendo en {}", slash(&dest)));
         // Del zip de Apache Lounge solo interesa su carpeta Apache24.
         let folder = (service == ServiceId::Apache).then_some(catalog::APACHE_ZIP_FOLDER);
@@ -388,11 +415,14 @@ impl Core {
         if deps.fs.exists(&node) {
             return Ok(format!("Node.js {version} ya estaba instalado."));
         }
-        progress.step(format!("Descargando Node.js {version}"));
         let zip = deps.paths.downloads().join(format!("node-{version}.zip"));
-        self.downloader
-            .download(&urls::node_zip(&version), &zip)
-            .await?;
+        self.download_tracked(
+            progress,
+            &format!("Descargando Node.js {version}"),
+            &urls::node_zip(&version),
+            &zip,
+        )
+        .await?;
         progress.step(format!("Extrayendo en {}", slash(&dest)));
         // El zip trae todo dentro de node-v<versión>-win-x64/: se quita.
         let extracted = self.extract(&zip, &dest, None).await;
@@ -418,21 +448,27 @@ impl Core {
             Tool::Nodejs => return self.install_node(progress, progress.pinned).await,
             Tool::Desktop(desktop) => return self.install_desktop(progress, desktop).await,
             Tool::Adminer => {
-                progress.step(downloading);
-                self.downloader
-                    .download(urls::ADMINER, &deps.paths.adminer_php())
-                    .await?;
+                self.download_tracked(
+                    progress,
+                    &downloading,
+                    urls::ADMINER,
+                    &deps.paths.adminer_php(),
+                )
+                .await?;
             }
             Tool::Composer => {
-                progress.step(downloading);
-                self.downloader
-                    .download(super::COMPOSER_URL, &deps.paths.composer_phar())
-                    .await?;
+                self.download_tracked(
+                    progress,
+                    &downloading,
+                    super::COMPOSER_URL,
+                    &deps.paths.composer_phar(),
+                )
+                .await?;
             }
             Tool::Phpmyadmin => {
-                progress.step(downloading);
                 let zip = deps.paths.downloads().join("phpmyadmin.zip");
-                self.downloader.download(urls::PHPMYADMIN, &zip).await?;
+                self.download_tracked(progress, &downloading, urls::PHPMYADMIN, &zip)
+                    .await?;
                 progress.step(format!(
                     "Extrayendo en {}",
                     slash(&deps.paths.bin_phpmyadmin())
@@ -527,9 +563,14 @@ impl Core {
                     tool.label()
                 ))
             })?;
-        progress.step(format!("Descargando {} {version}", tool.label()));
         let zip = deps.paths.downloads().join(format!("{}.zip", tool.key()));
-        self.downloader.download(&url, &zip).await?;
+        self.download_tracked(
+            progress,
+            &format!("Descargando {} {version}", tool.label()),
+            &url,
+            &zip,
+        )
+        .await?;
         let dest = deps.paths.bin_desktop(tool);
         progress.step(format!("Extrayendo en {}", self.desktop_dir(tool)));
         let extractor = self.archive.clone();
@@ -552,6 +593,62 @@ impl Core {
             deps.fs.write(&marker, "")?;
         }
         Ok(format!("{} {version} instalado.", tool.label()))
+    }
+}
+
+/// Velocidad de una descarga, suavizada para que el número no salte.
+struct SpeedMeter {
+    last: Option<(std::time::Instant, u64)>,
+    speed: Option<f64>,
+}
+
+impl SpeedMeter {
+    fn new() -> Self {
+        SpeedMeter {
+            last: None,
+            speed: None,
+        }
+    }
+
+    /// Bytes por segundo con lo descargado hasta ahora.
+    fn sample(&mut self, downloaded: u64) -> Option<u64> {
+        let now = std::time::Instant::now();
+        match self.last {
+            None => self.last = Some((now, downloaded)),
+            Some((then, before)) => {
+                let seconds = now.duration_since(then).as_secs_f64();
+                if seconds >= 0.25 {
+                    let current = downloaded.saturating_sub(before) as f64 / seconds;
+                    self.speed = Some(match self.speed {
+                        Some(previous) => previous * 0.6 + current * 0.4,
+                        None => current,
+                    });
+                    self.last = Some((now, downloaded));
+                }
+            }
+        }
+        self.speed.map(|s| s.round() as u64)
+    }
+}
+
+impl Core {
+    /// Descarga informando el porcentaje y la velocidad en el paso `step`.
+    async fn download_tracked(
+        &self,
+        progress: &Progress<'_>,
+        step: &str,
+        url: &str,
+        dest: &Path,
+    ) -> Result<(), AppError> {
+        progress.step(step);
+        let meter = std::sync::Mutex::new(SpeedMeter::new());
+        let report = |downloaded: u64, total: Option<u64>| {
+            let speed = meter.lock().unwrap().sample(downloaded);
+            progress.downloading(step, downloaded, total, speed);
+        };
+        self.downloader
+            .download_with_progress(url, dest, &report)
+            .await
     }
 }
 
@@ -629,8 +726,13 @@ impl Core {
             )
         })?;
         let pkg = deps.paths.downloads().join("Homebrew.pkg");
-        progress.step(format!("Descargando Homebrew {version}"));
-        self.downloader.download(&url, &pkg).await?;
+        self.download_tracked(
+            progress,
+            &format!("Descargando Homebrew {version}"),
+            &url,
+            &pkg,
+        )
+        .await?;
         progress.step("Instalando Homebrew (macOS pide tu contraseña)");
         let installed = self
             .run_as_admin(
@@ -685,8 +787,13 @@ impl Core {
             ))
         })?;
         let pkg = deps.paths.downloads().join("MacPorts.pkg");
-        progress.step(format!("Descargando MacPorts {version}"));
-        self.downloader.download(&url, &pkg).await?;
+        self.download_tracked(
+            progress,
+            &format!("Descargando MacPorts {version}"),
+            &url,
+            &pkg,
+        )
+        .await?;
         progress.step(
             "Instalando MacPorts y su lista de paquetes (macOS pide tu contraseña; tarda unos minutos)",
         );

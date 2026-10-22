@@ -1498,11 +1498,12 @@ async fn setup_recommends_the_newest_versions_for_each_system() {
     let info = h.core().setup_info();
     assert!(info.show);
     assert_eq!(info.os, "Windows 11");
+    // Apache es el servidor web por defecto donde está disponible.
     assert_eq!(
         recommended(&info),
         vec![
             "php-8.4",
-            "nginx",
+            "apache",
             "mariadb-11.4",
             "heidisql",
             "adminer",
@@ -1773,4 +1774,51 @@ async fn nodejs_with_macports_brings_npm_and_mongodb_is_not_offered() {
     assert!(!info.packages.iter().any(|p| p.id == "mongodb"));
     let err = core.install_package("mongodb").await.unwrap_err();
     assert!(err.to_string().contains("no está disponible"), "{err}");
+}
+
+#[tokio::test]
+async fn first_run_chooses_apache_or_nginx_where_apache_is_missing() {
+    use crate::domain::os::OsInfo;
+    let h = Harness::new();
+    assert!(h.core().bootstrap().await.unwrap());
+    assert_eq!(h.config.get().web_server, WebServer::Apache);
+
+    let h = Harness::new();
+    let seven = h.core_on(OsInfo::Windows {
+        build: 7601,
+        server: false,
+    });
+    assert!(seven.bootstrap().await.unwrap());
+    assert_eq!(h.config.get().web_server, WebServer::Nginx);
+
+    // Con app.json ya creado no es la primera vez ni cambia nada.
+    let h = Harness::new();
+    h.fs.write(Path::new(&format!("{ROOT}/app.json")), "{}").unwrap();
+    assert!(!h.core().bootstrap().await.unwrap());
+    assert_eq!(h.config.get().web_server, WebServer::Nginx);
+}
+
+#[tokio::test]
+async fn the_installed_web_server_is_used_when_the_chosen_one_is_missing() {
+    use crate::ports::ConfigStore;
+    let h = Harness::new();
+    let mut cfg = h.config.get();
+    cfg.web_server = WebServer::Apache;
+    h.config.save(&cfg).unwrap();
+    // El arnés tiene Nginx y no Apache.
+    h.core().adopt_installed_web_server().unwrap();
+    assert_eq!(h.config.get().web_server, WebServer::Nginx);
+}
+
+#[tokio::test]
+async fn downloads_report_bytes_total_and_speed() {
+    let h = Harness::new();
+    h.core().install_package("adminer").await.unwrap();
+    let events = h.events.installs.lock().unwrap().clone();
+    let downloading: Vec<_> = events.iter().filter(|e| e.downloaded.is_some()).collect();
+    assert_eq!(downloading.len(), 2, "{events:?}");
+    assert_eq!(downloading[0].downloaded, Some(500));
+    assert_eq!(downloading[0].total, Some(1000));
+    assert_eq!(downloading[1].downloaded, Some(1000));
+    assert_eq!(downloading[1].step, "Descargando Adminer");
 }

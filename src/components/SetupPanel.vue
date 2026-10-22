@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, reactive, ref, watch } from 'vue'
 import AppIcon from './AppIcon.vue'
+import { percentOf, progressDetail, progressText } from '../lib/progress'
 import { useInstallsStore } from '../stores/installs'
 import { useSetupStore } from '../stores/setup'
 import type { SetupPackage } from '../types/ipc'
@@ -20,8 +21,21 @@ const packages = computed(() => setup.info?.packages ?? [])
 const manager = computed(() => setup.info?.manager ?? null)
 const needsManager = computed(() => !!manager.value && !manager.value.installed)
 const managerStep = computed(() =>
-  installs.current?.id === 'package-manager' ? `${installs.current.step}…` : 'Preparando…',
+  installs.current?.id === 'package-manager' ? progressText(installs.current) : 'Preparando…',
 )
+
+/** Porcentaje de la descarga en curso de una fila (para su barra). */
+function rowPercent(p: SetupPackage): number | null {
+  if (setup.results[p.id]?.state !== 'running') return null
+  return installs.current?.id === p.id ? percentOf(installs.current) : null
+}
+
+function rowTitle(p: SetupPackage): string {
+  const current = installs.current?.id === p.id ? installs.current : null
+  return current && setup.results[p.id]?.state === 'running'
+    ? progressDetail(current)
+    : statusText(p)
+}
 const groups = computed(() =>
   GROUPS.map((label, group) => ({
     label,
@@ -77,8 +91,8 @@ const failures = computed(
 function statusText(p: SetupPackage): string {
   const result = setup.results[p.id]
   if (result?.state === 'running') {
-    const step = installs.current?.id === p.id ? installs.current.step : null
-    return step ? `${step}…` : 'Instalando…'
+    const current = installs.current?.id === p.id ? installs.current : null
+    return current ? progressText(current) : 'Instalando…'
   }
   if (result) return result.message ?? ''
   if (!p.status) return ''
@@ -162,7 +176,7 @@ function onCancel(e: Event) {
               @change="toggle(p)"
             />
             <span class="setup-name">{{ p.label }}</span>
-            <span class="setup-status" :title="statusText(p)">
+            <span class="setup-status" :title="rowTitle(p)">
               <span
                 v-if="setup.results[p.id]?.state === 'running'"
                 class="task-dot"
@@ -171,6 +185,17 @@ function onCancel(e: Event) {
               <AppIcon v-else-if="setup.results[p.id]?.state === 'done'" name="check" />
               <AppIcon v-else-if="setup.results[p.id]?.state === 'failed'" name="alert" />
               <span class="setup-status-text">{{ statusText(p) }}</span>
+            </span>
+            <span
+              v-if="rowPercent(p) != null"
+              class="setup-bar"
+              role="progressbar"
+              :aria-valuenow="rowPercent(p) ?? 0"
+              aria-valuemin="0"
+              aria-valuemax="100"
+              :aria-label="`Descarga de ${p.label}`"
+            >
+              <span class="setup-bar-fill" :style="{ transform: `scaleX(${(rowPercent(p) ?? 0) / 100})` }" />
             </span>
           </label>
         </section>

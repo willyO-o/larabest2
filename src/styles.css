@@ -30,8 +30,23 @@
   --band-running: #14633f;
   --band-failed: #8a1c1c;
 
+  /* Luces de estado sobre la banda (mismo color en ambos temas). */
+  --led-stopped: #8d99b3;
+  --led-busy: #fbbf24;
+  --led-partial: #6ea6ff;
+  --led-running: #4ade80;
+  --led-failed: #ff8a80;
+  --wordmark-accent: #b4d2ff;
+
+  --panel: #f8fafd;
+  --ok-ground: #e7f6ed;
+  --busy-ground: #fef4e6;
+  --shadow-soft: rgb(20 28 48 / 0.05);
+
+  --band-h: 48px;
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
   --radius: 6px;
+  --radius-card: 10px;
 
   color-scheme: light;
   font-family: 'Segoe UI Variable Text', 'Segoe UI', system-ui, -apple-system, sans-serif;
@@ -63,6 +78,10 @@
   --focus: #6ea6ff;
   --band-stopped: #182340;
   --shadow: rgb(0 0 0 / 0.35);
+  --panel: #111a2b;
+  --ok-ground: #12301f;
+  --busy-ground: #352710;
+  --shadow-soft: rgb(0 0 0 / 0.25);
   color-scheme: dark;
 }
 
@@ -87,6 +106,10 @@
     --focus: #6ea6ff;
     --band-stopped: #182340;
     --shadow: rgb(0 0 0 / 0.35);
+    --panel: #111a2b;
+    --ok-ground: #12301f;
+    --busy-ground: #352710;
+    --shadow-soft: rgb(0 0 0 / 0.25);
     color-scheme: dark;
   }
 }
@@ -117,6 +140,67 @@ input,
 textarea {
   caret-color: var(--accent);
   accent-color: var(--accent);
+}
+
+/* Casillas propias: la nativa de macOS (WebKit) casi no se distingue marcada
+   ni desmarcada. Siempre con borde de color y relleno sólido al marcarla. */
+input[type='checkbox'] {
+  appearance: none;
+  -webkit-appearance: none;
+  position: relative;
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  border: 1.5px solid var(--ink-3);
+  border-radius: 4px;
+  background: var(--surface);
+  cursor: pointer;
+  transition:
+    background-color 120ms var(--ease-out),
+    border-color 120ms var(--ease-out);
+}
+
+input[type='checkbox']::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: var(--accent-ink);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3.5 8.5l3 3 6-6.5' fill='none' stroke='%23000' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 14px 14px no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3.5 8.5l3 3 6-6.5' fill='none' stroke='%23000' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 14px 14px no-repeat;
+  transform: scale(0);
+  transition: transform 120ms var(--ease-out);
+}
+
+input[type='checkbox']:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+input[type='checkbox']:checked {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+input[type='checkbox']:checked::before {
+  transform: scale(1);
+}
+
+input[type='checkbox']:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+/* Deshabilitada pero marcada (ya instalado): se sigue viendo marcada. */
+input[type='checkbox']:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  input[type='checkbox'],
+  input[type='checkbox']::before {
+    transition: none;
+  }
 }
 
 ::-webkit-scrollbar {
@@ -166,73 +250,152 @@ button:disabled {
 
 /* ---------------------------------------------------------------- banda */
 
+/* Siempre en el azul marino del logo. El estado de toda la pila va en la
+   cápsula del resumen (punto de color + texto). */
 .band {
   display: flex;
   align-items: center;
   gap: 8px;
-  height: 46px;
-  padding: 0 8px 0 14px;
+  flex: none;
+  height: var(--band-h);
+  padding: 0 10px 0 14px;
   color: #ffffff;
   background: var(--band-stopped);
   /* Línea de luz abajo: separa la banda del contenido sin un borde gris. */
-  box-shadow: inset 0 -1px 0 rgb(255 255 255 / 0.08);
-  transition: background-color 320ms ease;
-}
-
-.band[data-stack='busy'] {
-  background: var(--band-busy);
-}
-.band[data-stack='partial'] {
-  background: var(--band-partial);
-}
-.band[data-stack='running'] {
-  background: var(--band-running);
-}
-.band[data-stack='failed'] {
-  background: var(--band-failed);
+  box-shadow: inset 0 -1px 0 rgb(255 255 255 / 0.06);
 }
 
 .mark {
-  width: 26px;
-  height: 26px;
+  width: 28px;
+  height: 28px;
   flex: none;
   /* El disco blanco del logo, apenas despegado de la banda. */
-  filter: drop-shadow(0 1px 1.5px rgb(0 0 0 / 0.25));
+  filter: drop-shadow(0 1px 1.5px rgb(0 0 0 / 0.3));
 }
 
 /* "Lara" + "Best" en dos tonos, como el logo. */
 .band-name {
-  font-size: 15px;
+  margin-left: 2px;
+  font-size: 16px;
   font-weight: 700;
   letter-spacing: -0.01em;
 }
 
 .band-name-accent {
-  /* Azul claro que pasa 4,5:1 sobre los seis colores de la banda. */
-  color: #b4d2ff;
+  /* Azul claro que pasa 4,5:1 sobre la banda. */
+  color: var(--wordmark-accent);
 }
 
 .band-version {
   font-size: 12px;
-  color: rgb(255 255 255 / 0.72);
+  color: rgb(255 255 255 / 0.66);
 }
 
+/* Resumen de la pila: cápsula con la luz de estado. */
 .band-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   margin-left: auto;
-  font-size: 13px;
+  height: 24px;
+  padding: 0 10px 0 9px;
+  border-radius: 999px;
+  background: rgb(255 255 255 / 0.08);
+  font-size: 12px;
   font-weight: 600;
-  color: rgb(255 255 255 / 0.95);
+  color: rgb(255 255 255 / 0.92);
+  white-space: nowrap;
+}
+
+.band-summary::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--led-stopped);
+  transition: background-color 240ms ease;
+}
+
+.band[data-stack='busy'] .band-summary::before {
+  background: var(--led-busy);
+  animation: pulse-dot 1.1s ease-in-out infinite;
+}
+.band[data-stack='partial'] .band-summary::before {
+  background: var(--led-partial);
+}
+.band[data-stack='running'] .band-summary::before {
+  background: var(--led-running);
+}
+.band[data-stack='failed'] .band-summary::before {
+  background: var(--led-failed);
+}
+
+/* Botones de la banda: cuadrados de 30 px en el mismo material translúcido. */
+.theme-switch {
+  display: inline-flex;
+  gap: 4px;
+  margin-left: 6px;
+}
+
+.theme-option,
+.band-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 7px;
+  background: rgb(255 255 255 / 0.07);
+  color: rgb(255 255 255 / 0.72);
+  transition:
+    background-color 140ms ease,
+    color 140ms ease,
+    transform 140ms var(--ease-out);
+}
+
+.theme-option .icon,
+.band-icon .icon {
+  width: 16px;
+  height: 16px;
+}
+
+.theme-option[aria-checked='true'],
+.band-icon[aria-expanded='true'] {
+  background: rgb(255 255 255 / 0.2);
+  color: #ffffff;
+}
+
+.theme-option:active,
+.band-icon:active {
+  transform: scale(0.94);
+}
+
+.theme-option:focus-visible,
+.band-icon:focus-visible,
+.band-menu:focus-visible {
+  outline-color: #ffffff;
+  outline-offset: 1px;
+}
+
+.band-icon {
+  margin-left: 2px;
+}
+
+.band-divider {
+  flex: none;
+  width: 1px;
+  height: 20px;
+  margin: 0 4px;
+  background: rgb(255 255 255 / 0.16);
 }
 
 .band-menu {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   height: 30px;
-  margin-left: 10px;
-  padding: 0 8px 0 12px;
-  border-radius: var(--radius);
-  background: rgb(255 255 255 / 0.12);
+  padding: 0 10px 0 14px;
+  border-radius: 7px;
+  background: rgb(255 255 255 / 0.1);
   color: #ffffff;
   font-weight: 600;
   transition:
@@ -244,86 +407,6 @@ button:disabled {
   transform: scale(0.97);
 }
 
-.band-menu:focus-visible {
-  outline-color: #ffffff;
-}
-
-/* Engranaje (Servicios y puertos): mismo material que Menú y el tema. */
-.band-icon {
-  display: inline-grid;
-  place-items: center;
-  width: 30px;
-  height: 30px;
-  margin-left: 10px;
-  border-radius: var(--radius);
-  background: rgb(255 255 255 / 0.12);
-  color: rgb(255 255 255 / 0.85);
-  transition:
-    background-color 140ms ease,
-    color 140ms ease,
-    transform 140ms var(--ease-out);
-}
-
-.band-icon .icon {
-  width: 17px;
-  height: 17px;
-}
-
-.band-icon[aria-expanded='true'] {
-  background: rgb(255 255 255 / 0.26);
-  color: #ffffff;
-}
-
-.band-icon:active {
-  transform: scale(0.94);
-}
-
-.band-icon:focus-visible {
-  outline-color: #ffffff;
-}
-
-/* Selector de tema: tres botones dentro de la banda, mismo material que Menú. */
-.theme-switch {
-  display: inline-flex;
-  gap: 2px;
-  margin-left: 10px;
-  padding: 2px;
-  border-radius: var(--radius);
-  background: rgb(255 255 255 / 0.12);
-}
-
-.theme-option {
-  display: inline-grid;
-  place-items: center;
-  width: 26px;
-  height: 26px;
-  border-radius: 4px;
-  color: rgb(255 255 255 / 0.72);
-  transition:
-    background-color 140ms ease,
-    color 140ms ease,
-    transform 140ms var(--ease-out);
-}
-
-.theme-option .icon {
-  width: 15px;
-  height: 15px;
-}
-
-.theme-option[aria-checked='true'] {
-  background: rgb(255 255 255 / 0.26);
-  color: #ffffff;
-}
-
-.theme-option:active {
-  transform: scale(0.94);
-}
-
-.theme-option:focus-visible {
-  outline-color: #ffffff;
-  outline-offset: 1px;
-}
-
 .band-chev {
   width: 14px;
   height: 14px;
@@ -332,24 +415,28 @@ button:disabled {
 
 /* ---------------------------------------------------------------- servicios */
 
+/* Tarjeta blanca con las filas; si no entran, se desplaza por dentro. */
 .services {
-  flex: 1;
-  margin: 0;
-  padding: 6px 0;
+  flex: 0 1 auto;
+  min-height: 0;
+  margin: 12px 12px 0;
+  padding: 2px 12px;
   list-style: none;
   overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card);
   background: var(--surface);
-  border-bottom: 1px solid var(--line);
+  box-shadow: 0 1px 2px var(--shadow-soft);
 }
 
 .service {
   display: grid;
-  grid-template-columns: 10px 84px minmax(0, 1fr) 132px 86px auto;
+  grid-template-columns: 8px 32px 76px minmax(0, 1fr) 112px auto;
   align-items: center;
-  column-gap: 12px;
+  column-gap: 10px;
   row-gap: 6px;
-  min-height: 46px;
-  padding: 6px 12px 6px 16px;
+  min-height: 48px;
+  padding: 6px 2px 6px 4px;
 }
 
 .service + .service {
@@ -357,108 +444,176 @@ button:disabled {
 }
 
 .dot {
-  width: 10px;
-  height: 10px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
-  border: 2px solid var(--ink-3);
-  transition:
-    background-color 200ms ease,
-    border-color 200ms ease;
+  background: var(--ink-3);
+  transition: background-color 200ms ease;
 }
 
 [data-state='running'] .dot {
   background: var(--ok);
-  border-color: var(--ok);
 }
 [data-state='failed'] .dot {
   background: var(--bad);
-  border-color: var(--bad);
 }
 [data-state='starting'] .dot,
 [data-state='stopping'] .dot {
-  border-color: var(--busy);
-  animation: pulse 1s ease-in-out infinite;
+  background: var(--busy);
+  animation: pulse-dot 1.1s ease-in-out infinite;
 }
 
-@keyframes pulse {
-  50% {
-    background: var(--busy);
-  }
+.service-logo {
+  display: block;
+  width: 32px;
+  height: 28px;
+}
+
+.logo-text {
+  fill: #ffffff;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.logo-php {
+  font-size: 11.5px;
+  font-style: italic;
+  letter-spacing: -0.02em;
 }
 
 .service-name {
+  overflow: hidden;
   font-size: 14px;
-  font-weight: 600;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.service-version,
-.service-port {
-  color: var(--ink-2);
-}
-
-.service-version {
-  display: inline-flex;
+/* "1.30.6 · Puerto 80", con la compilación de PHP entre medio. */
+.service-meta {
+  display: flex;
   align-items: center;
   gap: 6px;
   min-width: 0;
+  color: var(--ink-2);
   white-space: nowrap;
+}
+
+.service-version {
+  flex: none;
+}
+
+.service-sep {
+  flex: none;
+  color: var(--ink-3);
 }
 
 /* Compilación de PHP (NTS · x64 · VS17), con el detalle en el título. */
 .service-build {
+  flex: 0 1 auto;
+  min-width: 0;
   overflow: hidden;
   padding: 1px 6px;
   border-radius: 4px;
   background: var(--sunken);
   color: var(--ink-3);
   font-size: 11px;
-  font-variant-numeric: tabular-nums;
   text-overflow: ellipsis;
   cursor: help;
 }
 
 .service-port {
+  flex: 0 1 auto;
+  min-width: 0;
   overflow: hidden;
-  white-space: nowrap;
   text-overflow: ellipsis;
 }
 
+/* Estado en cápsula: el punto repite el color y el texto lo dice. */
 .service-state {
-  color: var(--ink-3);
+  display: inline-flex;
+  align-items: center;
+  justify-self: start;
+  gap: 6px;
+  height: 24px;
+  padding: 0 10px 0 9px;
+  border-radius: 999px;
+  background: var(--sunken);
+  color: var(--ink-2);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.state-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.8;
 }
 
 [data-state='running'] .service-state {
+  background: var(--ok-ground);
   color: var(--ok);
   font-weight: 600;
 }
 [data-state='failed'] .service-state {
+  background: var(--bad-ground);
   color: var(--bad);
   font-weight: 600;
 }
 [data-state='starting'] .service-state,
 [data-state='stopping'] .service-state {
+  background: var(--busy-ground);
   color: var(--busy);
   font-weight: 600;
 }
 
 .service-actions {
   display: flex;
-  gap: 6px;
+  align-items: center;
+  gap: 4px;
 }
 
 .row-btn {
-  min-width: 74px;
-  height: 28px;
-  padding: 0 10px;
-  border-radius: var(--radius);
-  border: 1px solid var(--line);
-  background: var(--surface);
-  color: var(--ink);
-  font-weight: 500;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 96px;
+  height: 30px;
+  border-radius: 7px;
+  border: 1px solid transparent;
+  font-weight: 600;
   transition:
     background-color 140ms ease,
     border-color 140ms ease,
     transform 140ms var(--ease-out);
+}
+
+.row-btn .icon {
+  width: 14px;
+  height: 14px;
+}
+
+.row-btn.is-start {
+  background: var(--accent);
+  color: var(--accent-ink);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+.row-btn.is-stop {
+  background: var(--sunken);
+  border-color: var(--line);
+  color: var(--ink);
+}
+
+/* El cuadrado de Detener va relleno, como en un reproductor. */
+.row-btn.is-stop .icon,
+.action-main.is-stop .icon {
+  fill: currentColor;
 }
 
 .row-btn:active:not(:disabled) {
@@ -466,17 +621,39 @@ button:disabled {
 }
 
 .row-btn:disabled {
-  color: var(--ink-3);
-  background: transparent;
-  border-color: transparent;
+  opacity: 0.55;
 }
 
-.row-btn.is-stop {
-  color: var(--bad);
+/* Recargar: botón de ícono al final de la fila. */
+.row-icon {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  color: var(--ink-2);
+  transition:
+    background-color 140ms ease,
+    color 140ms ease,
+    transform 140ms var(--ease-out);
+}
+
+.row-icon .icon {
+  width: 15px;
+  height: 15px;
+}
+
+.row-icon:active:not(:disabled) {
+  transform: scale(0.94);
+}
+
+.row-icon:disabled {
+  color: var(--ink-3);
+  opacity: 0.45;
 }
 
 .service-detail {
-  grid-column: 2 / -1;
+  grid-column: 3 / -1;
   margin: 0 0 4px;
   padding: 7px 10px;
   border-radius: var(--radius);
@@ -493,13 +670,15 @@ button:disabled {
 
 .error {
   display: flex;
+  flex: none;
   align-items: flex-start;
   gap: 8px;
-  margin: 0;
-  padding: 8px 8px 8px 16px;
+  margin: 10px 12px 0;
+  padding: 8px 8px 8px 12px;
+  border: 1px solid color-mix(in srgb, var(--bad) 25%, transparent);
+  border-radius: var(--radius-card);
   background: var(--bad-ground);
   color: var(--bad);
-  border-bottom: 1px solid var(--line);
   user-select: text;
 }
 
@@ -525,10 +704,14 @@ button:disabled {
 
 .actions {
   display: grid;
-  grid-template-columns: 1.25fr repeat(4, minmax(0, 1fr));
+  flex: none;
+  grid-template-columns: 1.15fr repeat(4, minmax(0, 1fr));
   gap: 8px;
-  padding: 10px 12px;
-  background: var(--ground);
+  margin: 10px 12px 0;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card);
+  background: var(--panel);
 }
 
 .action {
@@ -536,13 +719,13 @@ button:disabled {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 4px;
+  gap: 6px;
   height: 64px;
   border-radius: 8px;
   border: 1px solid var(--line);
   background: var(--surface);
-  box-shadow: 0 1px 2px var(--shadow);
-  font-weight: 500;
+  color: var(--ink);
+  font-weight: 600;
   white-space: nowrap;
   transition:
     background-color 140ms ease,
@@ -552,8 +735,8 @@ button:disabled {
 }
 
 .action .icon {
-  width: 20px;
-  height: 20px;
+  width: 21px;
+  height: 21px;
   color: var(--ink-2);
 }
 
@@ -565,11 +748,10 @@ button:disabled {
   background: var(--accent);
   border-color: transparent;
   color: var(--accent-ink);
-  font-weight: 700;
   /* Luz arriba y sombra azul debajo: el botón principal se adelanta. */
   box-shadow:
     inset 0 1px 0 rgb(255 255 255 / 0.18),
-    0 1px 2px var(--shadow),
+    0 1px 2px var(--shadow-soft),
     0 6px 14px -8px color-mix(in srgb, var(--accent) 80%, transparent);
 }
 
@@ -581,6 +763,7 @@ button:disabled {
   background: var(--surface);
   border-color: var(--line);
   color: var(--bad);
+  box-shadow: none;
 }
 
 .action:disabled {
@@ -591,12 +774,15 @@ button:disabled {
 
 .statusline {
   display: flex;
+  flex: none;
   align-items: center;
   gap: 6px;
-  height: 26px;
+  height: 32px;
+  /* Lo que sobra de alto queda arriba de la línea, no dentro de las tarjetas. */
+  margin-top: auto;
   padding: 0 14px;
   border-top: 1px solid var(--line);
-  background: var(--sunken);
+  background: var(--panel);
   color: var(--ink-3);
   font-size: 12px;
   white-space: nowrap;
@@ -632,12 +818,13 @@ button:disabled {
 .statusline-new {
   display: inline-flex;
   align-items: center;
-  gap: 3px;
+  gap: 4px;
   margin-left: auto;
-  padding: 0 6px;
-  height: 20px;
-  border-radius: 4px;
+  padding: 0 8px;
+  height: 24px;
+  border-radius: 6px;
   color: var(--accent);
+  font-size: 12.5px;
   font-weight: 600;
   transition:
     background-color 140ms ease,
@@ -645,8 +832,9 @@ button:disabled {
 }
 
 .statusline-new .icon {
-  width: 13px;
-  height: 13px;
+  width: 14px;
+  height: 14px;
+  stroke-width: 2.2;
 }
 
 .statusline-new:active {
@@ -654,7 +842,7 @@ button:disabled {
 }
 
 .statusline-hint {
-  margin-left: 6px;
+  margin-left: 8px;
 }
 
 /* Paquete que se está agregando (menú Agregar). */
@@ -701,7 +889,7 @@ button:disabled {
 /* Hoja bajo la banda: el estado de la pila sigue a la vista. */
 .sheet {
   position: fixed;
-  inset: 46px 0 0;
+  inset: var(--band-h) 0 0;
   width: 100%;
   max-width: 100%;
   height: auto;
@@ -1035,10 +1223,7 @@ button:disabled {
 }
 
 .svc-check input {
-  width: 16px;
-  height: 16px;
   margin: 0;
-  accent-color: var(--accent);
 }
 
 .svc-row[data-off='true'] .svc-version,
@@ -1136,10 +1321,31 @@ button:disabled {
 }
 
 .setup-row input {
-  width: 16px;
-  height: 16px;
   margin: 0;
-  accent-color: var(--accent);
+}
+
+/* Barra de la descarga en curso: ocupa todo el ancho bajo la fila. */
+.setup-bar {
+  grid-column: 1 / -1;
+  height: 3px;
+  margin: -4px 0 4px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--sunken);
+}
+
+.setup-bar-fill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transform-origin: left center;
+  transition: transform 400ms linear;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .setup-bar-fill {
+    transition: none;
+  }
 }
 
 .setup-name {
@@ -1218,23 +1424,27 @@ button:disabled {
 /* ---------------------------------------------------------------- hover */
 
 @media (hover: hover) and (pointer: fine) {
-  .theme-option:hover:not([aria-checked='true']) {
+  .theme-option:hover:not([aria-checked='true']),
+  .band-icon:hover:not([aria-expanded='true']) {
     background: rgb(255 255 255 / 0.14);
     color: #ffffff;
   }
   .band-menu:hover {
-    background: rgb(255 255 255 / 0.2);
+    background: rgb(255 255 255 / 0.18);
   }
-  .band-icon:hover:not([aria-expanded='true']) {
-    background: rgb(255 255 255 / 0.2);
-    color: #ffffff;
+  .row-btn.is-start:hover:not(:disabled) {
+    background: var(--accent-hover);
   }
-  .row-btn:hover:not(:disabled) {
+  .row-btn.is-stop:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--ink) 9%, var(--sunken));
+  }
+  .row-icon:hover:not(:disabled) {
     background: var(--sunken);
+    color: var(--accent);
   }
   .action:hover:not(:disabled) {
-    background: var(--sunken);
-    border-color: color-mix(in srgb, var(--accent) 35%, var(--line));
+    border-color: color-mix(in srgb, var(--accent) 45%, var(--line));
+    box-shadow: 0 2px 6px -2px var(--shadow);
   }
   .action:hover:not(:disabled) .icon {
     color: var(--accent);
@@ -1273,14 +1483,13 @@ button:disabled {
     animation: none;
   }
   [data-state='starting'] .dot,
-  [data-state='stopping'] .dot {
+  [data-state='stopping'] .dot,
+  .band[data-stack='busy'] .band-summary::before {
     animation: none;
-    background: var(--busy);
-  }
-  .band {
-    transition: none;
   }
   .row-btn:active:not(:disabled),
+  .row-icon:active:not(:disabled),
+  .band-icon:active,
   .action:active:not(:disabled),
   .theme-option:active,
   .statusline-new:active,
