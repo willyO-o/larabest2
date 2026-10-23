@@ -274,6 +274,12 @@ impl ProcessRunner for FakeRunner {
                 s.alive.insert(pid, false);
                 s.exit_codes.insert(pid, code);
             }
+            // `brew install` corre en segundo plano pero aquí termina al
+            // instante y bien.
+            None if exe.starts_with("brew") => {
+                s.alive.insert(pid, false);
+                s.exit_codes.insert(pid, 0);
+            }
             None => {
                 s.alive.insert(pid, true);
             }

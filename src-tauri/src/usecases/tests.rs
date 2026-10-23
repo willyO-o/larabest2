@@ -926,19 +926,44 @@ async fn homebrew_installs_formulas_and_trusts_the_mongodb_tap() {
 
     h.fs.write(Path::new("/opt/homebrew/bin/brew"), "").unwrap();
     core.install_package("mongodb").await.unwrap();
-    let ran: Vec<String> = h.runner.ran().iter().map(|s| s.args.join(" ")).collect();
+    // Los pasos cortos se esperan con `run`; `brew install` se lanza en
+    // segundo plano para ir mostrando su progreso.
+    let brew_runs = |h: &Harness| -> Vec<String> {
+        h.runner
+            .ran()
+            .iter()
+            .filter(|s| s.exe_name().starts_with("brew"))
+            .map(|s| s.args.join(" "))
+            .collect()
+    };
+    let brew_spawns = |h: &Harness| -> Vec<crate::ports::ProcessSpec> {
+        h.runner
+            .spawned()
+            .into_iter()
+            .filter(|s| s.exe_name().starts_with("brew"))
+            .collect()
+    };
     assert_eq!(
-        ran,
-        vec![
-            "tap mongodb/brew",
-            "trust mongodb/brew",
-            "install mongodb/brew/mongodb-community"
-        ]
+        brew_runs(&h),
+        vec!["tap mongodb/brew", "trust mongodb/brew"]
     );
-    let spec = &h.runner.ran()[2];
-    assert!(spec
-        .env
-        .contains(&("HOMEBREW_NO_AUTO_UPDATE".to_string(), "1".to_string())));
+    let spawns = brew_spawns(&h);
+    assert_eq!(spawns.len(), 1);
+    let spec = &spawns[0];
+    assert_eq!(
+        spec.args.join(" "),
+        "install mongodb/brew/mongodb-community"
+    );
+    for var in [
+        "HOMEBREW_NO_AUTO_UPDATE",
+        "HOMEBREW_NO_INSTALL_UPGRADE",
+        "HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK",
+    ] {
+        assert!(
+            spec.env.contains(&(var.to_string(), "1".to_string())),
+            "{var}"
+        );
+    }
     assert_eq!(
         crate::domain::slash(&spec.program),
         "/opt/homebrew/bin/brew"
@@ -946,7 +971,7 @@ async fn homebrew_installs_formulas_and_trusts_the_mongodb_tap() {
 
     let message = core.install_package("php-8.4").await.unwrap();
     assert_eq!(message, "PHP 8.4.13 instalado con Homebrew.");
-    assert_eq!(h.runner.ran()[3].args, vec!["install", "php@8.4"]);
+    assert_eq!(brew_spawns(&h)[1].args, vec!["install", "php@8.4"]);
 }
 
 #[tokio::test]

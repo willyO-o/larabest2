@@ -3,6 +3,7 @@
 pub mod catalog;
 mod config;
 mod dotenv;
+pub mod homebrew;
 mod hosts;
 mod layout;
 mod paths;

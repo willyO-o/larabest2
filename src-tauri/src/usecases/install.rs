@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use super::Core;
 use crate::domain::catalog::{self, urls, InstallProgress, Package, PackageKind, Tool};
-use crate::domain::{slash, BinaryLayout, ProgressState, ServiceId};
+use crate::domain::{homebrew, slash, BinaryLayout, ProgressState, ServiceId};
 use crate::drivers::{program_subpath, server_program, tools};
 use crate::error::AppError;
 use crate::ports::ProcessSpec;
@@ -331,6 +331,11 @@ impl Core {
                 .env("HOMEBREW_NO_AUTO_UPDATE", "1")
                 .env("HOMEBREW_NO_INSTALL_CLEANUP", "1")
                 .env("HOMEBREW_NO_ENV_HINTS", "1")
+                // Sin revisar ni actualizar lo que ya está instalado: solo
+                // lo que pide la fórmula.
+                .env("HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK", "1")
+                .env("HOMEBREW_NO_INSTALL_UPGRADE", "1")
+                .env("HOMEBREW_NO_ANALYTICS", "1")
                 .log_to(deps.paths.logs().join("brew.log"));
             for arg in args {
                 spec = spec.arg(*arg);
@@ -345,17 +350,91 @@ impl Core {
             let _ = runner.run(&brew_spec(&["trust", tap]), BREW_TIMEOUT).await;
         }
         let command = format!("brew {}", args.join(" "));
-        progress.step(format!("{command} (puede tardar varios minutos)"));
-        let out = runner.run(&brew_spec(args), BREW_TIMEOUT).await?;
-        if !out.success() {
-            let text = out.text();
-            let lines: Vec<&str> = text.lines().collect();
+        // ¿Hay binario listo ("bottle") para este macOS? Si no, Homebrew
+        // compila desde el código y tarda mucho: se avisa antes.
+        let mut warning = None;
+        if args.first() == Some(&"install") && !args.contains(&"--cask") {
+            if let Some(formula) = args.iter().skip(1).find(|a| !a.starts_with('-')) {
+                warning = self.bottle_warning(&brew_spec, formula, &brew).await;
+            }
+        }
+        progress.step(match &warning {
+            Some(w) => w.clone(),
+            None => format!("{command}: descargando binarios de Homebrew"),
+        });
+        let log = deps.paths.logs().join("brew.log");
+        let start = deps.fs.read_to_string(&log).map(|t| t.len()).unwrap_or(0);
+        let pid = runner.spawn(&brew_spec(args)).await?.pid;
+        let begun = std::time::Instant::now();
+        let mut last = String::new();
+        let mut output = String::new();
+        loop {
+            if let Ok(text) = deps.fs.read_to_string(&log) {
+                output = text.get(start..).unwrap_or_default().to_string();
+                if let Some(step) = homebrew::install_step(&output) {
+                    if step != last {
+                        progress.step(step.clone());
+                        last = step;
+                    }
+                }
+            }
+            if !runner.is_alive(pid) {
+                break;
+            }
+            if begun.elapsed() > BREW_TIMEOUT {
+                let _ = runner.stop_tree(pid, Duration::from_secs(5)).await;
+                return Err(AppError::Process(format!(
+                    "{command} superó {} minutos y se detuvo. Revisa logs/brew.log.",
+                    BREW_TIMEOUT.as_secs() / 60
+                )));
+            }
+            tokio::time::sleep(Duration::from_millis(1500)).await;
+        }
+        let failed = match runner.exit_code(pid) {
+            Some(code) => code != 0,
+            None => output.lines().any(|l| l.starts_with("Error:")),
+        };
+        if failed {
+            let lines: Vec<&str> = output.trim().lines().collect();
             return Err(AppError::Process(format!(
                 "{command} falló:\n{}",
                 lines[lines.len().saturating_sub(8)..].join("\n")
             )));
         }
         Ok(())
+    }
+
+    /// Aviso si la fórmula no tiene bottle para este macOS (se compilará).
+    async fn bottle_warning(
+        &self,
+        brew_spec: &(dyn Fn(&[&str]) -> ProcessSpec + Sync),
+        formula: &str,
+        brew: &Path,
+    ) -> Option<String> {
+        let deps = self.supervisor.deps();
+        let runner = deps.runner.as_ref();
+        let sw = ProcessSpec::new("/usr/bin/sw_vers", deps.paths.root()).arg("-productVersion");
+        let version = runner.run(&sw, Duration::from_secs(10)).await.ok()?;
+        let version = version.stdout.trim().to_string();
+        // Homebrew en /opt/homebrew es el de Apple Silicon.
+        let arm = brew.starts_with("/opt/homebrew") || std::env::consts::ARCH == "aarch64";
+        let tag = homebrew::bottle_tag(&version, arm)?;
+        let info = runner
+            .run(
+                &brew_spec(&["info", "--json=v2", formula]),
+                Duration::from_secs(60),
+            )
+            .await
+            .ok()?;
+        let tags = homebrew::bottle_tags(&info.stdout)?;
+        if homebrew::has_bottle(&tags, &tag) {
+            return None;
+        }
+        Some(format!(
+            "Homebrew no tiene binario de {formula} para {} ({}): se compila desde el código y puede tardar de 30 a 90 minutos. Para que sea rápido usa macOS 14 o posterior, o elige otra versión.",
+            homebrew::macos_name(&version),
+            if arm { "Apple Silicon" } else { "Intel" }
+        ))
     }
 
     /// Adminer, phpMyAdmin y Composer se descargan igual en las dos
