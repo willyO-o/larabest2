@@ -430,8 +430,11 @@ impl Core {
         if homebrew::has_bottle(&tags, &tag) {
             return None;
         }
+        let fast = homebrew::bottle_platforms(&tags)
+            .map(|p| format!(" Homebrew solo tiene binario para {p}."))
+            .unwrap_or_default();
         Some(format!(
-            "Homebrew no tiene binario de {formula} para {} ({}): se compila desde el código y puede tardar de 30 a 90 minutos. Para que sea rápido usa macOS 14 o posterior, o elige otra versión.",
+            "Homebrew no tiene binario de {formula} para {} ({}): se compila desde el código y puede tardar de 30 a 90 minutos.{fast}",
             homebrew::macos_name(&version),
             if arm { "Apple Silicon" } else { "Intel" }
         ))

@@ -9,6 +9,7 @@ use serde_json::Value;
 pub fn bottle_tag(product_version: &str, arm: bool) -> Option<String> {
     let major: u32 = product_version.trim().split('.').next()?.parse().ok()?;
     let name = match major {
+        27 => "golden_gate",
         26 => "tahoe",
         15 => "sequoia",
         14 => "sonoma",
@@ -28,6 +29,7 @@ pub fn bottle_tag(product_version: &str, arm: bool) -> Option<String> {
 pub fn macos_name(product_version: &str) -> String {
     let major = product_version.trim().split('.').next().unwrap_or_default();
     let name = match major {
+        "27" => "Golden Gate",
         "26" => "Tahoe",
         "15" => "Sequoia",
         "14" => "Sonoma",
@@ -53,6 +55,43 @@ pub fn bottle_tags(info_json: &str) -> Option<Vec<String>> {
         .get("files")?
         .as_object()?;
     Some(files.keys().cloned().collect())
+}
+
+/// Dónde sí hay binario, para el aviso ("Apple Silicon con macOS 15 o
+/// posterior").
+pub fn bottle_platforms(tags: &[String]) -> Option<String> {
+    let order = [
+        ("big_sur", 11),
+        ("monterey", 12),
+        ("ventura", 13),
+        ("sonoma", 14),
+        ("sequoia", 15),
+        ("tahoe", 26),
+        ("golden_gate", 27),
+    ];
+    let oldest = |arm: bool| {
+        order
+            .iter()
+            .filter(|(name, _)| {
+                tags.iter().any(|t| {
+                    if arm {
+                        t.strip_prefix("arm64_") == Some(name)
+                    } else {
+                        t == name
+                    }
+                })
+            })
+            .map(|(_, v)| *v)
+            .min()
+    };
+    let mut parts = Vec::new();
+    if let Some(v) = oldest(true) {
+        parts.push(format!("Apple Silicon con macOS {v} o posterior"));
+    }
+    if let Some(v) = oldest(false) {
+        parts.push(format!("Intel con macOS {v} o posterior"));
+    }
+    (!parts.is_empty()).then(|| parts.join(" o "))
 }
 
 /// `true` si Homebrew tiene binario listo para esta etiqueta.
@@ -125,6 +164,28 @@ mod tests {
         assert!(!has_bottle(&tags, "ventura"));
         assert!(!has_bottle(&tags, "arm64_ventura"));
         assert!(has_bottle(&["all".to_string()], "ventura"));
+        assert_eq!(
+            bottle_platforms(&tags).as_deref(),
+            Some("Apple Silicon con macOS 14 o posterior o Intel con macOS 14 o posterior")
+        );
+        // mariadb@11.4 hoy: solo Apple Silicon con macOS 15 o posterior.
+        let tags: Vec<String> = [
+            "arm64_golden_gate",
+            "arm64_tahoe",
+            "arm64_sequoia",
+            "x86_64_linux",
+        ]
+        .map(String::from)
+        .to_vec();
+        assert_eq!(
+            bottle_platforms(&tags).as_deref(),
+            Some("Apple Silicon con macOS 15 o posterior")
+        );
+        assert!(!has_bottle(&tags, "sonoma"));
+        assert_eq!(
+            bottle_tag("27.0", true).as_deref(),
+            Some("arm64_golden_gate")
+        );
     }
 
     #[test]
