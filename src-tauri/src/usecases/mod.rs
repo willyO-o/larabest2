@@ -26,8 +26,8 @@ use minijinja::context;
 
 use crate::domain::os::OsInfo;
 use crate::domain::{
-    slash, BinaryLayout, DatabaseClient, HostEntry, InstalledVersion, ServiceId, ServiceState,
-    Site, ThemePreference, WebServer,
+    slash, BinaryLayout, DatabaseClient, DatabaseEngine, HostEntry, InstalledVersion, ServiceId,
+    ServiceState, Site, ThemePreference, WebServer,
 };
 use crate::drivers::{apache, mailpit, nginx, postgresql, templates, tools};
 use crate::error::AppError;
@@ -156,6 +156,16 @@ impl Core {
             } else {
                 WebServer::Nginx
             };
+            // macOS: MySQL oficial (se descarga listo); MariaDB lo compila
+            // MacPorts y tarda mucho. Windows sigue con MariaDB.
+            let mysql = crate::domain::catalog::packages_for(self.os, deps.layout)
+                .iter()
+                .any(|p| p.id == "mysql-8.4");
+            cfg.db_engine = if mysql {
+                DatabaseEngine::Mysql
+            } else {
+                DatabaseEngine::Mariadb
+            };
             deps.config.save(&cfg)?;
         }
         // Con Homebrew los programas no van en bin/<servicio>.
@@ -190,6 +200,74 @@ impl Core {
             deps.config.save(&cfg)?;
         }
         Ok(())
+    }
+
+    /// Si la base de datos elegida no está instalada y la otra sí, usa la
+    /// instalada (por ejemplo, una Mac que ya tenía MariaDB).
+    pub(crate) fn adopt_installed_database(&self) -> Result<(), AppError> {
+        let deps = self.supervisor.deps();
+        let mut cfg = deps.config.load()?;
+        let current = cfg.db_engine.service();
+        let other = cfg.db_engine.other();
+        if self.versions(current)?.is_empty()
+            && !self.versions(other.service())?.is_empty()
+            && !self.supervisor.state(current).is_active()
+        {
+            cfg.db_engine = other;
+            deps.config.save(&cfg)?;
+        }
+        Ok(())
+    }
+
+    /// La base de datos elegida: MariaDB o MySQL.
+    pub fn database_service(&self) -> ServiceId {
+        self.supervisor
+            .deps()
+            .config
+            .load()
+            .map(|c| c.db_engine.service())
+            .unwrap_or(ServiceId::Mariadb)
+    }
+
+    pub fn database_engine(&self) -> DatabaseEngine {
+        self.supervisor
+            .deps()
+            .config
+            .load()
+            .map(|c| c.db_engine)
+            .unwrap_or_default()
+    }
+
+    /// Cambia entre MariaDB y MySQL. Si la anterior estaba en marcha, se
+    /// detiene y arranca la nueva. Cada una tiene su carpeta de datos: las
+    /// bases de una no aparecen en la otra.
+    pub async fn set_database_engine(&self, engine: DatabaseEngine) -> Result<(), AppError> {
+        let deps = self.supervisor.deps();
+        let mut cfg = deps.config.load()?;
+        if cfg.db_engine == engine {
+            return Ok(());
+        }
+        let (old, new) = (cfg.db_engine.service(), engine.service());
+        if self.versions(new)?.is_empty() {
+            return Err(AppError::BinaryMissing {
+                service: new,
+                detail: format!(
+                    "agrégalo desde el menú Agregar → {} y vuelve a elegirlo.",
+                    new.label()
+                ),
+            });
+        }
+        let was_active = self.supervisor.state(old).is_active();
+        if was_active {
+            self.supervisor.stop(old).await?;
+        }
+        cfg.db_engine = engine;
+        deps.config.save(&cfg)?;
+        self.supervisor.emit_all();
+        if was_active {
+            self.start(new).await?;
+        }
+        self.refresh_user_path().await
     }
 
     pub async fn start_all(&self) -> Result<(), AppError> {
@@ -434,6 +512,8 @@ impl Core {
                 paths.root().join("data")
             }
         };
+        let db = deps.config.load()?.db_engine.service();
+        let mysql = db == ServiceId::Mysql;
         match target {
             ConfigTarget::Root => Ok(paths.root().to_path_buf()),
             ConfigTarget::Www => Ok(paths.www()),
@@ -469,24 +549,27 @@ impl Core {
                 Ok(paths.php_user_ini())
             }
             ConfigTarget::PhpErrorLog => log("php-error.log"),
+            // Los de "MariaDB" abren los de la base de datos elegida.
+            ConfigTarget::MariadbCnf if mysql => generated(paths.mysql_cnf(), ServiceId::Mysql),
             ConfigTarget::MariadbCnf => generated(paths.mariadb_cnf(), ServiceId::Mariadb),
             ConfigTarget::MariadbUserCnf => {
-                templates::ensure_user_file(
-                    fs,
-                    &paths.mariadb_user_cnf(),
-                    templates::USER_CNF,
-                    &deps.app_name,
-                )?;
-                Ok(paths.mariadb_user_cnf())
+                let (file, template) = if mysql {
+                    (paths.mysql_user_cnf(), templates::USER_MYSQL_CNF)
+                } else {
+                    (paths.mariadb_user_cnf(), templates::USER_CNF)
+                };
+                templates::ensure_user_file(fs, &file, template, &deps.app_name)?;
+                Ok(file)
             }
             ConfigTarget::MariadbData => {
-                let data = paths.data_mariadb();
+                let data = paths.data(db);
                 Ok(if fs.exists(&data) {
                     data
                 } else {
                     paths.root().join("data")
                 })
             }
+            ConfigTarget::MariadbErrorLog if mysql => log("mysql-error.log"),
             ConfigTarget::MariadbErrorLog => log("mariadb-error.log"),
             ConfigTarget::Backups => {
                 deps.fs.create_dir_all(&paths.backups())?;
@@ -764,11 +847,11 @@ impl Core {
             ServiceId::Apache => (ServiceId::Apache, "httpd"),
             _ => (ServiceId::Nginx, "nginx"),
         };
-        for (id, program) in [
-            (ServiceId::Php, "php"),
-            (ServiceId::Mariadb, "mariadb"),
-            web,
-        ] {
+        let db = match ctx.db() {
+            ServiceId::Mysql => (ServiceId::Mysql, "mysql"),
+            _ => (ServiceId::Mariadb, "mariadb"),
+        };
+        for (id, program) in [(ServiceId::Php, "php"), db, web] {
             if let Some(dir) = ctx
                 .program(id, program)
                 .ok()

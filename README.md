@@ -59,6 +59,7 @@ Las extensiones marcadas en el menú se guardan en `app.json` y PHP se reinicia 
 | PHP 8.4 y 8.3 | última versión de la rama desde `windows.php.net` (NTS x64) | `brew install php@8.4` / `php@8.3` |
 | Nginx | versión estable de `nginx.org` | `brew install nginx` |
 | Apache | build de Apache Lounge para Windows x64, desde su réplica en `fossies.org` (la misma que usa Scoop; `apachelounge.com` bloquea algunas descargas automáticas) | `brew install httpd` |
+| MySQL 8.4 | no (en Windows se usa MariaDB) | tar.gz oficial de `cdn.mysql.com` en `bin/mysql/<versión>/` (ver [Base de datos en macOS](#base-de-datos-en-macos-mysql-84)) |
 | MariaDB 11.4 | última 11.4 de `archive.mariadb.org` | `brew install mariadb@11.4` |
 | PostgreSQL 17 | binarios de EDB (`get.enterprisedb.com`) | `brew install postgresql@17` |
 | Redis | `redis-windows/redis-windows` (GitHub) | `brew install redis` |
@@ -414,11 +415,28 @@ En macOS la app instala los programas con un gestor de paquetes en vez de copiar
 
 La app usa el que ya esté instalado (Homebrew primero). Si no hay ninguno, el asistente **Preparar LARABEST** muestra **Instalar Homebrew** o **Instalar MacPorts** antes de la lista de programas: descarga el instalador oficial (`Homebrew.pkg`, o el `MacPorts-<versión>-<macOS>.pkg` de tu versión de macOS), macOS pide tu contraseña de administrador y queda listo. MacPorts necesita además las herramientas de línea de comandos de Apple: si faltan, la app abre su instalador y, al terminar, se vuelve a pulsar **Instalar MacPorts**.
 
+### Base de datos en macOS: MySQL 8.4
+
+En macOS la base de datos por defecto es **MySQL 8.4 LTS oficial**, no MariaDB: MariaDB no publica binarios para macOS y MacPorts no tiene el paquete compilado (lo compila en tu Mac y puede tardar más de una hora). MySQL se descarga listo de `cdn.mysql.com`, con porcentaje y velocidad en el asistente, se extrae en `~/LARABEST/bin/mysql/<versión>/` y no pide contraseña de administrador.
+
+| Mac | Versión de MySQL |
+| --- | --- |
+| macOS 15 o posterior, Apple Silicon | 8.4.13 |
+| macOS 15 o posterior, Intel | 8.4.11 (Oracle dejó de compilar para Intel después de esa) |
+| macOS 14 | 8.4.3 |
+| macOS 13 | no hay MySQL 8.4: se usa MariaDB |
+
+- **MariaDB sigue disponible** como alternativa: **Menú → Agregar → MariaDB 11.4** y se elige en **Servicios y puertos** (fila Base de datos: MySQL o MariaDB) o en **Menú → Preferencias → Base de datos**. Se usa una u otra, nunca las dos; al cambiar, la anterior se detiene y arranca la nueva.
+- Cada una tiene su carpeta de datos (`data/mysql` y `data/mariadb`): MySQL 8.4 no abre una base de MariaDB. Las bases de una no aparecen en la otra; para pasarlas, respáldalas (**Respaldar base de datos**) e impórtalas.
+- Comparten el puerto (3306), el usuario `root` y su contraseña. MySQL se configura con el método de contraseña clásico (`mysql_native_password`) para que PHP, Adminer, phpMyAdmin, WordPress y Laravel entren sin TLS, y sin el protocolo X (puerto 33060).
+- La primera vez que arranca, la app crea sus tablas con `mysqld --initialize-insecure` (root sin contraseña). Su configuración generada es `etc/mysql/my.cnf` y tus ajustes van en `etc/mysql/custom/user.cnf`.
+- Las Mac que ya usaban MariaDB siguen con MariaDB.
+
 ### MacPorts (Macs Intel)
 
 - Cada programa se instala con `sudo port install` desde **Menú → Agregar** o el asistente; macOS pide la contraseña en cada instalación. La salida queda en `~/LARABEST/logs/macports.log`.
 - Paquetes que usa la app: `php84` y `php83` con `php84-fpm` y las extensiones `curl`, `exif`, `gd`, `iconv`, `intl`, `mbstring`, `mysql`, `opcache`, `openssl`, `sqlite` y `zip`; `nginx`, `apache2`, `mariadb-11.4`, `postgresql17`, `redis`, `mailpit` y `nodejs22` con `npm11`. Composer lo descarga la app. MongoDB no se ofrece (MacPorts solo tiene la 6.0, sin soporte).
-- Si MacPorts no tiene el paquete ya compilado para tu versión de macOS, lo compila: la primera instalación de PHP o MariaDB puede tardar bastante.
+- Si MacPorts no tiene el paquete ya compilado para tu versión de macOS, lo compila. PHP y Apache vienen compilados; **MariaDB no** (por su licencia MacPorts no reparte el binario), por eso en macOS la base de datos por defecto es MySQL.
 - Los programas quedan en `/opt/local`. La app los presenta con enlaces en `~/LARABEST/tmp/macports/` (por ejemplo `php84/sbin/php-fpm` → `/opt/local/sbin/php-fpm84`), y PHP lee los `.ini` de extensiones de `/opt/local/var/db/php84` además de tus ajustes de `etc/php/custom`.
 - No hace falta `port load`: la app arranca y detiene cada programa con su propia configuración.
 

@@ -63,6 +63,19 @@ impl Core {
         } else {
             ServiceId::Nginx
         };
+        // Base de datos: la elegida si se puede agregar aquí (MySQL en las
+        // Mac nuevas); si no, la otra.
+        let engine = self.database_service();
+        let offered = |id: ServiceId| {
+            packages
+                .iter()
+                .any(|p| matches!(p.kind, PackageKind::Service { service, .. } if service == id))
+        };
+        let db = match engine {
+            _ if offered(engine) => engine,
+            ServiceId::Mysql => ServiceId::Mariadb,
+            _ => ServiceId::Mysql,
+        };
         let mut seen: HashSet<ServiceId> = HashSet::new();
         let mut node_seen = false;
         let list = packages
@@ -70,7 +83,7 @@ impl Core {
             .map(|p| {
                 let recommended = match p.kind {
                     PackageKind::Service { service, .. } => {
-                        (matches!(service, ServiceId::Php | ServiceId::Mariadb) || service == web)
+                        (service == ServiceId::Php || service == db || service == web)
                             && seen.insert(service)
                     }
                     PackageKind::Tool(Tool::Nodejs) => !std::mem::replace(&mut node_seen, true),

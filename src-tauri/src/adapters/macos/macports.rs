@@ -73,22 +73,30 @@ fn candidates(service: ServiceId) -> Vec<Candidate> {
         ServiceId::Mariadb => vec![Candidate {
             port: "mariadb-11.4".into(),
             branch: "11.4",
-            links: ["mariadbd", "mariadb", "mariadb-admin", "mariadb-install-db"]
-                .into_iter()
-                .map(|name| {
-                    let dest: &'static str = match name {
-                        "mariadbd" => "bin/mariadbd",
-                        "mariadb" => "bin/mariadb",
-                        "mariadb-admin" => "bin/mariadb-admin",
-                        _ => "bin/mariadb-install-db",
-                    };
-                    let places: Vec<String> = ["bin", "sbin", "libexec"]
-                        .iter()
-                        .map(|dir| format!("lib/mariadb-11.4/{dir}/{name}"))
-                        .collect();
-                    (dest, places)
-                })
-                .collect(),
+            links: [
+                "mariadbd",
+                "mariadb",
+                "mariadb-admin",
+                "mariadb-dump",
+                "mariadb-install-db",
+            ]
+            .into_iter()
+            .map(|name| {
+                let dest: &'static str = match name {
+                    "mariadbd" => "bin/mariadbd",
+                    "mariadb" => "bin/mariadb",
+                    "mariadb-admin" => "bin/mariadb-admin",
+                    // Para los respaldos (Menú → MariaDB → Respaldar).
+                    "mariadb-dump" => "bin/mariadb-dump",
+                    _ => "bin/mariadb-install-db",
+                };
+                let places: Vec<String> = ["bin", "sbin", "libexec"]
+                    .iter()
+                    .map(|dir| format!("lib/mariadb-11.4/{dir}/{name}"))
+                    .collect();
+                (dest, places)
+            })
+            .collect(),
         }],
         ServiceId::Postgresql => vec![Candidate {
             port: "postgresql17".into(),
@@ -119,6 +127,8 @@ fn candidates(service: ServiceId) -> Vec<Candidate> {
         )],
         // MacPorts solo tiene MongoDB 6.0 (sin soporte): no se ofrece.
         ServiceId::Mongodb => Vec::new(),
+        // MySQL es el tar.gz oficial en bin/mysql (otro proveedor).
+        ServiceId::Mysql => Vec::new(),
     }
 }
 

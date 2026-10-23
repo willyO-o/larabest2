@@ -322,26 +322,29 @@ impl Core {
         Ok(warning)
     }
 
-    /// Arranca MariaDB si hace falta y crea la base de datos del sitio.
+    /// Arranca la base de datos (MariaDB o MySQL) si hace falta y crea la
+    /// del sitio.
     async fn database_ready(
         &self,
         db: &str,
         progress: &Progress<'_>,
     ) -> Result<RenderContext, AppError> {
-        if self.supervisor.state(ServiceId::Mariadb) != ServiceState::Running {
-            progress.step("Iniciando MariaDB");
-            self.start(ServiceId::Mariadb).await?;
+        let engine = self.database_service();
+        if self.supervisor.state(engine) != ServiceState::Running {
+            progress.step(format!("Iniciando {}", engine.label()));
+            self.start(engine).await?;
         }
-        if self.supervisor.state(ServiceId::Mariadb) != ServiceState::Running {
+        if self.supervisor.state(engine) != ServiceState::Running {
             let detail = self
                 .supervisor
                 .snapshot()
                 .into_iter()
-                .find(|s| s.id == ServiceId::Mariadb)
+                .find(|s| s.id == engine)
                 .and_then(|s| s.detail)
                 .unwrap_or_default();
             return Err(AppError::Process(format!(
-                "MariaDB no está en marcha y el sitio necesita una base de datos. {detail}"
+                "{} no está en marcha y el sitio necesita una base de datos. {detail}",
+                engine.label()
             )));
         }
         progress.step(format!("Creando la base de datos {db}"));

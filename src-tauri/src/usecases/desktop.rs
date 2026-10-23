@@ -6,7 +6,7 @@ use std::path::Path;
 
 use super::Core;
 use crate::domain::desktop::DesktopTool;
-use crate::domain::{slash, ServiceId, ServiceState};
+use crate::domain::{slash, ServiceState};
 use crate::error::AppError;
 
 impl Core {
@@ -32,7 +32,7 @@ impl Core {
     pub(crate) fn open_heidisql(&self) -> Result<(), AppError> {
         self.require_desktop(DesktopTool::Heidisql)?;
         let deps = self.supervisor.deps();
-        if self.supervisor.state(ServiceId::Mariadb) != ServiceState::Running {
+        if self.supervisor.state(self.database_service()) != ServiceState::Running {
             return Err(AppError::InvalidInput(
                 "Inicia MariaDB para abrir HeidiSQL.".into(),
             ));

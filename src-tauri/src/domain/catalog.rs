@@ -109,15 +109,18 @@ impl Package {
 }
 
 /// El catálogo de Windows 10/11, Server 2016+ y macOS, en el orden del
-/// menú. Las versiones elegidas para la app: PHP 8.3 y 8.4, MariaDB 11.4
-/// (LTS) y PostgreSQL 17.
-pub const PACKAGES: [Package; 15] = [
+/// menú. Las versiones elegidas para la app: PHP 8.3 y 8.4, MySQL 8.4 (LTS,
+/// solo macOS), MariaDB 11.4 (LTS) y PostgreSQL 17.
+pub const PACKAGES: [Package; 16] = [
     service("php-8.4", "PHP 8.4", ServiceId::Php, "8.4"),
     service("php-8.3", "PHP 8.3", ServiceId::Php, "8.3"),
     // Apache primero: es el servidor web por defecto de las instalaciones
     // nuevas (los .htaccess de WordPress y Laravel funcionan tal cual).
     service("apache", "Apache", ServiceId::Apache, ""),
     service("nginx", "Nginx", ServiceId::Nginx, ""),
+    // MySQL antes que MariaDB: en macOS es la base de datos por defecto
+    // (se descarga lista; MariaDB lo compila MacPorts y tarda mucho).
+    service("mysql-8.4", "MySQL 8.4", ServiceId::Mysql, "8.4"),
     service("mariadb-11.4", "MariaDB 11.4", ServiceId::Mariadb, "11.4"),
     service(
         "postgresql-17",
@@ -199,13 +202,23 @@ pub fn packages_for(os: OsInfo, layout: BinaryLayout) -> Vec<Package> {
             "nodejs-12",
             "notepadpp",
         ],
-        Some(WindowsTier::Modern) => return PACKAGES.to_vec(),
-        // macOS: HeidiSQL y Notepad++ son de Windows.
+        // En Windows sigue MariaDB (tiene zip oficial); MySQL es de macOS.
+        Some(WindowsTier::Modern) => {
+            return PACKAGES
+                .iter()
+                .copied()
+                .filter(|p| p.id != "mysql-8.4")
+                .collect()
+        }
+        // macOS: HeidiSQL y Notepad++ son de Windows. MySQL 8.4 tiene
+        // binarios oficiales desde macOS 14.
         None => {
+            let mysql = mysql_build(os).is_some();
             return PACKAGES
                 .iter()
                 .copied()
                 .filter(|p| !matches!(p.kind, PackageKind::Tool(Tool::Desktop(_))))
+                .filter(|p| mysql || p.id != "mysql-8.4")
                 .filter(|p| {
                     layout != BinaryLayout::MacPorts
                         || !matches!(
@@ -216,7 +229,7 @@ pub fn packages_for(os: OsInfo, layout: BinaryLayout) -> Vec<Package> {
                             }
                         )
                 })
-                .collect()
+                .collect();
         }
     };
     ids.iter().filter_map(|id| find(id)).collect()
@@ -228,6 +241,28 @@ pub fn first_for(os: OsInfo, layout: BinaryLayout, service: ServiceId) -> Option
     packages_for(os, layout)
         .into_iter()
         .find(|p| matches!(p.kind, PackageKind::Service { service: s, .. } if s == service))
+}
+
+/// Versión y archivo oficial de MySQL 8.4 para esta Mac (tar.gz de
+/// mysql.com, listo para usar). Oracle dejó de publicar Intel en 8.4.11 y
+/// macOS 14 en 8.4.3; macOS 13 no tiene MySQL 8.4 (queda MariaDB).
+pub fn mysql_build(os: OsInfo) -> Option<(&'static str, String)> {
+    let OsInfo::MacOs {
+        major,
+        apple_silicon,
+        ..
+    } = os
+    else {
+        return None;
+    };
+    let arch = if apple_silicon { "arm64" } else { "x86_64" };
+    let (version, target) = match (major, apple_silicon) {
+        (15.., true) => ("8.4.13", "macos15"),
+        (15.., false) => ("8.4.11", "macos15"),
+        (14, _) => ("8.4.3", "macos14"),
+        _ => return None,
+    };
+    Some((version, format!("mysql-{version}-{target}-{arch}.tar.gz")))
 }
 
 /// Fuentes de las versiones (Windows).
@@ -249,6 +284,15 @@ pub mod urls {
     pub const PHPMYADMIN: &str =
         "https://www.phpmyadmin.net/downloads/phpMyAdmin-latest-all-languages.zip";
     pub const NODE_INDEX: &str = "https://nodejs.org/dist/index.json";
+
+    /// Dónde está un tar.gz de MySQL 8.4: la versión actual en
+    /// `Downloads/`; las anteriores pasan a `archives/`.
+    pub fn mysql_tarballs(file: &str) -> [String; 2] {
+        [
+            format!("https://cdn.mysql.com/Downloads/MySQL-8.4/{file}"),
+            format!("https://cdn.mysql.com/archives/mysql-8.4/{file}"),
+        ]
+    }
 
     /// La API de GitHub entrega un asset (`/releases/assets/<id>`) como
     /// archivo solo si se pide así. Así se descarga sin pasar por
@@ -590,7 +634,70 @@ mod tests {
     #[test]
     fn packages_are_grouped_for_the_menu() {
         let groups: Vec<u8> = PACKAGES.iter().map(Package::group).collect();
-        assert_eq!(groups, vec![0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2]);
+        assert_eq!(groups, vec![0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2]);
+    }
+
+    #[test]
+    fn mysql_uses_the_last_official_build_for_each_mac() {
+        let mac = |major, apple_silicon| OsInfo::MacOs {
+            major,
+            minor: 0,
+            apple_silicon,
+        };
+        assert_eq!(
+            mysql_build(mac(15, true)),
+            Some(("8.4.13", "mysql-8.4.13-macos15-arm64.tar.gz".to_string()))
+        );
+        // Oracle dejó de compilar para Intel en 8.4.11.
+        assert_eq!(
+            mysql_build(mac(26, false)),
+            Some(("8.4.11", "mysql-8.4.11-macos15-x86_64.tar.gz".to_string()))
+        );
+        assert_eq!(
+            mysql_build(mac(14, false)),
+            Some(("8.4.3", "mysql-8.4.3-macos14-x86_64.tar.gz".to_string()))
+        );
+        assert_eq!(mysql_build(mac(13, true)), None);
+        assert_eq!(
+            mysql_build(OsInfo::Windows {
+                build: 26200,
+                server: false
+            }),
+            None
+        );
+        assert_eq!(
+            urls::mysql_tarballs("f.tar.gz"),
+            [
+                "https://cdn.mysql.com/Downloads/MySQL-8.4/f.tar.gz".to_string(),
+                "https://cdn.mysql.com/archives/mysql-8.4/f.tar.gz".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn mysql_is_offered_only_on_macs_that_have_it() {
+        let ids =
+            |os, layout| -> Vec<&str> { packages_for(os, layout).iter().map(|p| p.id).collect() };
+        let sequoia_intel = OsInfo::MacOs {
+            major: 15,
+            minor: 1,
+            apple_silicon: false,
+        };
+        let list = ids(sequoia_intel, BinaryLayout::MacPorts);
+        let mysql = list.iter().position(|&id| id == "mysql-8.4").unwrap();
+        let mariadb = list.iter().position(|&id| id == "mariadb-11.4").unwrap();
+        assert!(mysql < mariadb, "MySQL primero: es la recomendada en macOS");
+        let ventura = OsInfo::MacOs {
+            major: 13,
+            minor: 6,
+            apple_silicon: false,
+        };
+        assert!(!ids(ventura, BinaryLayout::MacPorts).contains(&"mysql-8.4"));
+        let windows = OsInfo::Windows {
+            build: 26200,
+            server: false,
+        };
+        assert!(!ids(windows, BinaryLayout::Portable).contains(&"mysql-8.4"));
     }
 
     #[test]

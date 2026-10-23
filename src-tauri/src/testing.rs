@@ -755,6 +755,8 @@ pub struct FakeDownloader {
     pub fail: Mutex<bool>,
     /// Contenido que devuelve cada URL (por ejemplo, un JSON de versiones).
     pub responses: Mutex<HashMap<String, String>>,
+    /// URLs que fallan (como un 404).
+    pub missing: Mutex<Vec<String>>,
 }
 
 impl FakeDownloader {
@@ -764,6 +766,7 @@ impl FakeDownloader {
             urls: Mutex::new(Vec::new()),
             fail: Mutex::new(false),
             responses: Mutex::new(HashMap::new()),
+            missing: Mutex::new(Vec::new()),
         }
     }
 
@@ -782,6 +785,11 @@ impl crate::ports::Downloader for FakeDownloader {
         if *self.fail.lock().unwrap() {
             return Err(AppError::Process(format!(
                 "No se pudo descargar {url}: sin conexión"
+            )));
+        }
+        if self.missing.lock().unwrap().iter().any(|m| m == url) {
+            return Err(AppError::Process(format!(
+                "No se pudo descargar {url}: 404"
             )));
         }
         let body = self.responses.lock().unwrap().get(url).cloned();

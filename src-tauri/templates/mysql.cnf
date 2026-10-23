@@ -1,0 +1,28 @@
+# Generado por {{ app_name }} para MySQL {{ version }}. No editar: se regenera en cada inicio.
+
+[mysqld]
+basedir = "{{ basedir }}"
+datadir = "{{ datadir }}"
+port = {{ port }}
+bind-address = 127.0.0.1
+# Sin el protocolo X (puerto 33060): no lo usan PHP ni las herramientas.
+mysqlx = OFF
+character-set-server = utf8mb4
+collation-server = utf8mb4_unicode_ci
+# Método de contraseña clásico: lo entienden todas las versiones de PHP,
+# Adminer y phpMyAdmin sin TLS (el de MySQL 8 pide una clave RSA o TLS).
+mysql_native_password = ON
+authentication_policy = mysql_native_password
+log-error = "{{ logs }}/mysql-error.log"
+pid-file = "{{ tmp }}/mysql.pid"
+socket = "{{ socket }}"
+tmpdir = "{{ tmp }}"
+
+[client]
+host = 127.0.0.1
+port = {{ port }}
+default-character-set = utf8mb4
+socket = "{{ socket }}"
+
+# Ajustes propios: archivos .cnf en esta carpeta (no se regeneran).
+!includedir {{ custom_dir }}

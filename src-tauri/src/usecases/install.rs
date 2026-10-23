@@ -21,6 +21,8 @@ const BREW_NODE_PATHS: [&str; 2] = ["/opt/homebrew/bin/node", "/usr/local/bin/no
 /// `port install` compila desde el código fuente lo que no tiene paquete
 /// binario para esa versión de macOS: puede tardar mucho más que Homebrew.
 const MACPORTS_TIMEOUT: Duration = Duration::from_secs(3 * 60 * 60);
+/// Extraer el tar.gz de MySQL (unos 170 MB) en un disco lento.
+const MYSQL_EXTRACT_TIMEOUT: Duration = Duration::from_secs(10 * 60);
 const PORT_PATH: &str = "/opt/local/bin/port";
 const MACPORTS_NODE_PATH: &str = "/opt/local/bin/node";
 const HOMEBREW_RELEASE: &str = "https://api.github.com/repos/Homebrew/brew/releases/latest";
@@ -117,6 +119,11 @@ impl Core {
         };
         let layout = self.supervisor.deps().layout;
         let result = match package.kind {
+            // MySQL: el tar.gz oficial de mysql.com, con o sin gestor.
+            PackageKind::Service {
+                service: ServiceId::Mysql,
+                ..
+            } => self.install_mysql(&progress).await,
             PackageKind::Service { service, branch } => match layout {
                 BinaryLayout::Portable => {
                     self.install_zip(&progress, service, branch, package.pinned)
@@ -134,6 +141,7 @@ impl Core {
                 // de un PHP recién agregado).
                 self.load_php_builds().await;
                 self.adopt_installed_web_server()?;
+                self.adopt_installed_database()?;
                 self.supervisor.emit_all();
                 self.refresh_user_path().await?;
                 Ok(message)
@@ -220,6 +228,9 @@ impl Core {
                 let url = urls::mailpit_zip(&tag);
                 Ok((tag.trim_start_matches('v').to_string(), url))
             }
+            ServiceId::Mysql => Err(AppError::Unsupported(
+                "MySQL se agrega solo en macOS; en Windows usa MariaDB.".into(),
+            )),
         }
     }
 
@@ -279,6 +290,64 @@ impl Core {
             )));
         }
         Ok(format!("{} {version} instalado.", service.label()))
+    }
+
+    /// macOS: MySQL 8.4 oficial. Descarga el tar.gz de mysql.com (con
+    /// porcentaje y velocidad) y lo extrae en `bin/mysql/<versión>/`. Sin
+    /// gestor de paquetes, sin compilar y sin contraseña de administrador.
+    async fn install_mysql(&self, progress: &Progress<'_>) -> Result<String, AppError> {
+        let deps = self.supervisor.deps();
+        let (version, file) = catalog::mysql_build(self.os).ok_or_else(|| {
+            AppError::Unsupported(format!(
+                "MySQL 8.4 no tiene versión para {}: usa MariaDB.",
+                self.os.label()
+            ))
+        })?;
+        let service = ServiceId::Mysql;
+        let dest = deps.paths.bin_service(service).join(version);
+        // El tar.gz de macOS (sin .exe, aunque las pruebas corran en Windows).
+        let marker = dest
+            .join("bin")
+            .join(server_program(BinaryLayout::Portable, service));
+        if deps.fs.exists(&marker) {
+            return Ok(format!("MySQL {version} ya estaba instalado."));
+        }
+        let tarball = deps.paths.downloads().join(&file);
+        let step = format!("Descargando MySQL {version}");
+        // La versión actual está en Downloads/; al salir otra pasa a archives/.
+        let mut last_error = None;
+        for url in urls::mysql_tarballs(&file) {
+            match self.download_tracked(progress, &step, &url, &tarball).await {
+                Ok(()) => {
+                    last_error = None;
+                    break;
+                }
+                Err(e) => last_error = Some(e),
+            }
+        }
+        if let Some(e) = last_error {
+            return Err(e);
+        }
+        progress.step(format!("Extrayendo en {}", slash(&dest)));
+        deps.fs.create_dir_all(&dest)?;
+        let spec = ProcessSpec::new("/usr/bin/tar", deps.paths.root())
+            .arg("-xzf")
+            .arg(slash(&tarball))
+            .arg("-C")
+            .arg(slash(&dest))
+            .arg("--strip-components")
+            .arg("1");
+        let out = deps.runner.run(&spec, MYSQL_EXTRACT_TIMEOUT).await;
+        let _ = deps.fs.remove_file(&tarball);
+        let out = out?;
+        if !out.success() || !deps.fs.exists(&marker) {
+            let _ = deps.fs.remove_dir_all(&dest);
+            return Err(AppError::Process(format!(
+                "No se pudo extraer MySQL {version}: {}",
+                out.text()
+            )));
+        }
+        Ok(format!("MySQL {version} instalado."))
     }
 
     async fn extract(

@@ -16,8 +16,8 @@ pub mod user_path;
 mod version;
 
 pub use config::{
-    ActiveVersions, AppConfig, DatabaseClient, OptionalServices, PortSettings, ThemePreference,
-    WebServer, DEFAULT_PHP_EXTENSIONS,
+    ActiveVersions, AppConfig, DatabaseClient, DatabaseEngine, OptionalServices, PortSettings,
+    ThemePreference, WebServer, DEFAULT_PHP_EXTENSIONS,
 };
 pub use dotenv::set_env;
 pub use hosts::{decode_request, encode_request, merge_block, parse_block, HostEntry};

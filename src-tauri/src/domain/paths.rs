@@ -156,6 +156,34 @@ impl Paths {
         self.tmp().join("mariadb.sock")
     }
 
+    pub fn etc_mysql(&self) -> PathBuf {
+        self.etc().join("mysql")
+    }
+
+    pub fn mysql_cnf(&self) -> PathBuf {
+        self.etc_mysql().join("my.cnf")
+    }
+
+    /// Archivos `.cnf` propios del usuario para MySQL (`!includedir`).
+    pub fn mysql_custom(&self) -> PathBuf {
+        self.etc_mysql().join("custom")
+    }
+
+    pub fn mysql_user_cnf(&self) -> PathBuf {
+        self.mysql_custom().join("user.cnf")
+    }
+
+    /// Socket propio de MySQL, para no chocar con otro en `/tmp/mysql.sock`.
+    pub fn mysql_socket(&self) -> PathBuf {
+        self.tmp().join("mysql.sock")
+    }
+
+    /// Opciones del cliente de MySQL con la contraseña de root: el cliente
+    /// de MySQL no la toma de `MYSQL_PWD` en todas las versiones.
+    pub fn mysql_client_cnf(&self) -> PathBuf {
+        self.tmp().join("mysql-client.cnf")
+    }
+
     /// Envoltorio generado que carga Adminer sin pedir contraseña.
     pub fn etc_adminer(&self) -> PathBuf {
         self.etc().join("adminer")

@@ -11,7 +11,8 @@ use crate::commands::{open_path, open_url};
 use crate::domain::catalog;
 use crate::domain::desktop::DesktopTool;
 use crate::domain::{
-    BinaryLayout, DatabaseClient, ServiceId, ServiceState, ThemePreference, WebServer,
+    BinaryLayout, DatabaseClient, DatabaseEngine, ServiceId, ServiceState, ThemePreference,
+    WebServer,
 };
 use crate::error::AppError;
 use crate::usecases::ConfigTarget;
@@ -226,13 +227,10 @@ pub fn build(app: &AppHandle, from_tray: bool) -> tauri::Result<Menu<Wry>> {
 
     let heidisql = core.desktop_installed(DesktopTool::Heidisql);
     let notepadpp = core.desktop_installed(DesktopTool::Notepadpp);
+    // La base de datos elegida (MariaDB o MySQL), con su nombre.
+    let db = core.database_service();
     let mut mariadb = vec![
-        versions(
-            app,
-            &state,
-            ServiceId::Mariadb,
-            active(ServiceId::Mariadb).as_deref(),
-        )?,
+        versions(app, &state, db, active(db).as_deref())?,
         open(app, "mariadbUserCnf", "my.cnf (ajustes propios)")?,
     ];
     if heidisql {
@@ -299,7 +297,7 @@ pub fn build(app: &AppHandle, from_tray: bool) -> tauri::Result<Menu<Wry>> {
         open(app, error_log, &format!("{}: errores", web.label()))?,
         open(app, access_log, &format!("{}: accesos", web.label()))?,
         open(app, "phpErrorLog", "PHP: errores")?,
-        open(app, "mariadbErrorLog", "MariaDB: errores")?,
+        open(app, "mariadbErrorLog", &format!("{}: errores", db.label()))?,
     ];
     for &id in &enabled {
         let target = match id {
@@ -404,6 +402,20 @@ pub fn build(app: &AppHandle, from_tray: bool) -> tauri::Result<Menu<Wry>> {
             client == DatabaseClient::Phpmyadmin,
         )?,
     ]);
+    // Preferencias → Base de datos: MariaDB o MySQL.
+    let mut engines = Vec::new();
+    for (key, choice) in [
+        ("mysql", DatabaseEngine::Mysql),
+        ("mariadb", DatabaseEngine::Mariadb),
+    ] {
+        let id = choice.service();
+        let label = if core.versions(id).unwrap_or_default().is_empty() {
+            format!("{} (sin instalar)", id.label())
+        } else {
+            id.label().to_string()
+        };
+        engines.push(check(app, &format!("dbengine:{key}"), &label, id == db)?);
+    }
     // Preferencias → Servidor web: Nginx o Apache.
     let mut web_servers = Vec::new();
     for (key, choice) in [("nginx", WebServer::Nginx), ("apache", WebServer::Apache)] {
@@ -427,6 +439,7 @@ pub fn build(app: &AppHandle, from_tray: bool) -> tauri::Result<Menu<Wry>> {
     let prefs = vec![
         Box::new(submenu(app, "Tema", themes)?) as Item,
         Box::new(submenu(app, "Servidor web", web_servers)?) as Item,
+        Box::new(submenu(app, "Base de datos", engines)?) as Item,
         // Qué servicios forman parte de la pila y sus puertos: un panel en
         // la ventana, porque los puertos se escriben.
         text(app, "services_panel", "Servicios y puertos…")?,
@@ -475,7 +488,7 @@ pub fn build(app: &AppHandle, from_tray: bool) -> tauri::Result<Menu<Wry>> {
         .item(&submenu(app, "www", www)?)
         .item(&submenu(app, web.label(), web_menu)?)
         .item(&submenu(app, "PHP", php)?)
-        .item(&submenu(app, "MariaDB", mariadb)?);
+        .item(&submenu(app, db.label(), mariadb)?);
     for menu in &optional {
         builder = builder.item(menu);
     }
@@ -555,7 +568,7 @@ async fn run(app: &AppHandle, id: &str) -> Result<(), AppError> {
         "heidisql" => return core.open_heidisql(),
         "notepadpp" => return core.open_notepadpp(),
         "adminer:postgresql" => return open_url(app, &core.adminer_url(ServiceId::Postgresql)?),
-        "adminer:mariadb" => return open_url(app, &core.adminer_url(ServiceId::Mariadb)?),
+        "adminer:mariadb" => return open_url(app, &core.adminer_url(core.database_service())?),
         "phpmyadmin" => return open_url(app, &core.phpmyadmin_url()?),
         "mailpit" => return open_url(app, &core.mailpit_url()?),
         "terminal" => return core.open_terminal(None),
@@ -662,6 +675,12 @@ async fn run(app: &AppHandle, id: &str) -> Result<(), AppError> {
         let web: WebServer = serde_json::from_value(serde_json::Value::String(web.into()))
             .map_err(|_| AppError::InvalidInput(id.into()))?;
         return core.set_web_server(web).await;
+    }
+    if let Some(engine) = id.strip_prefix("dbengine:") {
+        let engine: DatabaseEngine =
+            serde_json::from_value(serde_json::Value::String(engine.into()))
+                .map_err(|_| AppError::InvalidInput(id.into()))?;
+        return core.set_database_engine(engine).await;
     }
     if let Some(client) = id.strip_prefix("dbclient:") {
         let client: DatabaseClient =

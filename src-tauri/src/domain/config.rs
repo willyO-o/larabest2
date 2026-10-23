@@ -10,6 +10,7 @@ pub struct ActiveVersions {
     pub apache: Option<String>,
     pub php: Option<String>,
     pub mariadb: Option<String>,
+    pub mysql: Option<String>,
     pub postgresql: Option<String>,
     pub redis: Option<String>,
     pub mongodb: Option<String>,
@@ -23,6 +24,7 @@ impl ActiveVersions {
             ServiceId::Apache => &mut self.apache,
             ServiceId::Php => &mut self.php,
             ServiceId::Mariadb => &mut self.mariadb,
+            ServiceId::Mysql => &mut self.mysql,
             ServiceId::Postgresql => &mut self.postgresql,
             ServiceId::Redis => &mut self.redis,
             ServiceId::Mongodb => &mut self.mongodb,
@@ -36,6 +38,7 @@ impl ActiveVersions {
             ServiceId::Apache => self.apache.as_deref(),
             ServiceId::Php => self.php.as_deref(),
             ServiceId::Mariadb => self.mariadb.as_deref(),
+            ServiceId::Mysql => self.mysql.as_deref(),
             ServiceId::Postgresql => self.postgresql.as_deref(),
             ServiceId::Redis => self.redis.as_deref(),
             ServiceId::Mongodb => self.mongodb.as_deref(),
@@ -49,8 +52,9 @@ impl ActiveVersions {
 }
 
 /// Servicios que se pueden quitar de la pila en Preferencias → Servicios y
-/// puertos (los opcionales y MariaDB). `None`: activo si está instalado,
-/// así lo recién instalado aparece solo.
+/// puertos (los opcionales y la base de datos). `None`: activo si está
+/// instalado, así lo recién instalado aparece solo. `mariadb` vale para la
+/// base de datos elegida, sea MariaDB o MySQL.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct OptionalServices {
@@ -66,7 +70,7 @@ impl OptionalServices {
         match id {
             // Parte de la pila base: activo salvo que se quite a propósito,
             // así su fila (aunque diga "sin instalar") guía al usuario.
-            ServiceId::Mariadb => Some(self.mariadb.unwrap_or(true)),
+            ServiceId::Mariadb | ServiceId::Mysql => Some(self.mariadb.unwrap_or(true)),
             ServiceId::Postgresql => self.postgresql,
             ServiceId::Redis => self.redis,
             ServiceId::Mongodb => self.mongodb,
@@ -77,7 +81,7 @@ impl OptionalServices {
 
     pub fn set(&mut self, id: ServiceId, enabled: bool) {
         match id {
-            ServiceId::Mariadb => self.mariadb = Some(enabled),
+            ServiceId::Mariadb | ServiceId::Mysql => self.mariadb = Some(enabled),
             ServiceId::Postgresql => self.postgresql = Some(enabled),
             ServiceId::Redis => self.redis = Some(enabled),
             ServiceId::Mongodb => self.mongodb = Some(enabled),
@@ -111,6 +115,32 @@ impl WebServer {
         match self {
             WebServer::Nginx => ServiceId::Nginx,
             WebServer::Apache => ServiceId::Apache,
+        }
+    }
+}
+
+/// Base de datos de la pila: MariaDB o MySQL, nunca las dos (usan el
+/// mismo puerto y sus carpetas de datos no son compatibles).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DatabaseEngine {
+    #[default]
+    Mariadb,
+    Mysql,
+}
+
+impl DatabaseEngine {
+    pub fn service(self) -> ServiceId {
+        match self {
+            DatabaseEngine::Mariadb => ServiceId::Mariadb,
+            DatabaseEngine::Mysql => ServiceId::Mysql,
+        }
+    }
+
+    pub fn other(self) -> DatabaseEngine {
+        match self {
+            DatabaseEngine::Mariadb => DatabaseEngine::Mysql,
+            DatabaseEngine::Mysql => DatabaseEngine::Mariadb,
         }
     }
 }
@@ -189,6 +219,9 @@ pub struct AppConfig {
     /// contraseña). La usan la app, Adminer, phpMyAdmin, HeidiSQL y los
     /// sitios nuevos. Solo escucha en 127.0.0.1.
     pub mariadb_root_password: String,
+    /// MariaDB o MySQL. Las instalaciones nuevas de macOS usan MySQL; las
+    /// anteriores (sin el campo) siguen con MariaDB.
+    pub db_engine: DatabaseEngine,
 }
 
 impl Default for AppConfig {
@@ -218,6 +251,7 @@ impl Default for AppConfig {
             setup_done: false,
             auto_vhosts: true,
             mariadb_root_password: String::new(),
+            db_engine: DatabaseEngine::Mariadb,
         }
     }
 }
@@ -329,7 +363,7 @@ impl AppConfig {
         match id {
             ServiceId::Nginx | ServiceId::Apache => self.http_port,
             ServiceId::Php => self.php_base_port,
-            ServiceId::Mariadb => self.mariadb_port,
+            ServiceId::Mariadb | ServiceId::Mysql => self.mariadb_port,
             ServiceId::Postgresql => self.postgresql_port,
             ServiceId::Redis => self.redis_port,
             ServiceId::Mongodb => self.mongodb_port,

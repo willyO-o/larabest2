@@ -57,6 +57,8 @@ impl BinaryLayout {
                 )
                 .collect(),
             ServiceId::Mariadb => vec![format!("mariadb-{branch}")],
+            // MySQL se descarga de mysql.com, no de MacPorts.
+            ServiceId::Mysql => Vec::new(),
             ServiceId::Postgresql => vec![format!("postgresql{compact}")],
             ServiceId::Redis => vec!["redis".into()],
             ServiceId::Mailpit => vec!["mailpit".into()],
@@ -96,6 +98,7 @@ impl BinaryLayout {
             ServiceId::Apache => &["httpd"],
             ServiceId::Php => &["php@8.3", "php@8.4"],
             ServiceId::Mariadb => &["mariadb@11.4"],
+            ServiceId::Mysql => &["mysql@8.4"],
             ServiceId::Postgresql => &["postgresql@17"],
             ServiceId::Redis => &["redis"],
             // No está en homebrew-core: el nombre completo agrega el tap.
@@ -117,6 +120,13 @@ impl BinaryLayout {
 
     /// Qué hacer cuando no hay ninguna versión instalada del servicio.
     pub fn install_hint(self, paths: &Paths, service: ServiceId) -> String {
+        // En macOS MySQL es el tar.gz oficial en bin/mysql, no un paquete.
+        if service == ServiceId::Mysql && self.is_macos() {
+            return format!(
+                "no está instalado. Agrégalo desde Menú → Agregar → MySQL 8.4 (se descarga de mysql.com en {}).",
+                slash(&paths.bin_service(service))
+            );
+        }
         match self {
             BinaryLayout::Portable => format!(
                 "no hay ninguna versión en {}. Copia ahí la carpeta descomprimida.",
@@ -135,6 +145,9 @@ impl BinaryLayout {
 
     /// Texto corto para el submenú "Versión" cuando no hay ninguna.
     pub fn menu_hint(self, service: ServiceId) -> String {
+        if service == ServiceId::Mysql && self.is_macos() {
+            return "(agrégalo desde Menú → Agregar)".into();
+        }
         match self {
             BinaryLayout::Portable => format!("(copia una versión en bin/{})", service.key()),
             BinaryLayout::Homebrew => {
@@ -146,6 +159,9 @@ impl BinaryLayout {
 
     /// Dónde se buscan las versiones, para los mensajes de error.
     pub fn versions_place(self, paths: &Paths, service: ServiceId) -> String {
+        if service == ServiceId::Mysql {
+            return format!("en {}", slash(&paths.bin_service(service)));
+        }
         match self {
             BinaryLayout::Portable => format!("en {}", slash(&paths.bin_service(service))),
             BinaryLayout::Homebrew => "instalada con Homebrew".into(),

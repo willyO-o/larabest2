@@ -6,6 +6,7 @@ export type ServiceId =
   | 'apache'
   | 'php'
   | 'mariadb'
+  | 'mysql'
   | 'postgresql'
   | 'redis'
   | 'mongodb'
@@ -118,8 +119,12 @@ export interface PortSettings {
 }
 
 /** Resultado de `services_settings_get`. */
+/** Base de datos de la pila: una u otra. */
+export type DatabaseEngine = 'mariadb' | 'mysql'
+
 export interface ServicesSettings {
   webServer: WebServer
+  dbEngine: DatabaseEngine
   ports: PortSettings
   phpPortCount: number
   sites: SiteSettings
@@ -135,6 +140,8 @@ export interface SiteSettings {
 
 /** Panel de bases de datos (`db_info`). */
 export interface DatabaseInfo {
+  /** MariaDB o MySQL, la elegida. */
+  engine: DatabaseEngine
   running: boolean
   databases: string[]
   hasPassword: boolean
@@ -152,6 +159,7 @@ export interface ServiceToggle {
 /** Lo que guarda `services_settings_save`. */
 export interface ServicesChoice {
   webServer: WebServer
+  dbEngine: DatabaseEngine
   /** Solo servicios que se pueden quitar: MariaDB y los opcionales. */
   enabled: ServiceToggle[]
   ports: PortSettings

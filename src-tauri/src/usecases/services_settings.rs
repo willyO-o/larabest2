@@ -5,7 +5,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::Core;
-use crate::domain::{database, BinaryLayout, PortSettings, ServiceId, WebServer};
+use crate::domain::{database, BinaryLayout, DatabaseEngine, PortSettings, ServiceId, WebServer};
 use crate::error::AppError;
 
 /// Lo que muestra el panel. Versiones y estado llegan aparte, con los
@@ -14,6 +14,8 @@ use crate::error::AppError;
 #[serde(rename_all = "camelCase")]
 pub struct ServicesSettings {
     pub web_server: WebServer,
+    /// MariaDB o MySQL.
+    pub db_engine: DatabaseEngine,
     pub ports: PortSettings,
     /// Cuántos puertos seguidos usa PHP desde `ports.php`.
     pub php_port_count: u16,
@@ -34,6 +36,9 @@ pub struct SiteSettings {
 #[serde(rename_all = "camelCase")]
 pub struct ServicesChoice {
     pub web_server: WebServer,
+    /// MariaDB o MySQL. Si falta, no cambia.
+    #[serde(default)]
+    pub db_engine: Option<DatabaseEngine>,
     /// Servicios que se pueden quitar de la pila (`can_disable`).
     pub enabled: Vec<ServiceToggle>,
     pub ports: PortSettings,
@@ -75,6 +80,7 @@ impl Core {
         let cfg = self.supervisor.deps().config.load()?;
         Ok(ServicesSettings {
             web_server: cfg.web_server,
+            db_engine: cfg.db_engine,
             ports: cfg.ports(),
             php_port_count: self.php_port_count(),
             sites: SiteSettings {
@@ -135,6 +141,10 @@ impl Core {
                 )));
             }
         }
+        // La base de datos primero: su casilla viene con el motor elegido.
+        if let Some(engine) = choice.db_engine {
+            self.set_database_engine(engine).await?;
+        }
         for toggle in &choice.enabled {
             if self.service_enabled(toggle.id) != toggle.enabled {
                 self.set_service_enabled(toggle.id, toggle.enabled).await?;
@@ -191,7 +201,7 @@ impl Core {
             affected.push(ServiceId::Php);
         }
         for (changed, id) in [
-            (old.mariadb != ports.mariadb, ServiceId::Mariadb),
+            (old.mariadb != ports.mariadb, cfg.db_engine.service()),
             (old.postgresql != ports.postgresql, ServiceId::Postgresql),
             (old.redis != ports.redis, ServiceId::Redis),
             (old.mongodb != ports.mongodb, ServiceId::Mongodb),

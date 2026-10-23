@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use crate::domain::{compare_versions, slash, BinaryLayout, InstalledVersion, Paths, ServiceId};
 use crate::drivers::{program_subpath, server_program};
@@ -44,6 +45,39 @@ impl BinaryProvider for DirBinaryProvider {
     }
 }
 
+/// Un gestor de paquetes (Homebrew o MacPorts) para casi todo y carpetas
+/// propias en `bin/<servicio>/` para algunos: MySQL en macOS es el tar.gz
+/// oficial de mysql.com, no un paquete.
+pub struct WithPortable {
+    inner: Arc<dyn BinaryProvider>,
+    portable: DirBinaryProvider,
+    services: &'static [ServiceId],
+}
+
+impl WithPortable {
+    pub fn new(
+        inner: Arc<dyn BinaryProvider>,
+        paths: Paths,
+        services: &'static [ServiceId],
+    ) -> Self {
+        WithPortable {
+            inner,
+            portable: DirBinaryProvider::new(paths),
+            services,
+        }
+    }
+}
+
+impl BinaryProvider for WithPortable {
+    fn list_installed(&self, service: ServiceId) -> Result<Vec<InstalledVersion>, AppError> {
+        if self.services.contains(&service) {
+            self.portable.list_installed(service)
+        } else {
+            self.inner.list_installed(service)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -81,5 +115,33 @@ mod tests {
             .unwrap()
             .is_empty());
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    struct Nothing;
+    impl BinaryProvider for Nothing {
+        fn list_installed(&self, _: ServiceId) -> Result<Vec<InstalledVersion>, AppError> {
+            Ok(Vec::new())
+        }
+    }
+
+    #[test]
+    fn mysql_comes_from_its_own_folder_and_the_rest_from_the_package_manager() {
+        let root = temp_dir("with-portable");
+        let paths = Paths::new(&root);
+        let dir = paths.bin_service(ServiceId::Mysql).join("8.4.11");
+        std::fs::create_dir_all(dir.join("bin")).unwrap();
+        std::fs::write(dir.join(marker_exe(ServiceId::Mysql)), "").unwrap();
+        let mdb = paths.bin_service(ServiceId::Mariadb).join("11.4.5");
+        std::fs::create_dir_all(mdb.join("bin")).unwrap();
+        std::fs::write(mdb.join(marker_exe(ServiceId::Mariadb)), "").unwrap();
+
+        let provider = WithPortable::new(Arc::new(Nothing), paths, &[ServiceId::Mysql]);
+        let mysql = provider.list_installed(ServiceId::Mysql).unwrap();
+        assert_eq!(mysql[0].version, "8.4.11");
+        // MariaDB lo da el gestor de paquetes (aquí, ninguno).
+        assert!(provider
+            .list_installed(ServiceId::Mariadb)
+            .unwrap()
+            .is_empty());
     }
 }

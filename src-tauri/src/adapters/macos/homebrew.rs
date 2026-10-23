@@ -34,6 +34,8 @@ fn formula_base(service: ServiceId) -> &'static str {
         ServiceId::Apache => "httpd",
         ServiceId::Php => "php",
         ServiceId::Mariadb => "mariadb",
+        // MySQL no se instala con Homebrew (es el tar.gz de mysql.com).
+        ServiceId::Mysql => "mysql",
         ServiceId::Postgresql => "postgresql",
         ServiceId::Redis => "redis",
         ServiceId::Mongodb => "mongodb-community",

@@ -17,8 +17,13 @@ const SQL_TIMEOUT: Duration = Duration::from_secs(20);
 
 pub struct MariadbDriver;
 
+// Las funciones de cliente (SQL, crear bases, respaldos, contraseña de
+// root) sirven para MariaDB y para MySQL: usan la base de datos elegida
+// (`ctx.db()`). Los programas de MySQL se llaman con los nombres viejos
+// (`mysql`, `mysqladmin`, `mysqldump`).
+
 /// Nombre anterior de cada programa: las versiones viejas para Windows 7
-/// (10.4) pueden no traer los `mariadb-*`.
+/// (10.4) pueden no traer los `mariadb-*`, y MySQL solo trae estos.
 fn legacy_name(name: &str) -> Option<&'static str> {
     Some(match name {
         "mariadb" => "mysql",
@@ -30,12 +35,20 @@ fn legacy_name(name: &str) -> Option<&'static str> {
     })
 }
 
-fn tool(ctx: &RenderContext, name: &str) -> Result<ProcessSpec, AppError> {
-    let dir = ctx.install_dir(ServiceId::Mariadb)?;
-    let mut program = ctx.program(ServiceId::Mariadb, name)?;
+pub(crate) fn tool(
+    ctx: &RenderContext,
+    engine: ServiceId,
+    name: &str,
+) -> Result<ProcessSpec, AppError> {
+    let dir = ctx.install_dir(engine)?;
+    if engine == ServiceId::Mysql {
+        let name = legacy_name(name).unwrap_or(name);
+        return Ok(ProcessSpec::new(ctx.program(engine, name)?, &dir));
+    }
+    let mut program = ctx.program(engine, name)?;
     if !ctx.fs.exists(&program) {
         if let Some(old) = legacy_name(name) {
-            let old = ctx.program(ServiceId::Mariadb, old)?;
+            let old = ctx.program(engine, old)?;
             if ctx.fs.exists(&old) {
                 program = old;
             }
@@ -44,30 +57,52 @@ fn tool(ctx: &RenderContext, name: &str) -> Result<ProcessSpec, AppError> {
     Ok(ProcessSpec::new(program, &dir))
 }
 
-/// Cliente de MariaDB sin leer otros `my.cnf` (por ejemplo el de Homebrew
-/// o un `~/.my.cnf` con contraseña): todo va en la línea de comandos. Se
-/// conecta a 127.0.0.1 como root; la contraseña, si hay, va en `MYSQL_PWD`
-/// para que no se vea en la lista de procesos.
-fn client(ctx: &RenderContext, name: &str) -> Result<ProcessSpec, AppError> {
-    let mut spec = tool(ctx, name)?
-        .arg("--no-defaults")
+/// Cliente sin leer otros `my.cnf` (por ejemplo el de Homebrew o un
+/// `~/.my.cnf` con contraseña): todo va en la línea de comandos. Se conecta
+/// a 127.0.0.1 como root. La contraseña no va en los argumentos (se vería
+/// en la lista de procesos): MariaDB la toma de `MYSQL_PWD`; MySQL, de un
+/// archivo de opciones propio (`--defaults-file` lee solo ese).
+pub(crate) fn client(
+    ctx: &RenderContext,
+    engine: ServiceId,
+    name: &str,
+) -> Result<ProcessSpec, AppError> {
+    let password = &ctx.config.mariadb_root_password;
+    let mut spec = tool(ctx, engine, name)?;
+    if engine == ServiceId::Mysql && !password.is_empty() {
+        let file = ctx.paths.mysql_client_cnf();
+        ctx.fs.create_dir_all(&ctx.paths.tmp())?;
+        write_if_changed(
+            ctx.fs.as_ref(),
+            &file,
+            &format!("[client]\npassword = \"{password}\"\n"),
+        )?;
+        spec = spec.arg(format!("--defaults-file={}", slash(&file)));
+    } else {
+        spec = spec.arg("--no-defaults");
+        if !password.is_empty() {
+            spec = spec.env("MYSQL_PWD", password);
+        }
+    }
+    Ok(spec
         .arg("--host=127.0.0.1")
         .arg(format!("--port={}", ctx.config.mariadb_port))
-        .arg("--user=root");
-    if !ctx.config.mariadb_root_password.is_empty() {
-        spec = spec.env("MYSQL_PWD", &ctx.config.mariadb_root_password);
-    }
-    Ok(spec)
+        .arg("--user=root"))
 }
 
-/// `mariadb-admin <comando>` como root.
-fn admin(ctx: &RenderContext, command: &str) -> Result<ProcessSpec, AppError> {
-    Ok(client(ctx, "mariadb-admin")?.arg(command))
+/// `mariadb-admin <comando>` (o `mysqladmin`) como root.
+pub(crate) fn admin(
+    ctx: &RenderContext,
+    engine: ServiceId,
+    command: &str,
+) -> Result<ProcessSpec, AppError> {
+    Ok(client(ctx, engine, "mariadb-admin")?.arg(command))
 }
 
-/// Una o varias sentencias SQL con el cliente `mariadb`, sin encabezados.
+/// Una o varias sentencias SQL con el cliente `mariadb` (o `mysql`), sin
+/// encabezados, en la base de datos elegida.
 pub fn sql_spec(ctx: &RenderContext, sql: &str) -> Result<ProcessSpec, AppError> {
-    Ok(client(ctx, "mariadb")?
+    Ok(client(ctx, ctx.db(), "mariadb")?
         .arg("--batch")
         .arg("--skip-column-names")
         .arg("-e")
@@ -88,7 +123,7 @@ async fn run_sql(ctx: &RenderContext, sql: &str, what: &str) -> Result<String, A
 fn explain_client_error(what: &str, output: &str) -> String {
     if output.contains("Access denied") {
         format!(
-            "{what}: MariaDB rechazó la contraseña de root guardada en la app. Si la cambiaste por fuera, vuelve a ponerla con «Cambiar contraseña de root» o edita mariadbRootPassword en app.json.\n{output}"
+            "{what}: la base de datos rechazó la contraseña de root guardada en la app. Si la cambiaste por fuera, vuelve a ponerla con «Cambiar contraseña de root» o edita mariadbRootPassword en app.json.\n{output}"
         )
     } else {
         format!("{what}: {output}")
@@ -117,10 +152,17 @@ pub async fn list_databases(ctx: &RenderContext) -> Result<Vec<String>, AppError
 /// con la contraseña guardada (la anterior). `new` ya viene validada.
 pub async fn set_root_password(ctx: &RenderContext, new: &str) -> Result<(), AppError> {
     database::validate_root_password(new).map_err(AppError::InvalidInput)?;
+    // MySQL: con el método clásico, el que entienden todas las versiones
+    // de PHP sin TLS (el de MySQL 8 pide una clave RSA o TLS).
+    let identified = if ctx.db() == ServiceId::Mysql {
+        "IDENTIFIED WITH mysql_native_password BY"
+    } else {
+        "IDENTIFIED BY"
+    };
     let mut sql = String::new();
     for host in ["localhost", "127.0.0.1", "::1", "%"] {
         sql.push_str(&format!(
-            "ALTER USER IF EXISTS 'root'@'{host}' IDENTIFIED BY '{new}'; "
+            "ALTER USER IF EXISTS 'root'@'{host}' {identified} '{new}'; "
         ));
     }
     sql.push_str("FLUSH PRIVILEGES;");
@@ -136,7 +178,7 @@ pub fn dump_spec(ctx: &RenderContext, db: &str, file: &Path) -> Result<ProcessSp
             "Nombre de base de datos no válido: {db}"
         )));
     }
-    Ok(client(ctx, "mariadb-dump")?
+    Ok(client(ctx, ctx.db(), "mariadb-dump")?
         .arg("--single-transaction")
         .arg("--routines")
         .arg("--triggers")
@@ -175,7 +217,7 @@ pub fn create_database_spec(ctx: &RenderContext, db: &str) -> Result<ProcessSpec
             "Nombre de base de datos no válido: {db}"
         )));
     }
-    Ok(client(ctx, "mariadb")?.arg("-e").arg(format!(
+    Ok(client(ctx, ctx.db(), "mariadb")?.arg("-e").arg(format!(
         "CREATE DATABASE IF NOT EXISTS `{db}` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
     )))
 }
@@ -267,7 +309,7 @@ impl ServiceDriver for MariadbDriver {
                 slash(&datadir)
             )));
         }
-        let mut spec = tool(ctx, "mariadb-install-db")?;
+        let mut spec = tool(ctx, ServiceId::Mariadb, "mariadb-install-db")?;
         if ctx.layout.is_macos() {
             // Sin `normal`, root solo entraría por socket como usuario del
             // sistema: Adminer, WordPress y Laravel entran por TCP.
@@ -302,7 +344,7 @@ impl ServiceDriver for MariadbDriver {
     }
 
     fn start_specs(&self, ctx: &RenderContext) -> Vec<ProcessSpec> {
-        match tool(ctx, "mariadbd") {
+        match tool(ctx, ServiceId::Mariadb, "mariadbd") {
             // --defaults-file debe ser el primer argumento.
             Ok(spec) => vec![spec
                 .arg(format!(
@@ -322,7 +364,7 @@ impl ServiceDriver for MariadbDriver {
         pids: &[u32],
         runner: &dyn ProcessRunner,
     ) -> Result<(), AppError> {
-        if let Ok(spec) = admin(ctx, "shutdown") {
+        if let Ok(spec) = admin(ctx, ServiceId::Mariadb, "shutdown") {
             let _ = runner.run(&spec, ctx.stop_grace).await;
         }
         if !wait_for_exit(runner, pids, ctx.stop_grace).await {
@@ -332,7 +374,7 @@ impl ServiceDriver for MariadbDriver {
     }
 
     async fn health(&self, ctx: &RenderContext) -> Health {
-        let spec = match admin(ctx, "ping") {
+        let spec = match admin(ctx, ServiceId::Mariadb, "ping") {
             Ok(spec) => spec,
             Err(e) => return Health::Down(e.to_string()),
         };
@@ -401,7 +443,7 @@ mod tests {
     #[test]
     fn clients_ignore_other_option_files() {
         let f = fixture();
-        let spec = admin(&f.ctx, "ping").unwrap();
+        let spec = admin(&f.ctx, ServiceId::Mariadb, "ping").unwrap();
         assert_eq!(spec.args[0], "--no-defaults");
         let spec = create_database_spec(&f.ctx, "blog").unwrap();
         assert_eq!(spec.args[0], "--no-defaults");
@@ -537,10 +579,13 @@ mod tests {
     #[test]
     fn password_goes_in_the_environment_not_the_arguments() {
         let mut f = fixture();
-        assert!(admin(&f.ctx, "ping").unwrap().env.is_empty());
+        assert!(admin(&f.ctx, ServiceId::Mariadb, "ping")
+            .unwrap()
+            .env
+            .is_empty());
         f.ctx.config.mariadb_root_password = "Secreta_1".into();
         for spec in [
-            admin(&f.ctx, "ping").unwrap(),
+            admin(&f.ctx, ServiceId::Mariadb, "ping").unwrap(),
             create_database_spec(&f.ctx, "blog").unwrap(),
             sql_spec(&f.ctx, "SELECT 1;").unwrap(),
             dump_spec(&f.ctx, "blog", Path::new("C:/APP/backups/b.sql")).unwrap(),

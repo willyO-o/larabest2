@@ -113,12 +113,19 @@ fn platform(app_name: &str, paths: &Paths) -> Platform {
     // que corresponde al procesador (Homebrew ya no se instala en Intel).
     let os = detect_os();
     let layout = choose_layout(os, |p| p.exists());
-    let binaries: Arc<dyn BinaryProvider> = match layout {
+    let packages: Arc<dyn BinaryProvider> = match layout {
         BinaryLayout::MacPorts => {
             Arc::new(MacPortsBinaryProvider::new(paths.tmp().join("macports")))
         }
         _ => Arc::new(HomebrewBinaryProvider::default()),
     };
+    // MySQL es el tar.gz oficial en bin/mysql, no un paquete.
+    let binaries: Arc<dyn BinaryProvider> =
+        Arc::new(adapters::shared::binaries::WithPortable::new(
+            packages,
+            paths.clone(),
+            &[domain::ServiceId::Mysql],
+        ));
     Platform {
         layout,
         binaries,

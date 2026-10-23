@@ -1163,6 +1163,7 @@ async fn user_path_on_macos_uses_the_homebrew_programs() {
 fn choice(ports: crate::domain::PortSettings) -> crate::usecases::ServicesChoice {
     crate::usecases::ServicesChoice {
         web_server: WebServer::Nginx,
+        db_engine: None,
         enabled: Vec::new(),
         ports,
         sites: None,
@@ -2024,4 +2025,203 @@ async fn services_panel_shows_and_saves_site_settings() {
     let cfg = h.config.get();
     assert!(!cfg.auto_vhosts);
     assert_eq!(cfg.tld, "localhost");
+}
+
+// ---------------------------------------------------------------- MySQL
+
+#[tokio::test]
+async fn macs_start_with_mysql_and_windows_with_mariadb() {
+    let mac = Harness::macports();
+    assert!(mac.core().bootstrap().await.unwrap());
+    assert_eq!(
+        mac.config.get().db_engine,
+        crate::domain::DatabaseEngine::Mysql
+    );
+    let windows = Harness::new();
+    windows.core().bootstrap().await.unwrap();
+    assert_eq!(
+        windows.config.get().db_engine,
+        crate::domain::DatabaseEngine::Mariadb
+    );
+    // macOS 13 no tiene MySQL 8.4: sigue MariaDB.
+    let ventura = Harness::macports();
+    ventura
+        .core_on(crate::domain::os::OsInfo::MacOs {
+            major: 13,
+            minor: 6,
+            apple_silicon: false,
+        })
+        .bootstrap()
+        .await
+        .unwrap();
+    assert_eq!(
+        ventura.config.get().db_engine,
+        crate::domain::DatabaseEngine::Mariadb
+    );
+}
+
+#[tokio::test]
+async fn mysql_is_downloaded_with_progress_and_extracted() {
+    let h = Harness::macports();
+    let file = "mysql-8.4.11-macos15-x86_64.tar.gz";
+    // La versión ya no está en Downloads/: se baja de archives/.
+    h.downloader
+        .missing
+        .lock()
+        .unwrap()
+        .push(format!("https://cdn.mysql.com/Downloads/MySQL-8.4/{file}"));
+    let fs = h.fs.clone();
+    h.runner.on_run(Box::new(move |spec| {
+        if crate::domain::slash(&spec.program) == "/usr/bin/tar" {
+            fs.write(
+                Path::new(&format!("{MAC_ROOT}/bin/mysql/8.4.11/bin/mysqld")),
+                "",
+            )
+            .unwrap();
+        }
+        None
+    }));
+    let core = h.core();
+    let message = core.install_package("mysql-8.4").await.unwrap();
+    assert_eq!(message, "MySQL 8.4.11 instalado.");
+
+    let urls = h.downloader.urls.lock().unwrap().clone();
+    assert_eq!(
+        urls.last().unwrap(),
+        &format!("https://cdn.mysql.com/archives/mysql-8.4/{file}")
+    );
+    let tar = h
+        .runner
+        .ran()
+        .into_iter()
+        .find(|s| crate::domain::slash(&s.program) == "/usr/bin/tar")
+        .unwrap();
+    assert_eq!(
+        tar.args,
+        vec![
+            "-xzf".to_string(),
+            format!("{MAC_ROOT}/tmp/downloads/{file}"),
+            "-C".into(),
+            format!("{MAC_ROOT}/bin/mysql/8.4.11"),
+            "--strip-components".into(),
+            "1".into(),
+        ]
+    );
+    // Sin el tar.gz después; y la descarga mostró su avance.
+    assert!(!h
+        .fs
+        .exists(Path::new(&format!("{MAC_ROOT}/tmp/downloads/{file}"))));
+    let events = h.events.installs.lock().unwrap().clone();
+    assert!(events
+        .iter()
+        .any(|e| e.step == "Descargando MySQL 8.4.11" && e.total == Some(1000)));
+
+    // Ya instalado: no vuelve a bajarlo.
+    let before = h.downloader.urls.lock().unwrap().len();
+    assert!(core
+        .install_package("mysql-8.4")
+        .await
+        .unwrap()
+        .contains("ya estaba"));
+    assert_eq!(h.downloader.urls.lock().unwrap().len(), before);
+}
+
+#[tokio::test]
+async fn a_broken_mysql_download_leaves_nothing_behind() {
+    let h = Harness::macports();
+    let core = h.core();
+    // tar "funciona" pero no deja mysqld.
+    let err = core.install_package("mysql-8.4").await.unwrap_err();
+    assert!(
+        err.to_string().contains("No se pudo extraer MySQL"),
+        "{err}"
+    );
+    assert!(!h
+        .fs
+        .exists(Path::new(&format!("{MAC_ROOT}/bin/mysql/8.4.11"))));
+}
+
+#[tokio::test]
+async fn switching_to_mysql_stops_mariadb_and_starts_mysql() {
+    let h = Harness::macports();
+    h.binaries.add(MAC_ROOT, ServiceId::Mysql, "8.4.11");
+    let core = h.core();
+    core.start(ServiceId::Mariadb).await.unwrap();
+
+    core.set_database_engine(crate::domain::DatabaseEngine::Mysql)
+        .await
+        .unwrap();
+    assert_eq!(
+        h.config.get().db_engine,
+        crate::domain::DatabaseEngine::Mysql
+    );
+    assert_eq!(
+        h.supervisor.state(ServiceId::Mariadb),
+        ServiceState::Stopped
+    );
+    assert_eq!(h.supervisor.state(ServiceId::Mysql), ServiceState::Running);
+    // La primera vez prepara su propia carpeta de datos.
+    assert!(h
+        .runner
+        .ran()
+        .iter()
+        .any(|s| s.args.iter().any(|a| a == "--initialize-insecure")));
+    let snapshot = h.supervisor.snapshot();
+    let enabled = |id| snapshot.iter().find(|s| s.id == id).unwrap().enabled;
+    assert!(enabled(ServiceId::Mysql) && !enabled(ServiceId::Mariadb));
+
+    // Las bases de datos se piden a MySQL.
+    fake_mariadb(&h, "blog\n");
+    core.create_database("tienda").await.unwrap();
+    let last = h.runner.ran().last().unwrap().clone();
+    assert!(crate::domain::slash(&last.program).ends_with("/bin/mysql/8.4.11/bin/mysql"));
+}
+
+#[tokio::test]
+async fn mysql_must_be_installed_before_choosing_it() {
+    let h = Harness::macports();
+    let err = h
+        .core()
+        .set_database_engine(crate::domain::DatabaseEngine::Mysql)
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("MySQL"), "{err}");
+    assert_eq!(
+        h.config.get().db_engine,
+        crate::domain::DatabaseEngine::Mariadb
+    );
+}
+
+#[tokio::test]
+async fn a_mac_with_only_mariadb_keeps_using_it() {
+    let h = Harness::macports();
+    let core = h.core();
+    core.bootstrap().await.unwrap();
+    assert_eq!(
+        h.config.get().db_engine,
+        crate::domain::DatabaseEngine::Mysql
+    );
+    // MySQL no está y MariaDB sí: se usa MariaDB.
+    core.adopt_installed_database().unwrap();
+    assert_eq!(
+        h.config.get().db_engine,
+        crate::domain::DatabaseEngine::Mariadb
+    );
+}
+
+#[tokio::test]
+async fn the_wizard_recommends_mysql_on_macs() {
+    let h = Harness::macports();
+    let core = h.core();
+    core.bootstrap().await.unwrap();
+    let info = core.setup_info();
+    let recommended = |id: &str| {
+        info.packages
+            .iter()
+            .find(|p| p.id == id)
+            .unwrap()
+            .recommended
+    };
+    assert!(recommended("mysql-8.4"));
+    assert!(!recommended("mariadb-11.4"));
 }

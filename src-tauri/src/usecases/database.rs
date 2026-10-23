@@ -14,7 +14,9 @@ use crate::error::AppError;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DatabaseInfo {
-    /// MariaDB en marcha: sin él no se puede hacer nada.
+    /// La base de datos elegida: MariaDB o MySQL.
+    pub engine: ServiceId,
+    /// En marcha: sin ella no se puede hacer nada.
     pub running: bool,
     /// Bases de los usuarios (vacía si MariaDB no está en marcha).
     pub databases: Vec<String>,
@@ -26,12 +28,14 @@ pub struct DatabaseInfo {
 
 impl Core {
     fn require_mariadb(&self) -> Result<(), AppError> {
-        if self.supervisor.state(ServiceId::Mariadb) == ServiceState::Running {
+        let engine = self.database_service();
+        if self.supervisor.state(engine) == ServiceState::Running {
             Ok(())
         } else {
-            Err(AppError::InvalidInput(
-                "Inicia MariaDB primero: la base de datos tiene que estar en marcha.".into(),
-            ))
+            Err(AppError::InvalidInput(format!(
+                "Inicia {} primero: la base de datos tiene que estar en marcha.",
+                engine.label()
+            )))
         }
     }
 
@@ -41,13 +45,14 @@ impl Core {
 
     pub async fn database_info(&self) -> Result<DatabaseInfo, AppError> {
         let ctx = self.supervisor.context()?;
-        let running = self.supervisor.state(ServiceId::Mariadb) == ServiceState::Running;
+        let running = self.supervisor.state(ctx.db()) == ServiceState::Running;
         let databases = if running {
             mariadb::list_databases(&ctx).await?
         } else {
             Vec::new()
         };
         Ok(DatabaseInfo {
+            engine: ctx.db(),
             running,
             databases,
             has_password: !ctx.config.mariadb_root_password.is_empty(),

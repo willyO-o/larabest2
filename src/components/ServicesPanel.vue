@@ -5,7 +5,7 @@ import { useServicesPanelStore } from '../stores/servicesPanel'
 import { SERVICE_LABEL, useServicesStore } from '../stores/services'
 import { useSitesStore } from '../stores/sites'
 import { tldProblem } from '../lib/tld'
-import type { PortSettings, ServiceId, WebServer } from '../types/ipc'
+import type { DatabaseEngine, PortSettings, ServiceId, WebServer } from '../types/ipc'
 
 const panel = useServicesPanelStore()
 const services = useServicesStore()
@@ -43,13 +43,15 @@ const ROWS: Row[] = [
 ]
 
 const WEB_SERVERS: WebServer[] = ['nginx', 'apache']
+/** MySQL primero: es la de macOS; en Windows MySQL aparece sin instalar. */
+const DB_ENGINES: DatabaseEngine[] = ['mysql', 'mariadb']
 
 /** Quién usa cada puerto, para los mensajes. */
 const OWNER: Record<PortKey, string> = {
   http: 'HTTP',
   https: 'HTTPS',
   php: 'PHP',
-  mariadb: 'MariaDB',
+  mariadb: 'la base de datos',
   postgresql: 'PostgreSQL',
   redis: 'Redis',
   mongodb: 'MongoDB',
@@ -73,6 +75,8 @@ const SERVICE_OF: Record<PortKey, ServiceId | 'web'> = {
 const dialog = ref<HTMLDialogElement>()
 const firstInput = ref<HTMLInputElement>()
 const webServer = ref<WebServer>('nginx')
+/** La fila "mariadb" es la de la base de datos: MariaDB o MySQL. */
+const dbEngine = ref<DatabaseEngine>('mariadb')
 const enabled = reactive<Partial<Record<ServiceId, boolean>>>({})
 const text = reactive<Record<PortKey, string>>({
   http: '',
@@ -118,12 +122,15 @@ function load() {
   const current = panel.current
   if (!current) return
   webServer.value = current.webServer
+  dbEngine.value = current.dbEngine
   autoVhosts.value = current.sites.autoVhosts
   tld.value = current.sites.tld
   for (const key of Object.keys(text) as PortKey[]) text[key] = String(current.ports[key])
   for (const row of ROWS) {
     if (row.toggle) enabled[row.id] = services.byId[row.id]?.enabled ?? false
   }
+  // La casilla de la base de datos sigue a la elegida.
+  enabled.mariadb = services.byId[current.dbEngine]?.enabled ?? false
 }
 
 watch(
@@ -215,7 +222,8 @@ function busyOf(key: PortKey) {
 const busyWarnings = computed(() =>
   (Object.keys(text) as PortKey[]).flatMap((key) => {
     const b = busyOf(key)
-    return b ? [`${OWNER[key]} (${b.port}): lo ocupa ${b.program}.`] : []
+    const owner = OWNER[key].charAt(0).toUpperCase() + OWNER[key].slice(1)
+    return b ? [`${owner} (${b.port}): lo ocupa ${b.program}.`] : []
   }),
 )
 
@@ -242,8 +250,9 @@ function submit() {
   if (!ports.value || tldError.value || panel.saving) return
   panel.save({
     webServer: webServer.value,
+    dbEngine: dbEngine.value,
     enabled: ROWS.filter((r) => r.toggle).map((r) => ({
-      id: r.id,
+      id: r.id === 'mariadb' ? dbEngine.value : r.id,
       enabled: !!enabled[r.id],
     })),
     ports: ports.value,
@@ -322,7 +331,35 @@ function onCancel(e: Event) {
         </div>
 
         <div v-for="row in ROWS" :key="row.id" class="svc-row" :data-off="row.toggle && !enabled[row.id]">
-          <label v-if="row.toggle" class="svc-name svc-check" :title="installed(row.id) ? '' : 'Agrégalo desde Menú → Agregar'">
+          <!-- Base de datos: MySQL o MariaDB, una u otra. -->
+          <template v-if="row.id === 'mariadb'">
+            <label class="svc-name svc-check" :title="installed(dbEngine) ? '' : 'Agrégala desde Menú → Agregar'">
+              <input
+                v-model="enabled.mariadb"
+                type="checkbox"
+                :disabled="!installed(dbEngine) && !enabled.mariadb"
+              />
+              <span>Base de datos</span>
+            </label>
+            <div class="svc-detail">
+              <div class="segmented svc-web" role="radiogroup" aria-label="Base de datos">
+                <button
+                  v-for="e in DB_ENGINES"
+                  :key="e"
+                  type="button"
+                  class="segment"
+                  role="radio"
+                  :aria-checked="dbEngine === e"
+                  :disabled="!installed(e) && dbEngine !== e"
+                  :title="installed(e) ? version(e) : 'Agrégala desde Menú → Agregar'"
+                  @click="dbEngine = e"
+                >
+                  {{ SERVICE_LABEL[e] }}
+                </button>
+              </div>
+            </div>
+          </template>
+          <label v-else-if="row.toggle" class="svc-name svc-check" :title="installed(row.id) ? '' : 'Agrégalo desde Menú → Agregar'">
             <input
               v-model="enabled[row.id]"
               type="checkbox"
@@ -331,7 +368,11 @@ function onCancel(e: Event) {
             <span>{{ SERVICE_LABEL[row.id] }}</span>
           </label>
           <span v-else class="svc-name">{{ SERVICE_LABEL[row.id] }}</span>
-          <span class="svc-detail svc-version" :class="{ 'is-missing': !installed(row.id) }">
+          <span
+            v-if="row.id !== 'mariadb'"
+            class="svc-detail svc-version"
+            :class="{ 'is-missing': !installed(row.id) }"
+          >
             {{ version(row.id) }}<template v-if="!row.toggle"> · siempre activo</template
             ><template v-if="row.id === 'php' && phpRange()"> · usa {{ phpRange() }}</template>
           </span>

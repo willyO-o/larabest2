@@ -7,6 +7,10 @@ pub enum ServiceId {
     Apache,
     Php,
     Mariadb,
+    /// MySQL 8.4 oficial: la base de datos por defecto en macOS (MariaDB no
+    /// tiene binarios para macOS y MacPorts lo compila). Se usa MySQL o
+    /// MariaDB, nunca los dos.
+    Mysql,
     Postgresql,
     Redis,
     Mongodb,
@@ -15,11 +19,12 @@ pub enum ServiceId {
 
 impl ServiceId {
     /// En el orden en que se muestran.
-    pub const ALL: [ServiceId; 8] = [
+    pub const ALL: [ServiceId; 9] = [
         ServiceId::Nginx,
         ServiceId::Apache,
         ServiceId::Php,
         ServiceId::Mariadb,
+        ServiceId::Mysql,
         ServiceId::Postgresql,
         ServiceId::Redis,
         ServiceId::Mongodb,
@@ -38,6 +43,14 @@ impl ServiceId {
     /// Servidores web: se usa uno u otro (Preferencias → Servidor web).
     pub const WEB: [ServiceId; 2] = [ServiceId::Nginx, ServiceId::Apache];
 
+    /// Bases de datos de la pila base: se usa una u otra (Preferencias →
+    /// Base de datos). Comparten puerto, usuario root y contraseña.
+    pub const DB: [ServiceId; 2] = [ServiceId::Mariadb, ServiceId::Mysql];
+
+    pub fn is_db(self) -> bool {
+        Self::DB.contains(&self)
+    }
+
     pub fn is_optional(self) -> bool {
         Self::OPTIONAL.contains(&self)
     }
@@ -45,7 +58,7 @@ impl ServiceId {
     /// Se puede quitar de la pila: los opcionales y MariaDB (por ejemplo,
     /// si se usa otro MySQL o solo PostgreSQL). PHP y el servidor web no.
     pub fn can_disable(self) -> bool {
-        self.is_optional() || self == ServiceId::Mariadb
+        self.is_optional() || self.is_db()
     }
 
     pub fn is_web(self) -> bool {
@@ -59,6 +72,7 @@ impl ServiceId {
             ServiceId::Apache => "apache",
             ServiceId::Php => "php",
             ServiceId::Mariadb => "mariadb",
+            ServiceId::Mysql => "mysql",
             ServiceId::Postgresql => "postgresql",
             ServiceId::Redis => "redis",
             ServiceId::Mongodb => "mongodb",
@@ -73,6 +87,7 @@ impl ServiceId {
             ServiceId::Apache => "Apache",
             ServiceId::Php => "PHP",
             ServiceId::Mariadb => "MariaDB",
+            ServiceId::Mysql => "MySQL",
             ServiceId::Postgresql => "PostgreSQL",
             ServiceId::Redis => "Redis",
             ServiceId::Mongodb => "MongoDB",

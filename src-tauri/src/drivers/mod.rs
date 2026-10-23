@@ -6,6 +6,7 @@ pub mod apache;
 pub mod mailpit;
 pub mod mariadb;
 pub mod mongodb;
+pub mod mysql;
 pub mod nginx;
 pub mod php;
 pub mod postgresql;
@@ -73,6 +74,10 @@ impl RenderContext {
         if id.is_web() {
             return id == self.web();
         }
+        // MariaDB o MySQL, el elegido, salvo que se quite la base de datos.
+        if id.is_db() {
+            return id == self.db() && self.config.services.get(id).unwrap_or(true);
+        }
         self.config
             .services
             .get(id)
@@ -87,6 +92,11 @@ impl RenderContext {
         } else {
             &[]
         }
+    }
+
+    /// Base de datos elegida (MariaDB o MySQL).
+    pub fn db(&self) -> ServiceId {
+        self.config.db_engine.service()
     }
 
     /// Servidor web elegido en Preferencias (Nginx o Apache).
@@ -117,7 +127,11 @@ pub fn program_subpath(layout: BinaryLayout, id: ServiceId, name: &str) -> PathB
         // Los zip de Apache, MariaDB, PostgreSQL y MongoDB traen todo en bin\.
         (
             BinaryLayout::Portable,
-            ServiceId::Apache | ServiceId::Mariadb | ServiceId::Postgresql | ServiceId::Mongodb,
+            ServiceId::Apache
+            | ServiceId::Mariadb
+            | ServiceId::Mysql
+            | ServiceId::Postgresql
+            | ServiceId::Mongodb,
         ) => Some("bin"),
         (BinaryLayout::Portable, _) => None,
     };
@@ -141,6 +155,7 @@ pub fn server_program(layout: BinaryLayout, id: ServiceId) -> &'static str {
         (ServiceId::Php, BinaryLayout::Portable) => "php-cgi",
         (ServiceId::Php, BinaryLayout::Homebrew | BinaryLayout::MacPorts) => "php-fpm",
         (ServiceId::Mariadb, _) => "mariadbd",
+        (ServiceId::Mysql, _) => "mysqld",
         (ServiceId::Postgresql, _) => "postgres",
         (ServiceId::Redis, _) => "redis-server",
         (ServiceId::Mongodb, _) => "mongod",
@@ -186,6 +201,7 @@ pub fn all() -> Vec<Arc<dyn ServiceDriver>> {
         Arc::new(apache::ApacheDriver),
         Arc::new(php::PhpDriver),
         Arc::new(mariadb::MariadbDriver),
+        Arc::new(mysql::MysqlDriver),
         Arc::new(postgresql::PostgresqlDriver),
         Arc::new(redis::RedisDriver),
         Arc::new(mongodb::MongodbDriver),

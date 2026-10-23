@@ -52,6 +52,16 @@ defineProps<{ id: ServiceId }>()
       />
     </template>
 
+    <!-- MySQL: el azul y el naranja de su delfín. -->
+    <template v-else-if="id === 'mysql'">
+      <rect x="3" y="1" width="26" height="26" rx="7" fill="#00618a" />
+      <path
+        d="M8 20.5c2.2-6.8 6.5-11 12.2-11.6 1.6-.2 2.8.6 3.3 1.8-1.7-.3-3 .2-3.8 1.4l2.6 1.2-3.1.4c-1.2 3.3-4.6 6.3-11.2 6.8z"
+        fill="#ffffff"
+      />
+      <path d="M19.6 19.8c.9-1.4 1.4-2.8 1.5-4.2" fill="none" stroke="#f29111" stroke-width="1.8" stroke-linecap="round" />
+    </template>
+
     <!-- PostgreSQL. -->
     <template v-else-if="id === 'postgresql'">
       <rect x="3" y="1" width="26" height="26" rx="7" fill="#336791" />

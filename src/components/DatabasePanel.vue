@@ -2,7 +2,7 @@
 import { computed, nextTick, ref, watch } from 'vue'
 import AppIcon from './AppIcon.vue'
 import { useDatabaseStore } from '../stores/database'
-import { useServicesStore } from '../stores/services'
+import { SERVICE_LABEL, useServicesStore } from '../stores/services'
 import type { DatabaseMode } from '../types/ipc'
 
 const db = useDatabaseStore()
@@ -27,10 +27,15 @@ const password = ref('')
 const confirm = ref('')
 const reveal = ref(false)
 
-const mariadb = computed(() => services.byId.mariadb)
-const running = computed(() => mariadb.value?.state === 'running')
-const installed = computed(() => !!mariadb.value?.version)
-const starting = computed(() => mariadb.value?.state === 'starting')
+/** MariaDB o MySQL: la elegida (la que está en la pila). */
+const engine = computed(
+  () => db.info?.engine ?? (services.byId.mysql?.enabled ? 'mysql' : 'mariadb'),
+)
+const engineLabel = computed(() => SERVICE_LABEL[engine.value])
+const server = computed(() => services.byId[engine.value])
+const running = computed(() => server.value?.state === 'running')
+const installed = computed(() => !!server.value?.version)
+const starting = computed(() => server.value?.state === 'starting')
 
 /** Nombre tal como se creará: minúsculas y `_` en lugar de `-`. */
 const normalized = computed(() => name.value.trim().toLowerCase().replace(/-/g, '_'))
@@ -142,7 +147,7 @@ function onCancel(e: Event) {
   <dialog ref="dialog" class="sheet" aria-labelledby="db-title" @cancel="onCancel">
     <form class="sheet-body" @submit.prevent="submit">
       <header class="sheet-head">
-        <h2 id="db-title">Bases de datos de MariaDB</h2>
+        <h2 id="db-title">Bases de datos de {{ engineLabel }}</h2>
         <button type="button" class="sheet-close" title="Cerrar" :disabled="db.busy" @click="db.close()">
           <AppIcon name="close" />
         </button>
@@ -168,9 +173,9 @@ function onCancel(e: Event) {
       <div v-if="!running" class="db-off" role="status">
         <AppIcon name="database" />
         <p>
-          <template v-if="!installed">MariaDB no está instalado. Agrégalo desde Menú → Agregar.</template>
-          <template v-else-if="starting">Iniciando MariaDB…</template>
-          <template v-else>MariaDB está detenido: hay que iniciarlo para trabajar con las bases.</template>
+          <template v-if="!installed">{{ engineLabel }} no está instalado. Agrégalo desde Menú → Agregar.</template>
+          <template v-else-if="starting">Iniciando {{ engineLabel }}…</template>
+          <template v-else>{{ engineLabel }} está detenido: hay que iniciarlo para trabajar con las bases.</template>
         </p>
         <button
           v-if="installed"
@@ -178,9 +183,9 @@ function onCancel(e: Event) {
           type="button"
           class="sheet-btn sheet-btn-main"
           :disabled="starting"
-          @click="services.start('mariadb')"
+          @click="services.start(engine)"
         >
-          Iniciar MariaDB
+          Iniciar {{ engineLabel }}
         </button>
       </div>
 
