@@ -157,10 +157,12 @@ impl Core {
                 WebServer::Nginx
             };
             // macOS: MySQL oficial (se descarga listo); MariaDB lo compila
-            // MacPorts y tarda mucho. Windows sigue con MariaDB.
-            let mysql = crate::domain::catalog::packages_for(self.os, deps.layout)
-                .iter()
-                .any(|p| p.id == "mysql-8.4");
+            // MacPorts y tarda mucho. Windows sigue con MariaDB por defecto
+            // (MySQL se puede agregar y elegir).
+            let mysql = deps.layout.is_macos()
+                && crate::domain::catalog::packages_for(self.os, deps.layout)
+                    .iter()
+                    .any(|p| p.id == "mysql-8.4");
             cfg.db_engine = if mysql {
                 DatabaseEngine::Mysql
             } else {
@@ -676,6 +678,12 @@ impl Core {
         hosts_result?;
         reload_result?;
         Ok(sites)
+    }
+
+    /// Abre el archivo hosts para editarlo a mano (Bloc de notas como
+    /// administrador en Windows; TextEdit en macOS).
+    pub fn edit_hosts_file(&self) -> Result<(), AppError> {
+        self.hosts.edit()
     }
 
     pub fn os(&self) -> OsInfo {

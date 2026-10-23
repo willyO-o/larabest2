@@ -28,6 +28,25 @@ pub fn show_error(app: &AppHandle, message: &str) {
         .show(|_| {});
 }
 
+/// Pregunta con dos botones (`ok` y `cancel`) y espera la respuesta. Es
+/// el diálogo nativo: se ve aunque la ventana esté oculta.
+pub async fn confirm(app: &AppHandle, title: &str, message: &str, ok: &str, cancel: &str) -> bool {
+    use tauri_plugin_dialog::MessageDialogButtons;
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.dialog()
+        .message(message)
+        .title(title)
+        .kind(MessageDialogKind::Warning)
+        .buttons(MessageDialogButtons::OkCancelCustom(
+            ok.to_string(),
+            cancel.to_string(),
+        ))
+        .show(move |accepted| {
+            let _ = tx.send(accepted);
+        });
+    rx.await.unwrap_or(false)
+}
+
 pub fn show_info(app: &AppHandle, message: &str) {
     app.dialog()
         .message(message)

@@ -109,6 +109,13 @@ pub trait HostsManager: Send + Sync {
     async fn list(&self) -> Result<Vec<HostEntry>, AppError>;
     /// Reescribe solo el bloque marcado de la app; pide elevación.
     async fn sync(&self, entries: &[HostEntry]) -> Result<(), AppError>;
+    /// Abre el archivo hosts en el editor para cambiarlo a mano (en Windows,
+    /// el Bloc de notas como administrador, para poder guardarlo).
+    fn edit(&self) -> Result<(), AppError> {
+        Err(AppError::Unsupported(
+            "Abrir el archivo hosts no está disponible en esta plataforma.".into(),
+        ))
+    }
 }
 
 pub trait PortChecker: Send + Sync {
@@ -168,6 +175,9 @@ pub trait FileStore: Send + Sync {
     fn set_executable(&self, _path: &Path) -> Result<(), AppError> {
         Ok(())
     }
+    /// Manda una carpeta a la Papelera (de reciclaje en Windows): se puede
+    /// recuperar. Para borrar proyectos de `www/`.
+    fn move_to_trash(&self, path: &Path) -> Result<(), AppError>;
 }
 
 /// Escribe solo si el contenido cambió. Devuelve `true` si escribió.

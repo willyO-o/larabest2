@@ -6,7 +6,9 @@ use async_trait::async_trait;
 
 use super::{system32, CREATE_NO_WINDOW};
 use crate::adapters::shared::hosts_file;
-use crate::domain::{encode_request, merge_block, parse_block, HostEntry};
+use crate::domain::{
+    active_hosts, encode_request, merge_block, parse_block, planned_entries, HostEntry,
+};
 use crate::error::AppError;
 use crate::ports::{HostsManager, ProcessRunner, ProcessSpec};
 
@@ -64,8 +66,33 @@ fn ps_quote(s: &str) -> String {
 
 #[async_trait]
 impl HostsManager for WindowsHostsManager {
+    /// El Bloc de notas como administrador (Windows pide permiso): sin eso
+    /// abre el archivo pero no deja guardarlo. Si se cancela el aviso, no
+    /// pasa nada.
+    fn edit(&self) -> Result<(), AppError> {
+        use std::os::windows::process::CommandExt;
+        let notepad = system32().join("notepad.exe");
+        let script = format!(
+            "Start-Process -FilePath '{}' -ArgumentList '\"{}\"' -Verb RunAs",
+            notepad.display(),
+            hosts_path().display()
+        );
+        std::process::Command::new(
+            system32()
+                .join("WindowsPowerShell")
+                .join("v1.0")
+                .join("powershell.exe"),
+        )
+        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+        .creation_flags(CREATE_NO_WINDOW)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| AppError::io("No se pudo abrir el archivo hosts", e))
+    }
+
+    /// Todas las entradas activas: también las que el usuario puso a mano.
     async fn list(&self) -> Result<Vec<HostEntry>, AppError> {
-        Ok(parse_block(&read_hosts()?, &self.app_name))
+        Ok(active_hosts(&read_hosts()?))
     }
 
     async fn sync(&self, entries: &[HostEntry]) -> Result<(), AppError> {
@@ -101,7 +128,9 @@ impl HostsManager for WindowsHostsManager {
         let out = self.runner.run(&spec, ELEVATION_TIMEOUT).await;
         let _ = std::fs::remove_file(&self.request_file);
 
-        let applied = parse_block(&read_hosts()?, &self.app_name) == entries;
+        // Las que el usuario ya tenía a mano no se escriben.
+        let planned = planned_entries(&current, &self.app_name, entries);
+        let applied = parse_block(&read_hosts()?, &self.app_name) == planned;
         match out {
             Ok(_) if applied => Ok(()),
             Ok(o) if !o.success() => Err(AppError::Hosts(

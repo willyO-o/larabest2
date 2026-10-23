@@ -31,6 +31,8 @@ pub struct FakeFs {
     files: Mutex<BTreeMap<String, String>>,
     dirs: Mutex<BTreeSet<String>>,
     executables: Mutex<BTreeSet<String>>,
+    /// Carpetas mandadas a la Papelera.
+    pub trashed: Mutex<Vec<String>>,
 }
 
 impl FakeFs {
@@ -60,6 +62,11 @@ impl FakeFs {
 }
 
 impl FileStore for FakeFs {
+    fn move_to_trash(&self, path: &Path) -> Result<(), AppError> {
+        self.trashed.lock().unwrap().push(key(path));
+        self.remove_dir_all(path)
+    }
+
     fn read_to_string(&self, path: &Path) -> Result<String, AppError> {
         self.files
             .lock()
@@ -498,10 +505,17 @@ pub struct FakeHosts {
     pub entries: Mutex<Vec<HostEntry>>,
     pub syncs: Mutex<usize>,
     pub fail: Mutex<bool>,
+    /// Veces que se abrió para editar.
+    pub edits: Mutex<usize>,
 }
 
 #[async_trait]
 impl HostsManager for FakeHosts {
+    fn edit(&self) -> Result<(), AppError> {
+        *self.edits.lock().unwrap() += 1;
+        Ok(())
+    }
+
     async fn list(&self) -> Result<Vec<HostEntry>, AppError> {
         Ok(self.entries.lock().unwrap().clone())
     }

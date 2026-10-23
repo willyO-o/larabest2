@@ -31,7 +31,7 @@ Clic derecho en cualquier parte de la ventana, el botón **Menú** o el ícono d
 | Menú | Contenido |
 | --- | --- |
 | Iniciar todo / Detener todo | según el estado |
-| www | un sitio por carpeta (abre `http://<carpeta>.test`), **Crear sitio** (en blanco, WordPress, Laravel), abrir la carpeta www, actualizar sitios y archivo hosts |
+| www | un sitio por carpeta (abre `http://<carpeta>.test`), **Crear sitio** (en blanco, WordPress, Laravel), abrir la carpeta www, actualizar sitios y archivo hosts, **Editar archivo hosts**, **Eliminar proyecto** |
 | Nginx o Apache | el servidor web elegido: versión, recargar configuración, carpeta de configuración propia por sitio (`etc\nginx\custom\<sitio>.conf` o `etc\apache\custom\<sitio>.conf`), configuración generada, logs |
 | PHP | versión, `php.ini` de ajustes propios, extensiones (marcar o desmarcar), `php.ini` generado, log de errores |
 | MariaDB | versión, `my.cnf` de ajustes propios, HeidiSQL, Adminer, phpMyAdmin, **Nueva base de datos…**, **Respaldar base de datos…**, **Cambiar contraseña de root…**, carpeta de respaldos, `my.cnf` generado, carpeta de datos, log de errores |
@@ -59,7 +59,7 @@ Las extensiones marcadas en el menú se guardan en `app.json` y PHP se reinicia 
 | PHP 8.4 y 8.3 | última versión de la rama desde `windows.php.net` (NTS x64) | `brew install php@8.4` / `php@8.3` |
 | Nginx | versión estable de `nginx.org` | `brew install nginx` |
 | Apache | build de Apache Lounge para Windows x64, desde su réplica en `fossies.org` (la misma que usa Scoop; `apachelounge.com` bloquea algunas descargas automáticas) | `brew install httpd` |
-| MySQL 8.4 | no (en Windows se usa MariaDB) | tar.gz oficial de `cdn.mysql.com` en `bin/mysql/<versión>/` (ver [Base de datos en macOS](#base-de-datos-en-macos-mysql-84)) |
+| MySQL 8.4 | zip oficial de `cdn.mysql.com` en `bin\mysql\<versión>\` (Windows 10/11 y Server 2016+; MariaDB sigue siendo la predeterminada) | tar.gz oficial de `cdn.mysql.com` en `bin/mysql/<versión>/` (ver [Base de datos en macOS](#base-de-datos-en-macos-mysql-84)) |
 | MariaDB 11.4 | última 11.4 de `archive.mariadb.org` | `brew install mariadb@11.4` |
 | PostgreSQL 17 | binarios de EDB (`get.enterprisedb.com`) | `brew install postgresql@17` |
 | Redis | `redis-windows/redis-windows` (GitHub) | `brew install redis` |
@@ -198,6 +198,25 @@ Botón **Nuevo sitio** en la línea de estado, o **Menú → www → Crear sitio
 | Laravel | Crea la base de datos, descarga `composer.phar` en `bin\composer\` si falta, ejecuta `composer create-project laravel/laravel <nombre>` con el PHP activo, configura `.env` para MariaDB (root sin contraseña) y ejecuta `php artisan migrate`. |
 
 MariaDB se inicia sola si hace falta. Si algo falla antes de terminar, la carpeta creada a medias se borra para poder reintentar; si solo fallan las migraciones de Laravel, el proyecto se conserva y se avisa. WordPress y Laravel necesitan internet (la primera descarga de WordPress y cada `composer create-project`).
+
+## Archivo hosts
+
+Cada dominio que agrega la app va en su bloque del archivo hosts y, como en Laragon, con la marca `# LARABEST` al final de la línea:
+
+```text
+# >>> LARABEST (bloque generado, no editar)
+127.0.0.1       blog.test                                # LARABEST
+127.0.0.1       adminer.test                             # LARABEST
+# <<< LARABEST
+```
+
+- La app solo cambia o quita líneas con esa marca (aunque las muevas fuera del bloque). Las tuyas, sin marca, nunca se tocan.
+- Si ya definiste un dominio a mano (por ejemplo `192.168.1.20 blog.test`), la app no agrega el suyo: tu línea manda.
+- El **ícono de documento** de la cabecera (o **Menú → www → Editar archivo hosts**) abre el archivo en el Bloc de notas como administrador (Windows pide permiso, para poder guardar); en macOS, en TextEdit.
+
+## Eliminar un proyecto
+
+**Menú → www → Eliminar proyecto → <nombre>** pide confirmación y manda la carpeta `www/<nombre>` a la Papelera de reciclaje (se puede recuperar), y quita su dominio y su configuración del servidor web. Si el proyecto tiene base de datos (la que crean WordPress y Laravel) y está en marcha, pregunta aparte si borrarla también; antes de borrarla guarda un respaldo en `backups/`.
 
 ## HTTPS
 

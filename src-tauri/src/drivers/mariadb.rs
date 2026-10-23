@@ -170,6 +170,23 @@ pub async fn set_root_password(ctx: &RenderContext, new: &str) -> Result<(), App
     Ok(())
 }
 
+/// Borra una base de datos (después de respaldarla). No toca las del
+/// sistema.
+pub async fn drop_database(ctx: &RenderContext, db: &str) -> Result<(), AppError> {
+    if !database::is_safe_database_name(db) || database::SYSTEM_DATABASES.contains(&db) {
+        return Err(AppError::InvalidInput(format!(
+            "No se puede borrar la base de datos {db}"
+        )));
+    }
+    run_sql(
+        ctx,
+        &format!("DROP DATABASE IF EXISTS `{db}`;"),
+        &format!("No se pudo borrar la base de datos {db}"),
+    )
+    .await?;
+    Ok(())
+}
+
 /// `mariadb-dump` de una base a un archivo `.sql` (con rutinas, triggers
 /// y eventos, en una transacción para no bloquear las tablas).
 pub fn dump_spec(ctx: &RenderContext, db: &str, file: &Path) -> Result<ProcessSpec, AppError> {

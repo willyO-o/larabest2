@@ -87,6 +87,29 @@ pub fn backup_file_name(database: &str, stamp: &str) -> String {
     format!("{database}-{stamp}.sql")
 }
 
+/// "2026-10-23_153005" (UTC) desde segundos Unix, para los respaldos que
+/// hace la app por su cuenta (al borrar un proyecto).
+pub fn utc_stamp(unix_secs: u64) -> String {
+    let days = (unix_secs / 86_400) as i64;
+    let secs = unix_secs % 86_400;
+    // Días desde 1970 a fecha civil (algoritmo de Howard Hinnant).
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1_460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let day = doy - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = yoe + era * 400 + i64::from(month <= 2);
+    format!(
+        "{year:04}-{month:02}-{day:02}_{:02}{:02}{:02}",
+        secs / 3_600,
+        secs % 3_600 / 60,
+        secs % 60
+    )
+}
+
 /// Extensiones que el navegador fuerza a HTTPS (lista HSTS precargada):
 /// con ellas los sitios por HTTP no abren.
 const HSTS_TLDS: [&str; 6] = ["app", "dev", "page", "new", "foo", "day"];
@@ -165,6 +188,14 @@ mod tests {
         assert!(is_safe_database_name("wp_blog"));
         assert!(!is_safe_database_name("a b"));
         assert!(!is_safe_database_name("a`b"));
+    }
+
+    #[test]
+    fn utc_stamps() {
+        assert_eq!(utc_stamp(0), "1970-01-01_000000");
+        assert_eq!(utc_stamp(951_782_400), "2000-02-29_000000");
+        assert_eq!(utc_stamp(1_792_770_305), "2026-10-23_154505");
+        assert!(is_valid_stamp(&utc_stamp(1_792_770_305)));
     }
 
     #[test]

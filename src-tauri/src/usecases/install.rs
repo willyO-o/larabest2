@@ -292,9 +292,10 @@ impl Core {
         Ok(format!("{} {version} instalado.", service.label()))
     }
 
-    /// macOS: MySQL 8.4 oficial. Descarga el tar.gz de mysql.com (con
-    /// porcentaje y velocidad) y lo extrae en `bin/mysql/<versión>/`. Sin
-    /// gestor de paquetes, sin compilar y sin contraseña de administrador.
+    /// MySQL 8.4 oficial. Descarga el zip (Windows) o el tar.gz (macOS) de
+    /// mysql.com, con porcentaje y velocidad, y lo extrae en
+    /// `bin/mysql/<versión>/`. Sin gestor de paquetes, sin compilar y sin
+    /// contraseña de administrador.
     async fn install_mysql(&self, progress: &Progress<'_>) -> Result<String, AppError> {
         let deps = self.supervisor.deps();
         let (version, file) = catalog::mysql_build(self.os).ok_or_else(|| {
@@ -305,10 +306,14 @@ impl Core {
         })?;
         let service = ServiceId::Mysql;
         let dest = deps.paths.bin_service(service).join(version);
-        // El tar.gz de macOS (sin .exe, aunque las pruebas corran en Windows).
-        let marker = dest
-            .join("bin")
-            .join(server_program(BinaryLayout::Portable, service));
+        let zip = file.ends_with(".zip");
+        // Por el archivo, no por el sistema en que corren las pruebas.
+        let program = server_program(BinaryLayout::Portable, service);
+        let marker = dest.join("bin").join(if zip {
+            format!("{program}.exe")
+        } else {
+            program.to_string()
+        });
         if deps.fs.exists(&marker) {
             return Ok(format!("MySQL {version} ya estaba instalado."));
         }
@@ -329,6 +334,19 @@ impl Core {
             return Err(e);
         }
         progress.step(format!("Extrayendo en {}", slash(&dest)));
+        if zip {
+            let extracted = self.extract(&tarball, &dest, None).await;
+            let _ = deps.fs.remove_file(&tarball);
+            extracted?;
+            if !deps.fs.exists(&marker) {
+                let _ = deps.fs.remove_dir_all(&dest);
+                return Err(AppError::Process(format!(
+                    "El archivo de MySQL {version} no tiene {}.",
+                    slash(&marker)
+                )));
+            }
+            return Ok(format!("MySQL {version} instalado."));
+        }
         deps.fs.create_dir_all(&dest)?;
         let spec = ProcessSpec::new("/usr/bin/tar", deps.paths.root())
             .arg("-xzf")

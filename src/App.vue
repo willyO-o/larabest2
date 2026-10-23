@@ -135,6 +135,14 @@ function openMenu(e?: MouseEvent) {
       <ThemeSwitch />
       <button
         class="band-icon"
+        aria-label="Editar archivo hosts"
+        title="Editar archivo hosts"
+        @click="attempt(() => invoke('shell_edit_hosts'))"
+      >
+        <AppIcon name="hosts" />
+      </button>
+      <button
+        class="band-icon"
         aria-label="Servicios y puertos"
         title="Servicios y puertos"
         :aria-expanded="servicesPanel.open"

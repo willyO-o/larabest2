@@ -78,6 +78,66 @@ impl FileStore for StdFileStore {
         }
     }
 
+    /// Windows: la Papelera de reciclaje, con la misma función que usa el
+    /// Explorador (`Microsoft.VisualBasic`), sin ventanas.
+    #[cfg(windows)]
+    fn move_to_trash(&self, path: &Path) -> Result<(), AppError> {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        let quoted = path
+            .to_string_lossy()
+            .replace('/', "\\")
+            .replace('\'', "''");
+        let script = format!(
+            "$ErrorActionPreference = 'Stop'; Add-Type -AssemblyName Microsoft.VisualBasic; \
+             [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory('{quoted}', 'OnlyErrorDialogs', 'SendToRecycleBin')"
+        );
+        let windir = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into());
+        let out = std::process::Command::new(
+            std::path::Path::new(&windir).join(r"System32\WindowsPowerShell\v1.0\powershell.exe"),
+        )
+        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+        .creation_flags(CREATE_NO_WINDOW)
+        .output()
+        .map_err(|e| AppError::io(format!("No se pudo borrar {}", slash(path)), e))?;
+        if out.status.success() && !path.exists() {
+            Ok(())
+        } else {
+            Err(AppError::Process(format!(
+                "No se pudo mandar {} a la Papelera de reciclaje (¿algún archivo está abierto?): {}",
+                slash(path),
+                String::from_utf8_lossy(&out.stderr).trim()
+            )))
+        }
+    }
+
+    /// macOS: a `~/.Trash` (con otro nombre si ya hay uno igual).
+    #[cfg(not(windows))]
+    fn move_to_trash(&self, path: &Path) -> Result<(), AppError> {
+        let home = std::env::var_os("HOME").ok_or_else(|| {
+            AppError::Process("No se encontró la carpeta del usuario para la Papelera.".into())
+        })?;
+        let trash = Path::new(&home).join(".Trash");
+        std::fs::create_dir_all(&trash)
+            .map_err(|e| AppError::io("No se pudo abrir la Papelera", e))?;
+        let name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "proyecto".into());
+        let mut target = trash.join(&name);
+        let mut n = 2;
+        while target.exists() {
+            target = trash.join(format!("{name} {n}"));
+            n += 1;
+        }
+        std::fs::rename(path, &target).map_err(|e| {
+            AppError::io(
+                format!("No se pudo mandar {} a la Papelera", slash(path)),
+                e,
+            )
+        })
+    }
+
     #[cfg(unix)]
     fn set_executable(&self, path: &Path) -> Result<(), AppError> {
         use std::os::unix::fs::PermissionsExt;

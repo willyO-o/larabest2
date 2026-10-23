@@ -361,6 +361,7 @@ pub fn run() {
             commands::db_backup,
             commands::db_set_root_password,
             commands::db_open_backups,
+            commands::shell_edit_hosts,
         ])
         .build(tauri::generate_context!())
         .expect("error al iniciar la aplicación");

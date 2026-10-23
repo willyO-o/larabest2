@@ -109,8 +109,8 @@ impl Package {
 }
 
 /// El catálogo de Windows 10/11, Server 2016+ y macOS, en el orden del
-/// menú. Las versiones elegidas para la app: PHP 8.3 y 8.4, MySQL 8.4 (LTS,
-/// solo macOS), MariaDB 11.4 (LTS) y PostgreSQL 17.
+/// menú. Las versiones elegidas para la app: PHP 8.3 y 8.4, MySQL 8.4 (LTS),
+/// MariaDB 11.4 (LTS) y PostgreSQL 17.
 pub const PACKAGES: [Package; 16] = [
     service("php-8.4", "PHP 8.4", ServiceId::Php, "8.4"),
     service("php-8.3", "PHP 8.3", ServiceId::Php, "8.3"),
@@ -202,14 +202,7 @@ pub fn packages_for(os: OsInfo, layout: BinaryLayout) -> Vec<Package> {
             "nodejs-12",
             "notepadpp",
         ],
-        // En Windows sigue MariaDB (tiene zip oficial); MySQL es de macOS.
-        Some(WindowsTier::Modern) => {
-            return PACKAGES
-                .iter()
-                .copied()
-                .filter(|p| p.id != "mysql-8.4")
-                .collect()
-        }
+        Some(WindowsTier::Modern) => return PACKAGES.to_vec(),
         // macOS: HeidiSQL y Notepad++ son de Windows. MySQL 8.4 tiene
         // binarios oficiales desde macOS 14.
         None => {
@@ -243,10 +236,14 @@ pub fn first_for(os: OsInfo, layout: BinaryLayout, service: ServiceId) -> Option
         .find(|p| matches!(p.kind, PackageKind::Service { service: s, .. } if s == service))
 }
 
-/// Versión y archivo oficial de MySQL 8.4 para esta Mac (tar.gz de
-/// mysql.com, listo para usar). Oracle dejó de publicar Intel en 8.4.11 y
-/// macOS 14 en 8.4.3; macOS 13 no tiene MySQL 8.4 (queda MariaDB).
+/// Versión y archivo oficial de MySQL 8.4 para este sistema (zip o tar.gz
+/// de mysql.com, listo para usar). Windows: 10/11 y Server 2016 o
+/// posterior. macOS: Oracle dejó de publicar Intel en 8.4.11 y macOS 14 en
+/// 8.4.3; macOS 13 no tiene MySQL 8.4 (queda MariaDB).
 pub fn mysql_build(os: OsInfo) -> Option<(&'static str, String)> {
+    if os.windows_tier() == Some(WindowsTier::Modern) {
+        return Some(("8.4.13", "mysql-8.4.13-winx64.zip".to_string()));
+    }
     let OsInfo::MacOs {
         major,
         apple_silicon,
@@ -663,6 +660,14 @@ mod tests {
                 build: 26200,
                 server: false
             }),
+            Some(("8.4.13", "mysql-8.4.13-winx64.zip".to_string()))
+        );
+        // MySQL 8.4 pide Windows 10 o Server 2016.
+        assert_eq!(
+            mysql_build(OsInfo::Windows {
+                build: 9600,
+                server: true
+            }),
             None
         );
         assert_eq!(
@@ -675,7 +680,7 @@ mod tests {
     }
 
     #[test]
-    fn mysql_is_offered_only_on_macs_that_have_it() {
+    fn mysql_is_offered_where_it_has_official_builds() {
         let ids =
             |os, layout| -> Vec<&str> { packages_for(os, layout).iter().map(|p| p.id).collect() };
         let sequoia_intel = OsInfo::MacOs {
@@ -697,7 +702,12 @@ mod tests {
             build: 26200,
             server: false,
         };
-        assert!(!ids(windows, BinaryLayout::Portable).contains(&"mysql-8.4"));
+        assert!(ids(windows, BinaryLayout::Portable).contains(&"mysql-8.4"));
+        let seven = OsInfo::Windows {
+            build: 7601,
+            server: false,
+        };
+        assert!(!ids(seven, BinaryLayout::Portable).contains(&"mysql-8.4"));
     }
 
     #[test]

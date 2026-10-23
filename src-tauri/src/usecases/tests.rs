@@ -2225,3 +2225,98 @@ async fn the_wizard_recommends_mysql_on_macs() {
     assert!(recommended("mysql-8.4"));
     assert!(!recommended("mariadb-11.4"));
 }
+
+#[tokio::test]
+async fn the_hosts_file_opens_for_editing() {
+    let h = Harness::new();
+    h.core().edit_hosts_file().unwrap();
+    assert_eq!(*h.hosts.edits.lock().unwrap(), 1);
+}
+
+#[tokio::test]
+async fn windows_gets_mysql_from_the_official_zip_but_keeps_mariadb() {
+    let h = Harness::new();
+    *h.archive.files.lock().unwrap() = Some(vec!["bin/mysqld.exe".into(), "bin/mysql.exe".into()]);
+    let core = h.core();
+    core.bootstrap().await.unwrap();
+    assert_eq!(
+        h.config.get().db_engine,
+        crate::domain::DatabaseEngine::Mariadb,
+        "en Windows MariaDB sigue siendo la de siempre"
+    );
+    let message = core.install_package("mysql-8.4").await.unwrap();
+    assert_eq!(message, "MySQL 8.4.13 instalado.");
+    let urls = h.downloader.urls.lock().unwrap().clone();
+    assert_eq!(
+        urls.last().unwrap(),
+        "https://cdn.mysql.com/Downloads/MySQL-8.4/mysql-8.4.13-winx64.zip"
+    );
+    assert!(h.fs.exists(Path::new(&format!(
+        "{ROOT}/bin/mysql/8.4.13/bin/mysqld.exe"
+    ))));
+    assert!(!h.fs.exists(Path::new(&format!(
+        "{ROOT}/tmp/downloads/mysql-8.4.13-winx64.zip"
+    ))));
+}
+
+#[tokio::test]
+async fn deleting_a_project_sends_it_to_the_trash_and_cleans_up() {
+    let h = Harness::new();
+    h.fs.create_dir_all(Path::new(&format!("{ROOT}/www/blog")))
+        .unwrap();
+    h.fs.create_dir_all(Path::new(&format!("{ROOT}/www/otro")))
+        .unwrap();
+    let core = h.core();
+    core.sync_sites().await.unwrap();
+
+    let message = core.delete_site("blog", false).await.unwrap();
+    assert!(message.contains("Papelera"), "{message}");
+    assert_eq!(
+        h.fs.trashed.lock().unwrap().clone(),
+        vec![format!("{ROOT}/www/blog")]
+    );
+    assert!(!h
+        .fs
+        .exists(Path::new(&format!("{ROOT}/etc/nginx/sites/blog.conf"))));
+    let entries = h.hosts.entries.lock().unwrap().clone();
+    assert!(!entries.contains(&HostEntry::local("blog.test")));
+    assert!(entries.contains(&HostEntry::local("otro.test")));
+    // Lo que no es un proyecto no se borra.
+    assert!(core.delete_site("nada", false).await.is_err());
+    assert!(core.delete_site("../etc", false).await.is_err());
+}
+
+#[tokio::test]
+async fn deleting_a_project_can_back_up_and_drop_its_database() {
+    let h = Harness::new();
+    fake_mariadb(&h, "mi_blog\notra\n");
+    h.fs.create_dir_all(Path::new(&format!("{ROOT}/www/Mi-Blog")))
+        .unwrap();
+    let core = h.core();
+    core.start(ServiceId::Mariadb).await.unwrap();
+    assert_eq!(
+        core.site_database("Mi-Blog").await.as_deref(),
+        Some("mi_blog")
+    );
+
+    let message = core.delete_site("Mi-Blog", true).await.unwrap();
+    assert!(message.contains("mi_blog"), "{message}");
+    let ran = h.runner.ran();
+    let dump = ran
+        .iter()
+        .position(|s| s.args.iter().any(|a| a.starts_with("--result-file=")))
+        .unwrap();
+    let drop = ran
+        .iter()
+        .position(|s| {
+            s.args
+                .iter()
+                .any(|a| a == "DROP DATABASE IF EXISTS `mi_blog`;")
+        })
+        .unwrap();
+    assert!(dump < drop, "primero el respaldo, después el borrado");
+    let backups =
+        h.fs.list_files(Path::new(&format!("{ROOT}/backups")))
+            .unwrap();
+    assert!(backups[0].starts_with("mi_blog-20"), "{backups:?}");
+}

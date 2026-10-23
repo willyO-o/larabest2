@@ -5,7 +5,9 @@ use std::time::Duration;
 use async_trait::async_trait;
 
 use crate::adapters::shared::hosts_file;
-use crate::domain::{encode_request, merge_block, parse_block, HostEntry};
+use crate::domain::{
+    active_hosts, encode_request, merge_block, parse_block, planned_entries, HostEntry,
+};
 use crate::error::AppError;
 use crate::ports::{HostsManager, ProcessRunner, ProcessSpec};
 
@@ -82,11 +84,18 @@ fn was_cancelled(output: &str) -> bool {
 
 #[async_trait]
 impl HostsManager for MacHostsManager {
+    /// TextEdit: al guardar, macOS pide la contraseña de administrador.
+    fn edit(&self) -> Result<(), AppError> {
+        std::process::Command::new("/usr/bin/open")
+            .args(["-e", HOSTS])
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| AppError::io("No se pudo abrir /etc/hosts", e))
+    }
+
+    /// Todas las entradas activas: también las que el usuario puso a mano.
     async fn list(&self) -> Result<Vec<HostEntry>, AppError> {
-        Ok(parse_block(
-            &hosts_file::read(Path::new(HOSTS))?,
-            &self.app_name,
-        ))
+        Ok(active_hosts(&hosts_file::read(Path::new(HOSTS))?))
     }
 
     async fn sync(&self, entries: &[HostEntry]) -> Result<(), AppError> {
@@ -106,7 +115,9 @@ impl HostsManager for MacHostsManager {
             .await;
         let _ = std::fs::remove_file(&self.request_file);
 
-        let applied = parse_block(&hosts_file::read(Path::new(HOSTS))?, &self.app_name) == entries;
+        // Las que el usuario ya tenía a mano no se escriben.
+        let planned = planned_entries(&current, &self.app_name, entries);
+        let applied = parse_block(&hosts_file::read(Path::new(HOSTS))?, &self.app_name) == planned;
         match out {
             Ok(_) if applied => Ok(()),
             Ok(o) if was_cancelled(&o.text()) => Err(AppError::Hosts(

@@ -130,7 +130,13 @@ pub fn build(app: &AppHandle, from_tray: bool) -> tauri::Result<Menu<Wry>> {
         www.push(disabled(app, "(crea una carpeta en www)")?);
     }
     for site in &sites {
-        www.push(text(app, &format!("site:{}", site.name), &site.domain)?);
+        // Sin hosts virtuales se abre en localhost/<carpeta>/.
+        let label = if site.url.contains("://localhost") {
+            format!("localhost/{}", site.name)
+        } else {
+            site.domain.clone()
+        };
+        www.push(text(app, &format!("site:{}", site.name), &label)?);
     }
     www.push(sep(app)?);
     www.push(Box::new(submenu(
@@ -148,6 +154,17 @@ pub fn build(app: &AppHandle, from_tray: bool) -> tauri::Result<Menu<Wry>> {
         "hosts_sync",
         "Actualizar sitios y archivo hosts",
     )?);
+    www.push(text(app, "hosts_edit", "Editar archivo hosts")?);
+    // Borrar un proyecto (con confirmación; la carpeta va a la Papelera).
+    let mut delete = Vec::new();
+    for site in &sites {
+        delete.push(text(app, &format!("delete:{}", site.name), &site.name)?);
+    }
+    if delete.is_empty() {
+        delete.push(disabled(app, "(no hay proyectos)")?);
+    }
+    www.push(sep(app)?);
+    www.push(Box::new(submenu(app, "Eliminar proyecto", delete)?));
 
     // El servidor web elegido (Nginx o Apache).
     let web = core.web_server().service();
@@ -576,6 +593,7 @@ async fn run(app: &AppHandle, id: &str) -> Result<(), AppError> {
         "root_www" => return open_path(app, core.www()),
         "web_reload" => return core.reload(core.web_server().service()).await,
         "hosts_sync" => return core.sync_sites().await.map(|_| ()),
+        "hosts_edit" => return core.edit_hosts_file(),
         "auto_start" => return core.set_auto_start(!core.auto_start()),
         "user_path:add" => {
             core.set_user_path(true).await?;
@@ -706,6 +724,9 @@ async fn run(app: &AppHandle, id: &str) -> Result<(), AppError> {
             .map_err(|_| AppError::InvalidInput(id.into()))?;
         return core.switch_version(service, version).await;
     }
+    if let Some(name) = id.strip_prefix("delete:") {
+        return delete_site(app, name).await;
+    }
     if let Some(name) = id.strip_prefix("site:") {
         let site = core
             .sites()
@@ -715,5 +736,48 @@ async fn run(app: &AppHandle, id: &str) -> Result<(), AppError> {
             .ok_or_else(|| AppError::NotFound(format!("No existe el sitio {name}")))?;
         return open_url(app, &site.url);
     }
+    Ok(())
+}
+
+/// Menú www → Eliminar proyecto: confirma, pregunta por su base de datos
+/// (si tiene) y lo borra. La carpeta va a la Papelera.
+async fn delete_site(app: &AppHandle, name: &str) -> Result<(), AppError> {
+    let state = app.state::<AppState>();
+    let core = &state.core;
+    let trash = if cfg!(windows) {
+        "la Papelera de reciclaje"
+    } else {
+        "la Papelera"
+    };
+    let ok = tray::confirm(
+        app,
+        "Eliminar proyecto",
+        &format!(
+            "¿Eliminar el proyecto «{name}»?\n\nLa carpeta www/{name} se manda a {trash} (se puede recuperar desde ahí) y se quitan su dominio y su configuración del servidor web."
+        ),
+        "Eliminar",
+        "Cancelar",
+    )
+    .await;
+    if !ok {
+        return Ok(());
+    }
+    let drop_database = match core.site_database(name).await {
+        Some(db) => {
+            tray::confirm(
+                app,
+                "Base de datos del proyecto",
+                &format!(
+                    "El proyecto tiene la base de datos «{db}». ¿Borrarla también?\n\nAntes se guarda un respaldo en la carpeta backups."
+                ),
+                "Borrar la base de datos",
+                "Conservarla",
+            )
+            .await
+        }
+        None => false,
+    };
+    let message = core.delete_site(name, drop_database).await?;
+    tray::show_info(app, &message);
     Ok(())
 }

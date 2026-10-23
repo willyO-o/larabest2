@@ -101,6 +101,73 @@ impl Core {
         Ok(slash(&file))
     }
 
+    /// Base de datos de un proyecto de `www/` (la que crean WordPress y
+    /// Laravel: el nombre de la carpeta en minúsculas, `-` → `_`), si existe
+    /// y la base de datos está en marcha.
+    pub async fn site_database(&self, site: &str) -> Option<String> {
+        let ctx = self.supervisor.context().ok()?;
+        if self.supervisor.state(ctx.db()) != ServiceState::Running {
+            return None;
+        }
+        let name = crate::domain::database_name(site);
+        mariadb::list_databases(&ctx)
+            .await
+            .ok()?
+            .into_iter()
+            .find(|d| *d == name)
+    }
+
+    /// Borra un proyecto de `www/`: la carpeta va a la Papelera (se puede
+    /// recuperar) y desaparecen su vhost y su entrada en hosts. Con
+    /// `drop_database`, su base de datos se respalda en `backups/` y se
+    /// borra. Devuelve el mensaje para el usuario.
+    pub async fn delete_site(&self, name: &str, drop_database: bool) -> Result<String, AppError> {
+        let deps = self.supervisor.deps();
+        let site = self
+            .sites()
+            .await?
+            .into_iter()
+            .find(|s| s.name == name)
+            .ok_or_else(|| AppError::NotFound(format!("No existe el proyecto {name}")))?;
+        let dir = deps.paths.www().join(&site.name);
+        // Solo una carpeta directa de www (el nombre ya es válido como
+        // dominio: sin barras ni puntos).
+        if dir.parent() != Some(deps.paths.www().as_path()) || !deps.fs.exists(&dir) {
+            return Err(AppError::NotFound(format!(
+                "No existe la carpeta {}",
+                slash(&dir)
+            )));
+        }
+        let mut backup = None;
+        let database = if drop_database {
+            self.site_database(&site.name).await
+        } else {
+            None
+        };
+        if let Some(db) = &database {
+            let stamp = database::utc_stamp(now_secs());
+            backup = Some(self.backup_database(db, &stamp).await?);
+        }
+        deps.fs.move_to_trash(&dir)?;
+        if let Some(db) = &database {
+            let ctx = self.supervisor.context()?;
+            mariadb::drop_database(&ctx, db).await?;
+        }
+        // Vhost, archivo hosts y menú al día. Si el permiso de hosts se
+        // cancela, el proyecto igual quedó borrado.
+        let synced = self.sync_sites().await;
+        let mut message = format!("Se borró {}: la carpeta está en la Papelera.", site.name);
+        if let (Some(db), Some(file)) = (&database, &backup) {
+            message.push_str(&format!(
+                " La base de datos {db} se borró; su respaldo quedó en {file}."
+            ));
+        }
+        if let Err(e) = synced {
+            message.push_str(&format!(" No se pudo actualizar el archivo hosts: {e}"));
+        }
+        Ok(message)
+    }
+
     /// Cambia la contraseña de root en MariaDB y la guarda para la app,
     /// Adminer, phpMyAdmin, HeidiSQL y los sitios nuevos. Los sitios que ya
     /// existen guardan la anterior en su `.env` o `wp-config.php`.
@@ -117,4 +184,11 @@ impl Core {
         self.sync_sites().await?;
         Ok(())
     }
+}
+
+fn now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or_default()
 }

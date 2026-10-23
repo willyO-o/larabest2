@@ -138,6 +138,12 @@ pub async fn db_open_backups(app: AppHandle, state: State<'_, AppState>) -> Resu
     open_path(&app, dir)
 }
 
+/// Abre el archivo hosts en el Bloc de notas (como administrador).
+#[tauri::command]
+pub async fn shell_edit_hosts(state: State<'_, AppState>) -> Result<(), AppError> {
+    state.core.edit_hosts_file()
+}
+
 #[tauri::command]
 pub async fn shell_open_web(app: AppHandle, state: State<'_, AppState>) -> Result<(), AppError> {
     open_url(&app, &state.core.web_url()?)

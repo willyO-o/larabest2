@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use super::{WindowsDownloader, WindowsPortChecker, WindowsProcessRunner};
 use crate::adapters::shared::binaries::DirBinaryProvider;
-use crate::domain::{catalog, BinaryLayout, Paths, ServiceId, WebServer};
+use crate::domain::{catalog, BinaryLayout, DatabaseEngine, Paths, ServiceId, WebServer};
 use crate::e2e::{self, check, get, E2ePorts, Platform};
 use crate::ports::ProcessRunner;
 
@@ -50,9 +50,14 @@ async fn e2e_windows() {
         eprintln!("{}: {added:?}", package.id);
         check(&w, added.is_ok(), &format!("{}: {added:?}", package.id));
     }
-    // Apache se agrega antes que Nginx y, al no haber Nginx todavía, la app
-    // lo adopta como servidor web. El recorrido empieza con Nginx.
+    // Apache se agrega antes que Nginx (y MySQL antes que MariaDB) y, al no
+    // estar el otro todavía, la app lo adopta. El recorrido empieza con
+    // Nginx y MariaDB.
     w.core.set_web_server(WebServer::Nginx).await.unwrap();
+    w.core
+        .set_database_engine(DatabaseEngine::Mariadb)
+        .await
+        .unwrap();
 
     // El runner de GitHub tiene permisos de administrador y postgres.exe se
     // niega a arrancar así: se prueba solo que la descarga es válida.
@@ -102,6 +107,26 @@ async fn e2e_windows() {
 
     // Apache (de Apache Lounge) en lugar de Nginx, con los php-cgi.
     e2e::apache_flow(&w).await;
+
+    // MySQL 8.4 (zip oficial) en lugar de MariaDB: su carpeta de datos,
+    // PHP (Adminer) entrando como root con contraseña y un respaldo.
+    w.core
+        .set_database_engine(DatabaseEngine::Mysql)
+        .await
+        .unwrap();
+    if w.core.supervisor.state(ServiceId::Mysql) != crate::domain::ServiceState::Running {
+        let started = w.core.start(ServiceId::Mysql).await;
+        check(&w, started.is_ok(), &format!("MySQL: {started:?}"));
+    }
+    let created = w.core.create_database("e2e_mysql").await;
+    check(&w, created.is_ok(), &format!("{created:?}"));
+    let password = w.core.set_root_password("Secreta_1").await;
+    check(&w, password.is_ok(), &format!("{password:?}"));
+    let adminer = e2e::adminer_databases(&w).await;
+    check(&w, adminer.contains("e2e_mysql"), &adminer);
+    let backup = w.core.backup_database("e2e_mysql", "2026-01-01_0000").await;
+    check(&w, backup.is_ok(), &format!("{backup:?}"));
+    w.core.set_root_password("").await.unwrap();
 
     e2e::orphans_are_cleaned(&w).await;
 }
