@@ -92,6 +92,15 @@ impl Paths {
         self.etc_nginx().join("sites")
     }
 
+    /// Proyectos compartidos en la red local: un `.conf` por proyecto.
+    pub fn nginx_shared(&self) -> PathBuf {
+        self.etc_nginx().join("shared")
+    }
+
+    pub fn apache_shared(&self) -> PathBuf {
+        self.etc_service(ServiceId::Apache).join("shared")
+    }
+
     pub fn nginx_custom(&self) -> PathBuf {
         self.etc_nginx().join("custom")
     }

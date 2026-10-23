@@ -31,7 +31,7 @@ Clic derecho en cualquier parte de la ventana, el botón **Menú** o el ícono d
 | Menú | Contenido |
 | --- | --- |
 | Iniciar todo / Detener todo | según el estado |
-| www | un sitio por carpeta (abre `http://<carpeta>.test`), **Crear sitio** (en blanco, WordPress, Laravel), abrir la carpeta www, actualizar sitios y archivo hosts, **Editar archivo hosts**, **Eliminar proyecto** |
+| www | un sitio por carpeta (abre `http://<carpeta>.test`), **Crear sitio** (en blanco, WordPress, Laravel), abrir la carpeta www, actualizar sitios y archivo hosts, **Editar archivo hosts**, **Compartir en la red local…**, **Eliminar proyecto** |
 | Nginx o Apache | el servidor web elegido: versión, recargar configuración, carpeta de configuración propia por sitio (`etc\nginx\custom\<sitio>.conf` o `etc\apache\custom\<sitio>.conf`), configuración generada, logs |
 | PHP | versión, `php.ini` de ajustes propios, extensiones (marcar o desmarcar), `php.ini` generado, log de errores |
 | MariaDB | versión, `my.cnf` de ajustes propios, HeidiSQL, Adminer, phpMyAdmin, **Nueva base de datos…**, **Respaldar base de datos…**, **Cambiar contraseña de root…**, carpeta de respaldos, `my.cnf` generado, carpeta de datos, log de errores |
@@ -213,6 +213,17 @@ Cada dominio que agrega la app va en su bloque del archivo hosts y, como en Lara
 - La app solo cambia o quita líneas con esa marca (aunque las muevas fuera del bloque). Las tuyas, sin marca, nunca se tocan.
 - Si ya definiste un dominio a mano (por ejemplo `192.168.1.20 blog.test`), la app no agrega el suyo: tu línea manda.
 - El **ícono de documento** de la cabecera (o **Menú → www → Editar archivo hosts**) abre el archivo en el Bloc de notas como administrador (Windows pide permiso, para poder guardar); en macOS, en TextEdit.
+
+## Compartir en la red local
+
+**Menú → www → Compartir en la red local…** abre un panel con los proyectos de `www/`. Al activar uno, la app le da un puerto propio (8100, 8101…) y muestra la dirección para abrirlo desde otro equipo o el celular conectado a la **misma red** (Wi‑Fi o cable), por ejemplo `http://192.168.1.20:8100/`, con botones para copiarla y abrirla. Mientras haya alguno compartido, la línea de estado muestra **En la red: N** (abre el panel).
+
+- Funciona en Windows y macOS, con Nginx o Apache: el servidor web escucha además en ese puerto, en todas las interfaces, con la carpeta pública del proyecto. Si estaba detenido, arranca solo.
+- Va por IP y puerto porque los dominios `.test` solo existen en este equipo (archivo hosts); los otros equipos no los conocen.
+- **Windows:** la primera vez pide permiso de administrador para agregar al firewall la regla «LARABEST - compartir en la red local» (puertos 8100–8199, entrada TCP). Si alguna vez rechazaste el aviso del firewall para `nginx.exe` o `httpd.exe`, Windows lo sigue bloqueando: permítelo en Seguridad de Windows → Firewall → Permitir una aplicación.
+- **macOS:** su firewall viene apagado; si lo activaste, macOS pregunta si `nginx`/`httpd` puede recibir conexiones.
+- **WordPress** guarda su dirección `.test` y redirige a ella. Los creados con LARABEST ya traen en `wp-config.php` unas líneas que, al abrirlos por IP, usan esa dirección; para uno anterior, el panel ofrece **Ajustar wp-config.php** (agrega esas líneas y guarda una copia `wp-config.php.larabest.bak`). Las imágenes insertadas en las entradas pueden seguir apuntando a `.test`.
+- Desactívalo al terminar: mientras está compartido, cualquiera en tu red puede abrir el proyecto.
 
 ## Eliminar un proyecto
 

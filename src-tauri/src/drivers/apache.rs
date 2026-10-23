@@ -155,12 +155,25 @@ fn vhost(ctx: &RenderContext, name: &str, domain: &str, root: &str) -> Result<St
 /// cambió algún archivo.
 pub fn render_sites(ctx: &RenderContext, sites: &[Site]) -> Result<bool, AppError> {
     ctx.fs.create_dir_all(&ctx.paths.apache_custom())?;
-    write_vhosts(
+    let vhosts = write_vhosts(
         ctx,
         sites,
         &ctx.paths.apache_sites(),
         |name, domain, root| vhost(ctx, name, domain, root),
-    )
+    )?;
+    let shares = super::write_shares(ctx, &ctx.paths.apache_shared(), |name, port, root| {
+        templates::render(
+            templates::SHARE_HTTPD,
+            context! {
+                app_name => ctx.app_name,
+                name => name,
+                port => port,
+                root => root,
+                custom_dir => slash(&ctx.paths.apache_custom()),
+            },
+        )
+    })?;
+    Ok(vhosts || shares)
 }
 
 #[async_trait]
@@ -178,11 +191,7 @@ impl ServiceDriver for ApacheDriver {
     }
 
     fn ports(&self, ctx: &RenderContext) -> Vec<u16> {
-        if ctx.config.ssl {
-            vec![ctx.config.http_port, ctx.config.https_port]
-        } else {
-            vec![ctx.config.http_port]
-        }
+        super::web_ports(ctx)
     }
 
     fn log_files(&self, ctx: &RenderContext) -> Vec<PathBuf> {
@@ -232,6 +241,7 @@ impl ServiceDriver for ApacheDriver {
                 www => slash(&ctx.paths.www()),
                 mime_types => slash(&mime),
                 sites_dir => slash(&ctx.paths.apache_sites()),
+                shared_dir => slash(&ctx.paths.apache_shared()),
                 custom_dir => slash(&ctx.paths.apache_custom()),
             },
         )?;

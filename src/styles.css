@@ -795,6 +795,28 @@ button:disabled {
   color: var(--ink-2);
 }
 
+/* Proyectos compartidos en la red: abre el panel. */
+.statusline-share {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 6px;
+  height: 22px;
+  border-radius: 999px;
+  background: var(--ok-ground);
+  color: var(--ok);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.share-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: pulse-dot 1.6s ease-in-out infinite;
+}
+
 .statusline-warn {
   color: var(--warn);
   font-weight: 600;
@@ -1298,6 +1320,92 @@ button:disabled {
 
 .port-input:disabled {
   opacity: 0.6;
+}
+
+/* ---------------------------------------------------------------- compartir en la red */
+
+.share-ip {
+  margin: -4px 0 0;
+  color: var(--ink-2);
+}
+
+.share-list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.share-row {
+  display: grid;
+  grid-template-columns: minmax(0, 170px) minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 10px;
+  min-height: 42px;
+  padding: 4px 2px;
+  border-bottom: 1px solid var(--line);
+}
+
+.share-toggle {
+  min-width: 0;
+}
+
+.share-name {
+  overflow: hidden;
+  font-size: 14px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.share-url {
+  overflow: hidden;
+  color: var(--accent);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  user-select: text;
+}
+
+.share-state {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  grid-column: 2 / -1;
+  color: var(--ink-3);
+}
+
+.share-actions {
+  display: inline-flex;
+  gap: 2px;
+}
+
+.share-hint {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  grid-column: 1 / -1;
+  margin: 2px 0 6px;
+  padding: 6px 10px;
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--warn) 12%, transparent);
+  color: var(--warn);
+  font-size: 12px;
+}
+
+.share-fix {
+  flex: none;
+  height: 28px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .share-dot {
+    animation: none;
+  }
 }
 
 /* ---------------------------------------------------------------- bases de datos */

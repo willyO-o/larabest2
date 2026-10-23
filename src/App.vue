@@ -9,11 +9,13 @@ import DatabasePanel from './components/DatabasePanel.vue'
 import ServiceRow from './components/ServiceRow.vue'
 import ServicesPanel from './components/ServicesPanel.vue'
 import SetupPanel from './components/SetupPanel.vue'
+import SharePanel from './components/SharePanel.vue'
 import ThemeSwitch from './components/ThemeSwitch.vue'
 import { attempt, lastError } from './lib/errors'
 import { progressDetail, progressText } from './lib/progress'
 import { SERVICE_LABEL, useServicesStore } from './stores/services'
 import { useDatabaseStore } from './stores/database'
+import { useShareStore } from './stores/share'
 import { useInstallsStore } from './stores/installs'
 import { useServicesPanelStore } from './stores/servicesPanel'
 import { useSetupStore } from './stores/setup'
@@ -27,6 +29,7 @@ const installs = useInstallsStore()
 const servicesPanel = useServicesPanelStore()
 const setup = useSetupStore()
 const database = useDatabaseStore()
+const share = useShareStore()
 
 onMounted(async () => {
   await Promise.all([
@@ -37,6 +40,7 @@ onMounted(async () => {
     servicesPanel.init(),
     setup.init(),
     database.init(),
+    share.init(),
   ])
   // La ventana se crea oculta: se muestra cuando ya está pintada con su tema.
   requestAnimationFrame(() => attempt(() => invoke('app_ready')))
@@ -50,6 +54,8 @@ const BASE_HEIGHT = 380
 const SERVICES_PANEL_HEIGHT = 590
 /** Alto mínimo con el panel de bases de datos. */
 const DATABASE_PANEL_HEIGHT = 480
+/** Alto mínimo con "Compartir en la red local". */
+const SHARE_PANEL_HEIGHT = 520
 /** Alto mínimo con el asistente abierto (su lista se desplaza si no entra). */
 const SETUP_PANEL_HEIGHT = 620
 
@@ -57,12 +63,19 @@ const SETUP_PANEL_HEIGHT = 620
 // Con Servicios y puertos o el asistente abiertos crece lo necesario y al
 // cerrarlos vuelve.
 watch(
-  [() => services.list.length, () => servicesPanel.open, () => setup.open, () => database.open],
-  ([rows, panelOpen, setupOpen, databaseOpen]) => {
+  [
+    () => services.list.length,
+    () => servicesPanel.open,
+    () => setup.open,
+    () => database.open,
+    () => share.open,
+  ],
+  ([rows, panelOpen, setupOpen, databaseOpen, shareOpen]) => {
     if (!rows) return
     let height = BASE_HEIGHT + Math.max(0, rows - 3) * ROW_HEIGHT
     if (panelOpen) height = Math.max(height, SERVICES_PANEL_HEIGHT)
     if (databaseOpen) height = Math.max(height, DATABASE_PANEL_HEIGHT)
+    if (shareOpen) height = Math.max(height, SHARE_PANEL_HEIGHT)
     if (setupOpen) height = Math.max(height, SETUP_PANEL_HEIGHT)
     attempt(() => invoke('window_fit', { height }))
   },
@@ -179,6 +192,12 @@ function openMenu(e?: MouseEvent) {
         <span class="statusline-sep" aria-hidden="true">·</span>
         <span>{{ sitesLabel }} en www</span>
       </template>
+      <template v-if="share.shared.length && !installs.current">
+        <span class="statusline-sep" aria-hidden="true">·</span>
+        <button class="statusline-share" title="Compartir en la red local" @click="share.show()">
+          <span class="share-dot" aria-hidden="true" />En la red: {{ share.shared.length }}
+        </button>
+      </template>
       <template v-if="settings.ssl && !installs.current">
         <span class="statusline-sep" aria-hidden="true">·</span>
         <span class="statusline-https"><AppIcon name="lock" />HTTPS</span>
@@ -220,5 +239,6 @@ function openMenu(e?: MouseEvent) {
     <ServicesPanel />
     <SetupPanel />
     <DatabasePanel />
+    <SharePanel />
   </div>
 </template>

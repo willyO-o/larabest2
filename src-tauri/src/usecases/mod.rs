@@ -8,6 +8,7 @@ mod nodejs;
 mod php_build;
 mod services_settings;
 mod setup;
+mod share;
 pub mod sites;
 mod ssl;
 
@@ -17,6 +18,7 @@ pub use services_settings::{
     PortBusy, ServiceToggle, ServicesChoice, ServicesSettings, SiteSettings,
 };
 pub use setup::{SetupInfo, SetupManager, SetupPackage};
+pub use share::{ShareInfo, ShareSite, WP_LAN_MARK};
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::PathBuf;

@@ -219,6 +219,59 @@ pub fn ssl_for(ctx: &RenderContext, domain: &str) -> Option<(String, String)> {
     (ctx.fs.exists(&cert) && ctx.fs.exists(&key)).then(|| (slash(&cert), slash(&key)))
 }
 
+/// Proyectos compartidos en la red local que siguen existiendo, con su
+/// puerto y su carpeta pública.
+pub fn shared_sites(ctx: &RenderContext) -> Vec<(&Site, u16)> {
+    ctx.config
+        .shared_sites
+        .iter()
+        .filter_map(|shared| {
+            ctx.sites
+                .iter()
+                .find(|s| s.name == shared.name)
+                .map(|site| (site, shared.port))
+        })
+        .collect()
+}
+
+/// Un `.conf` por proyecto compartido en `dir` y borra los que ya no lo
+/// están. `render(nombre, puerto, raíz)` arma cada uno. Devuelve `true` si
+/// cambió algún archivo.
+pub fn write_shares(
+    ctx: &RenderContext,
+    dir: &Path,
+    render: impl Fn(&str, u16, &str) -> Result<String, AppError>,
+) -> Result<bool, AppError> {
+    let fs = ctx.fs.as_ref();
+    fs.create_dir_all(dir)?;
+    let mut changed = false;
+    let mut keep = HashSet::new();
+    for (site, port) in shared_sites(ctx) {
+        let file = format!("{}.conf", site.name.to_ascii_lowercase());
+        let content = render(&site.name, port, &site.document_root)?;
+        changed |= write_if_changed(fs, &dir.join(&file), &content)?;
+        keep.insert(file);
+    }
+    for file in fs.list_files(dir)? {
+        if file.ends_with(".conf") && !keep.contains(&file) {
+            fs.remove_file(&dir.join(&file))?;
+            changed = true;
+        }
+    }
+    Ok(changed)
+}
+
+/// Puertos del servidor web: HTTP, HTTPS si está activo y los de los
+/// proyectos compartidos.
+pub fn web_ports(ctx: &RenderContext) -> Vec<u16> {
+    let mut ports = vec![ctx.config.http_port];
+    if ctx.config.ssl {
+        ports.push(ctx.config.https_port);
+    }
+    ports.extend(shared_sites(ctx).into_iter().map(|(_, port)| port));
+    ports
+}
+
 /// Un archivo `<sitio>.conf` por sitio en `dir`, más los de Adminer y
 /// phpMyAdmin, y borra los que ya no corresponden. `vhost(nombre, dominio,
 /// raíz)` arma cada uno. Devuelve `true` si cambió algún archivo.

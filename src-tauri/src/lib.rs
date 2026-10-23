@@ -362,6 +362,10 @@ pub fn run() {
             commands::db_set_root_password,
             commands::db_open_backups,
             commands::shell_edit_hosts,
+            commands::share_info,
+            commands::share_set,
+            commands::share_open,
+            commands::share_fix_wordpress,
         ])
         .build(tauri::generate_context!())
         .expect("error al iniciar la aplicación");

@@ -149,6 +149,12 @@ impl Core {
             backup = Some(self.backup_database(db, &stamp).await?);
         }
         deps.fs.move_to_trash(&dir)?;
+        // Si estaba compartido en la red, deja de estarlo.
+        let mut cfg = deps.config.load()?;
+        if cfg.shared_sites.iter().any(|s| s.name == site.name) {
+            cfg.shared_sites.retain(|s| s.name != site.name);
+            deps.config.save(&cfg)?;
+        }
         if let Some(db) = &database {
             let ctx = self.supervisor.context()?;
             mariadb::drop_database(&ctx, db).await?;

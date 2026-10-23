@@ -348,6 +348,10 @@ pub struct FakePorts {
     /// Puertos ocupados solo durante las próximas N consultas.
     busy_for: Mutex<HashMap<u16, u32>>,
     listening: Mutex<HashSet<u16>>,
+    /// IP en la red local (`None`: sin red).
+    pub lan_ip: Mutex<Option<String>>,
+    /// Veces que se abrió el firewall para compartir.
+    pub firewall_opened: Mutex<usize>,
 }
 
 impl FakePorts {
@@ -365,6 +369,15 @@ impl FakePorts {
 }
 
 impl PortChecker for FakePorts {
+    fn lan_ip(&self) -> Option<String> {
+        self.lan_ip.lock().unwrap().clone()
+    }
+
+    fn allow_lan_ports(&self) -> Result<(), AppError> {
+        *self.firewall_opened.lock().unwrap() += 1;
+        Ok(())
+    }
+
     fn is_free(&self, port: u16) -> bool {
         if let Some(left) = self.busy_for.lock().unwrap().get_mut(&port) {
             if *left > 0 {

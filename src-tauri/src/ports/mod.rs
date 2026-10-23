@@ -120,6 +120,21 @@ pub trait HostsManager: Send + Sync {
 
 pub trait PortChecker: Send + Sync {
     fn is_free(&self, port: u16) -> bool;
+    /// IP del equipo en la red local (la de la interfaz con salida). No
+    /// manda nada: un socket UDP "conectado" solo elige la interfaz.
+    fn lan_ip(&self) -> Option<String> {
+        let socket = std::net::UdpSocket::bind(("0.0.0.0", 0)).ok()?;
+        socket.connect(("8.8.8.8", 80)).ok()?;
+        let ip = socket.local_addr().ok()?.ip();
+        (!ip.is_loopback() && !ip.is_unspecified()).then(|| ip.to_string())
+    }
+    /// Deja entrar conexiones de la red a los puertos de compartir. En
+    /// Windows agrega una regla al firewall (una vez, con permiso de
+    /// administrador); en macOS el sistema pregunta solo si su firewall
+    /// está activo.
+    fn allow_lan_ports(&self) -> Result<(), AppError> {
+        Ok(())
+    }
     fn who_uses(&self, port: u16) -> Option<String>;
     /// `true` si algo acepta conexiones TCP en 127.0.0.1:`port`.
     fn is_listening(&self, port: u16) -> bool;

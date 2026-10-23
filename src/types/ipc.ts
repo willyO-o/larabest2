@@ -148,6 +148,26 @@ export interface DatabaseInfo {
   backupsDir: string
 }
 
+/** Un proyecto en el panel "Compartir en la red local". */
+export interface ShareSite {
+  name: string
+  shared: boolean
+  port: number | null
+  /** `http://192.168.1.20:8100/` si está compartido y hay red. */
+  url: string | null
+  wordpress: boolean
+  /** Su wp-config.php ya sigue a la dirección usada (WordPress nuevos). */
+  wordpressReady: boolean
+}
+
+/** Resultado de `share_info` y `share_set`. */
+export interface ShareInfo {
+  /** IP del equipo en la red local; null sin red. */
+  ip: string | null
+  webRunning: boolean
+  sites: ShareSite[]
+}
+
 /** Qué pide el menú MariaDB al abrir el panel. */
 export type DatabaseMode = 'create' | 'backup' | 'password'
 
@@ -235,5 +255,7 @@ export const EVENTS = {
   uiSetup: 'ui:setup',
   /** El menú MariaDB pide el panel de bases de datos (con su pestaña). */
   uiDatabase: 'ui:database',
+  /** El menú www pide el panel "Compartir en la red local". */
+  uiShare: 'ui:share',
   installProgress: 'install:progress',
 } as const

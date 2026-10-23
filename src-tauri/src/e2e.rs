@@ -321,6 +321,32 @@ pub async fn common_flow(w: &World, stack: &[ServiceId]) {
         &page,
     );
 
+    // Compartir en la red local: el proyecto responde en su puerto, por la
+    // IP del equipo (como lo abriría otro equipo de la red).
+    if w.core.supervisor.deps().ports.lan_ip().is_some() {
+        let shared = w.core.set_shared("hola", true).await;
+        check(w, shared.is_ok(), &format!("compartir: {shared:?}"));
+        let url = shared
+            .ok()
+            .and_then(|info| info.sites.into_iter().find(|s| s.name == "hola"))
+            .and_then(|s| s.url)
+            .unwrap_or_default();
+        let mut lan = String::new();
+        for _ in 0..30 {
+            lan = curl(&["-s", "-i", "--max-time", "20", &url]).await;
+            if lan.contains("hola 8.") {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+        check(
+            w,
+            lan.contains("200 OK") && lan.contains("hola 8."),
+            &format!("{url}\n{lan}"),
+        );
+        w.core.set_shared("hola", false).await.unwrap();
+    }
+
     // El correo de mail() llega a la bandeja de Mailpit.
     std::fs::write(
         w.root.join("www").join("hola").join("correo.php"),

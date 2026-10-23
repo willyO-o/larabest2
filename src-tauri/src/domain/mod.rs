@@ -17,7 +17,7 @@ mod version;
 
 pub use config::{
     ActiveVersions, AppConfig, DatabaseClient, DatabaseEngine, OptionalServices, PortSettings,
-    ThemePreference, WebServer, DEFAULT_PHP_EXTENSIONS,
+    SharedSite, ThemePreference, WebServer, DEFAULT_PHP_EXTENSIONS, SHARE_PORTS,
 };
 pub use dotenv::set_env;
 pub use hosts::{

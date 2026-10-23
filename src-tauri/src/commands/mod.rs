@@ -11,7 +11,9 @@ use crate::domain::{
     ThemePreference,
 };
 use crate::error::AppError;
-use crate::usecases::{DatabaseInfo, PortBusy, ServicesChoice, ServicesSettings, SetupInfo};
+use crate::usecases::{
+    DatabaseInfo, PortBusy, ServicesChoice, ServicesSettings, SetupInfo, ShareInfo,
+};
 use crate::{menu, settings, tray, AppState};
 
 #[tauri::command]
@@ -136,6 +138,50 @@ pub async fn db_open_backups(app: AppHandle, state: State<'_, AppState>) -> Resu
     std::fs::create_dir_all(&dir)
         .map_err(|e| AppError::io(format!("No se pudo crear {}", slash(&dir)), e))?;
     open_path(&app, dir)
+}
+
+/// Panel "Compartir en la red local": IP del equipo y proyectos.
+#[tauri::command]
+pub async fn share_info(state: State<'_, AppState>) -> Result<ShareInfo, AppError> {
+    state.core.share_info().await
+}
+
+/// Comparte o deja de compartir un proyecto en la red local.
+#[tauri::command]
+pub async fn share_set(
+    state: State<'_, AppState>,
+    name: String,
+    shared: bool,
+) -> Result<ShareInfo, AppError> {
+    state.core.set_shared(&name, shared).await
+}
+
+/// Agrega a un WordPress existente las líneas para verlo desde la red.
+#[tauri::command]
+pub async fn share_fix_wordpress(
+    state: State<'_, AppState>,
+    name: String,
+) -> Result<ShareInfo, AppError> {
+    state.core.fix_wordpress_for_lan(&name).await
+}
+
+/// Abre en el navegador la dirección de red de un proyecto compartido.
+#[tauri::command]
+pub async fn share_open(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    name: String,
+) -> Result<(), AppError> {
+    let url = state
+        .core
+        .share_info()
+        .await?
+        .sites
+        .into_iter()
+        .find(|s| s.name == name)
+        .and_then(|s| s.url)
+        .ok_or_else(|| AppError::NotFound(format!("{name} no está compartido")))?;
+    open_url(&app, &url)
 }
 
 /// Abre el archivo hosts en el Bloc de notas (como administrador).

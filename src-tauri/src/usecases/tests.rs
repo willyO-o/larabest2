@@ -315,6 +315,8 @@ async fn wordpress_downloads_once_and_writes_config() {
     let config = h.fs.read(&format!("{ROOT}/www/mi-blog/wp-config.php"));
     assert!(config.contains("define( 'DB_NAME', 'mi_blog' );"));
     assert!(config.contains("define( 'DB_HOST', '127.0.0.1:3306' );"));
+    // Abierto por IP desde la red local, sigue a esa dirección.
+    assert!(config.contains(crate::usecases::WP_LAN_MARK));
     assert!(config.contains(&format!(
         "define( 'NONCE_SALT',       '{}' );",
         "k".repeat(64)
@@ -2319,4 +2321,114 @@ async fn deleting_a_project_can_back_up_and_drop_its_database() {
         h.fs.list_files(Path::new(&format!("{ROOT}/backups")))
             .unwrap();
     assert!(backups[0].starts_with("mi_blog-20"), "{backups:?}");
+}
+
+// ---------------------------------------------------------------- compartir en la red
+
+#[tokio::test]
+async fn sharing_a_project_gives_it_a_lan_address() {
+    let h = Harness::new();
+    *h.ports.lan_ip.lock().unwrap() = Some("192.168.1.20".into());
+    h.ports.set_busy(8100, "otro.exe");
+    for site in ["blog", "tienda"] {
+        h.fs.create_dir_all(Path::new(&format!("{ROOT}/www/{site}")))
+            .unwrap();
+    }
+    let core = h.core();
+
+    let info = core.set_shared("blog", true).await.unwrap();
+    let blog = info.sites.iter().find(|s| s.name == "blog").unwrap();
+    // 8100 lo ocupa otro programa: usa el siguiente.
+    assert_eq!(blog.url.as_deref(), Some("http://192.168.1.20:8101/"));
+    assert_eq!(*h.ports.firewall_opened.lock().unwrap(), 1);
+    let conf = h.fs.read(&format!("{ROOT}/etc/nginx/shared/blog.conf"));
+    assert!(conf.contains("listen 8101;"), "{conf}");
+    assert!(
+        conf.contains(&format!(r#"root "{ROOT}/www/blog""#)),
+        "{conf}"
+    );
+    assert!(h
+        .fs
+        .read(&format!("{ROOT}/etc/nginx/nginx.conf"))
+        .contains(&format!(r#"include "{ROOT}/etc/nginx/shared/*.conf";"#)));
+    // El servidor web arranca solo para que se vea.
+    assert_eq!(h.supervisor.state(ServiceId::Nginx), ServiceState::Running);
+    assert!(info.web_running);
+
+    let info = core.set_shared("tienda", true).await.unwrap();
+    let tienda = info.sites.iter().find(|s| s.name == "tienda").unwrap();
+    assert_eq!(tienda.port, Some(8102));
+
+    let info = core.set_shared("blog", false).await.unwrap();
+    assert!(!info.sites.iter().find(|s| s.name == "blog").unwrap().shared);
+    assert!(!h
+        .fs
+        .exists(Path::new(&format!("{ROOT}/etc/nginx/shared/blog.conf"))));
+    assert_eq!(h.config.get().shared_sites.len(), 1);
+}
+
+#[tokio::test]
+async fn sharing_needs_a_network_and_an_existing_project() {
+    let h = Harness::new();
+    h.fs.create_dir_all(Path::new(&format!("{ROOT}/www/blog")))
+        .unwrap();
+    let core = h.core();
+    let err = core.set_shared("blog", true).await.unwrap_err();
+    assert!(err.to_string().contains("red"), "{err}");
+    *h.ports.lan_ip.lock().unwrap() = Some("10.0.0.5".into());
+    assert!(core.set_shared("nada", true).await.is_err());
+    assert!(h.config.get().shared_sites.is_empty());
+}
+
+#[tokio::test]
+async fn shared_projects_work_with_apache_and_wordpress_is_flagged() {
+    let h = Harness::new();
+    h.binaries.add(ROOT, ServiceId::Apache, "2.4.69");
+    *h.ports.lan_ip.lock().unwrap() = Some("192.168.1.20".into());
+    h.fs.write(
+        Path::new(&format!("{ROOT}/www/wp/wp-config.php")),
+        "<?php define('DB_NAME', 'wp');",
+    )
+    .unwrap();
+    let core = h.core();
+    core.set_web_server(WebServer::Apache).await.unwrap();
+    let info = core.set_shared("wp", true).await.unwrap();
+    let wp = &info.sites[0];
+    assert!(wp.wordpress && !wp.wordpress_ready);
+    let conf = h.fs.read(&format!("{ROOT}/etc/apache/shared/wp.conf"));
+    assert!(conf.contains("Listen 0.0.0.0:8100"), "{conf}");
+    assert!(conf.contains("<VirtualHost *:8100>"), "{conf}");
+}
+
+#[tokio::test]
+async fn an_existing_wordpress_can_be_adjusted_for_the_lan() {
+    let h = Harness::new();
+    let original =
+        "<?php\r\ndefine( 'DB_NAME', 'wp' );\r\nrequire_once ABSPATH . 'wp-settings.php';\r\n";
+    h.fs.write(Path::new(&format!("{ROOT}/www/wp/wp-config.php")), original)
+        .unwrap();
+    let core = h.core();
+    let info = core.fix_wordpress_for_lan("wp").await.unwrap();
+    assert!(info.sites[0].wordpress_ready);
+    let fixed = h.fs.read(&format!("{ROOT}/www/wp/wp-config.php"));
+    assert!(
+        fixed.starts_with("<?php\r\n// LARABEST: red local."),
+        "{fixed}"
+    );
+    assert!(fixed.contains("define( 'WP_HOME', 'http://' . $_SERVER['HTTP_HOST'] );\r\n"));
+    assert!(fixed.find("WP_HOME").unwrap() < fixed.find("wp-settings.php").unwrap());
+    assert_eq!(
+        h.fs.read(&format!("{ROOT}/www/wp/wp-config.php.larabest.bak")),
+        original
+    );
+    // Dos veces no lo duplica.
+    core.fix_wordpress_for_lan("wp").await.unwrap();
+    assert_eq!(h.fs.read(&format!("{ROOT}/www/wp/wp-config.php")), fixed);
+    // Las mismas líneas que la plantilla de los WordPress nuevos.
+    let template = include_str!("../../templates/wp-config.php");
+    assert!(template
+        .contains(r"preg_match( '/^\d{1,3}(\.\d{1,3}){3}(:\d+)?$/', $_SERVER['HTTP_HOST'] )"));
+    assert!(
+        fixed.contains(r"preg_match( '/^\d{1,3}(\.\d{1,3}){3}(:\d+)?$/', $_SERVER['HTTP_HOST'] )")
+    );
 }

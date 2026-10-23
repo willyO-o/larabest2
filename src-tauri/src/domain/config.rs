@@ -119,6 +119,17 @@ impl WebServer {
     }
 }
 
+/// Puertos para compartir proyectos en la red local.
+pub const SHARE_PORTS: std::ops::RangeInclusive<u16> = 8100..=8199;
+
+/// Un proyecto de `www/` compartido en la red local, con su puerto.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SharedSite {
+    pub name: String,
+    pub port: u16,
+}
+
 /// Base de datos de la pila: MariaDB o MySQL, nunca las dos (usan el
 /// mismo puerto y sus carpetas de datos no son compatibles).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -222,6 +233,8 @@ pub struct AppConfig {
     /// MariaDB o MySQL. Las instalaciones nuevas de macOS usan MySQL; las
     /// anteriores (sin el campo) siguen con MariaDB.
     pub db_engine: DatabaseEngine,
+    /// Proyectos compartidos en la red local (Menú → www → Compartir).
+    pub shared_sites: Vec<SharedSite>,
 }
 
 impl Default for AppConfig {
@@ -252,6 +265,7 @@ impl Default for AppConfig {
             auto_vhosts: true,
             mariadb_root_password: String::new(),
             db_engine: DatabaseEngine::Mariadb,
+            shared_sites: Vec::new(),
         }
     }
 }

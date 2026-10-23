@@ -155,6 +155,8 @@ pub fn build(app: &AppHandle, from_tray: bool) -> tauri::Result<Menu<Wry>> {
         "Actualizar sitios y archivo hosts",
     )?);
     www.push(text(app, "hosts_edit", "Editar archivo hosts")?);
+    // Panel en la ventana: muestra la dirección para entrar desde la red.
+    www.push(text(app, "share_panel", "Compartir en la red local…")?);
     // Borrar un proyecto (con confirmación; la carpeta va a la Papelera).
     let mut delete = Vec::new();
     for site in &sites {
@@ -646,6 +648,11 @@ async fn run(app: &AppHandle, id: &str) -> Result<(), AppError> {
         let mut sites = core.services_settings()?.sites;
         sites.auto_vhosts = !sites.auto_vhosts;
         return core.set_site_settings(sites).await;
+    }
+    if id == "share_panel" {
+        tray::show_main(app);
+        let _ = app.emit("ui:share", ());
+        return Ok(());
     }
     if id == "services_panel" || id == "sites_panel" {
         tray::show_main(app);
