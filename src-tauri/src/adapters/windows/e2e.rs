@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 use super::{WindowsDownloader, WindowsPortChecker, WindowsProcessRunner};
 use crate::adapters::shared::binaries::DirBinaryProvider;
-use crate::domain::{catalog, BinaryLayout, Paths, ServiceId};
+use crate::domain::{catalog, BinaryLayout, Paths, ServiceId, WebServer};
 use crate::e2e::{self, check, get, E2ePorts, Platform};
 use crate::ports::ProcessRunner;
 
@@ -44,12 +44,15 @@ async fn e2e_windows() {
     let w = e2e::world(root, platform, PORTS);
     w.core.bootstrap().await.unwrap();
 
-    // Todo el catálogo, como desde Menú → Agregar.
-    for package in catalog::PACKAGES {
+    // Todo lo que ofrece Menú → Agregar en este Windows (MySQL es de macOS).
+    for package in catalog::packages_for(w.core.os(), BinaryLayout::Portable) {
         let added = w.core.install_package(package.id).await;
         eprintln!("{}: {added:?}", package.id);
         check(&w, added.is_ok(), &format!("{}: {added:?}", package.id));
     }
+    // Apache se agrega antes que Nginx y, al no haber Nginx todavía, la app
+    // lo adopta como servidor web. El recorrido empieza con Nginx.
+    w.core.set_web_server(WebServer::Nginx).await.unwrap();
 
     // El runner de GitHub tiene permisos de administrador y postgres.exe se
     // niega a arrancar así: se prueba solo que la descarga es válida.
