@@ -158,6 +158,14 @@ pub fn explain_exit_code(code: i32) -> Option<&'static str> {
     }
 }
 
+/// El log de un servicio dice que el runtime de Visual C++ es más viejo
+/// que el compilador con que se armó. PHP lo avisa así y termina con
+/// código -1: "PHP Warning: 14.36 is not compatible with this PHP build
+/// linked with 14.44".
+pub fn log_shows_old_vc_runtime(log: &str) -> bool {
+    log.contains("is not compatible with this PHP build linked with")
+}
+
 /// Código de salida de Windows cuando no se encuentra una DLL.
 pub const STATUS_DLL_NOT_FOUND: i32 = 0xC000_0135_u32 as i32;
 
@@ -192,5 +200,12 @@ mod tests {
     fn explains_missing_dll() {
         assert!(explain_exit_code(STATUS_DLL_NOT_FOUND).is_some());
         assert!(explain_exit_code(1).is_none());
+    }
+
+    #[test]
+    fn detects_old_vc_runtime_in_php_log() {
+        let log = "PHP Warning:  14.36 is not compatible with this PHP build linked with 14.44 in Unknown on line 0";
+        assert!(log_shows_old_vc_runtime(log));
+        assert!(!log_shows_old_vc_runtime("PHP Warning: otra cosa"));
     }
 }

@@ -1308,8 +1308,10 @@ const HEIDISQL_RELEASE: &str = r#"{"tag_name": "v12.21", "assets": [
 async fn heidisql_is_downloaded_from_github_and_keeps_its_sessions() {
     use crate::domain::desktop::DesktopTool;
     let h = Harness::new();
-    h.downloader
-        .respond(DesktopTool::Heidisql.latest_release_api(), HEIDISQL_RELEASE);
+    h.downloader.respond(
+        DesktopTool::Heidisql.latest_release_api(false),
+        HEIDISQL_RELEASE,
+    );
     h.archive.contains(&["heidisql.exe", "portable.lock"]);
     let core = h.core();
 
@@ -1345,6 +1347,7 @@ async fn windows_7_gets_the_last_versions_that_run_there() {
     let core = h.core_on(OsInfo::Windows {
         build: 7601,
         server: false,
+        x86: false,
     });
     let err = core.install_package("mariadb-11.4").await.unwrap_err();
     assert!(
@@ -1523,6 +1526,7 @@ async fn setup_recommends_the_newest_versions_for_each_system() {
     let seven = h.core_on(OsInfo::Windows {
         build: 7601,
         server: false,
+        x86: false,
     });
     let info = seven.setup_info();
     assert_eq!(info.os, "Windows 7");
@@ -1791,6 +1795,7 @@ async fn first_run_chooses_apache_or_nginx_where_apache_is_missing() {
     let seven = h.core_on(OsInfo::Windows {
         build: 7601,
         server: false,
+        x86: false,
     });
     assert!(seven.bootstrap().await.unwrap());
     assert_eq!(h.config.get().web_server, WebServer::Nginx);

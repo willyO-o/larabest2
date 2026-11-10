@@ -733,6 +733,7 @@ impl Harness {
             crate::domain::BinaryLayout::Portable => crate::domain::os::OsInfo::Windows {
                 build: 26200,
                 server: false,
+                x86: false,
             },
             crate::domain::BinaryLayout::Homebrew => crate::domain::os::OsInfo::MacOs {
                 major: 15,

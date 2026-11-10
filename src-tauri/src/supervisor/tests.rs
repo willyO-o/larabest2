@@ -90,6 +90,29 @@ async fn missing_binary_is_reported_per_service() {
 }
 
 #[tokio::test]
+async fn old_vc_runtime_in_php_log_gives_clear_message() {
+    let h = Harness::new();
+    h.fs.write(
+        Path::new(&format!("{ROOT}/logs/php-cgi-9000.log")),
+        "PHP Warning:  14.36 is not compatible with this PHP build linked with 14.44 in Unknown on line 0\n",
+    )
+    .unwrap();
+    h.runner.die_on_spawn("php-cgi", -1);
+    h.supervisor.start(ServiceId::Php).await.unwrap();
+
+    assert_eq!(h.supervisor.state(ServiceId::Php), Failed);
+    let detail = h.events.last_of(ServiceId::Php).unwrap().detail.unwrap();
+    assert!(
+        detail.starts_with("PHP no pudo iniciar: falta el runtime de Visual C++"),
+        "{detail}"
+    );
+    assert!(
+        detail.contains("linked with 14.44"),
+        "deja el aviso de PHP: {detail}"
+    );
+}
+
+#[tokio::test]
 async fn missing_vc_runtime_gives_clear_message() {
     let h = Harness::new();
     h.runner.die_on_spawn("php-cgi", STATUS_DLL_NOT_FOUND);

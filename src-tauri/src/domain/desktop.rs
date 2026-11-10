@@ -48,24 +48,31 @@ impl DesktopTool {
         }
     }
 
-    /// Último release en la API de GitHub.
-    pub fn latest_release_api(self) -> &'static str {
-        match self {
-            DesktopTool::Heidisql => {
+    /// Release en la API de GitHub: el último, salvo HeidiSQL de 32 bits,
+    /// que dejó de publicar ese zip después de la 12.11.
+    pub fn latest_release_api(self, x86: bool) -> &'static str {
+        match (self, x86) {
+            (DesktopTool::Heidisql, false) => {
                 "https://api.github.com/repos/HeidiSQL/HeidiSQL/releases/latest"
             }
-            DesktopTool::Notepadpp => {
+            (DesktopTool::Heidisql, true) => {
+                "https://api.github.com/repos/HeidiSQL/HeidiSQL/releases/tags/12.11"
+            }
+            (DesktopTool::Notepadpp, _) => {
                 "https://api.github.com/repos/notepad-plus-plus/notepad-plus-plus/releases/latest"
             }
         }
     }
 
-    /// Final del nombre del zip portable de 64 bits en ese release
-    /// (`HeidiSQL_12.21_64_Portable.zip`, `npp.8.9.8.1.portable.x64.zip`).
-    pub fn asset_suffix(self) -> &'static str {
-        match self {
-            DesktopTool::Heidisql => "_64_Portable.zip",
-            DesktopTool::Notepadpp => ".portable.x64.zip",
+    /// Final del nombre del zip portable en ese release: de 64 bits
+    /// (`HeidiSQL_12.21_64_Portable.zip`, `npp.8.9.8.1.portable.x64.zip`) o
+    /// de 32 (`HeidiSQL_12.11_32_Portable.zip`, `npp.8.9.9.portable.zip`).
+    pub fn asset_suffix(self, x86: bool) -> &'static str {
+        match (self, x86) {
+            (DesktopTool::Heidisql, false) => "_64_Portable.zip",
+            (DesktopTool::Heidisql, true) => "_32_Portable.zip",
+            (DesktopTool::Notepadpp, false) => ".portable.x64.zip",
+            (DesktopTool::Notepadpp, true) => ".portable.zip",
         }
     }
 }

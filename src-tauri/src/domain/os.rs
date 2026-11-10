@@ -6,9 +6,12 @@
 pub enum OsInfo {
     /// `build`: número de compilación de Windows (7601 = 7 SP1, 9200 = 8 o
     /// Server 2012, 9600 = 8.1 o Server 2012 R2, 10240+ = 10, 22000+ = 11).
+    /// `x86`: Windows de 32 bits (solo Windows 10 lo tiene). Ahí se
+    /// descargan los programas de 32 bits.
     Windows {
         build: u32,
         server: bool,
+        x86: bool,
     },
     /// `major`/`minor`: 15.1 = Sequoia; 10.15 = Catalina. En Intel, Homebrew
     /// ya no se instala y se usa MacPorts.
@@ -32,6 +35,12 @@ pub enum WindowsTier {
 }
 
 impl OsInfo {
+    /// Windows de 32 bits: PHP, MariaDB, Node.js y las herramientas se
+    /// descargan en su versión x86.
+    pub fn is_x86(self) -> bool {
+        matches!(self, OsInfo::Windows { x86: true, .. })
+    }
+
     pub fn windows_tier(self) -> Option<WindowsTier> {
         match self {
             OsInfo::Windows { build, .. } if build < 9200 => Some(WindowsTier::Seven),
@@ -58,6 +67,7 @@ impl OsInfo {
             OsInfo::Windows {
                 build,
                 server: true,
+                ..
             } => {
                 let year = match build {
                     0..=7601 => "2008 R2",
@@ -73,6 +83,7 @@ impl OsInfo {
             OsInfo::Windows {
                 build,
                 server: false,
+                x86,
             } => {
                 let name = match build {
                     0..=7601 => "7",
@@ -81,7 +92,8 @@ impl OsInfo {
                     10240..=21999 => "10",
                     _ => "11",
                 };
-                format!("Windows {name}")
+                let bits = if x86 { " (32 bits)" } else { "" };
+                format!("Windows {name}{bits}")
             }
             OsInfo::MacOs {
                 major,
@@ -116,7 +128,11 @@ mod tests {
     };
 
     fn win(build: u32, server: bool) -> OsInfo {
-        OsInfo::Windows { build, server }
+        OsInfo::Windows {
+            build,
+            server,
+            x86: false,
+        }
     }
 
     #[test]
@@ -135,6 +151,14 @@ mod tests {
         assert_eq!(win(9600, false).label(), "Windows 8.1");
         assert_eq!(win(19045, false).label(), "Windows 10");
         assert_eq!(win(26200, false).label(), "Windows 11");
+        let x86 = OsInfo::Windows {
+            build: 19045,
+            server: false,
+            x86: true,
+        };
+        assert_eq!(x86.label(), "Windows 10 (32 bits)");
+        assert!(x86.is_x86() && !win(19045, false).is_x86());
+        assert_eq!(x86.windows_tier(), Some(WindowsTier::Modern));
         assert_eq!(win(9200, true).label(), "Windows Server 2012");
         assert_eq!(win(9600, true).label(), "Windows Server 2012 R2");
         assert_eq!(win(20348, true).label(), "Windows Server 2022");

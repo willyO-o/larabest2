@@ -6,6 +6,9 @@ use windows_sys::Win32::Foundation::ERROR_SUCCESS;
 use windows_sys::Win32::System::Registry::{
     RegCloseKey, RegOpenKeyExW, RegQueryValueExW, HKEY, HKEY_LOCAL_MACHINE, KEY_QUERY_VALUE,
 };
+use windows_sys::Win32::System::SystemInformation::{
+    GetNativeSystemInfo, PROCESSOR_ARCHITECTURE_INTEL, SYSTEM_INFO,
+};
 
 use crate::domain::os::OsInfo;
 
@@ -53,6 +56,17 @@ fn current_version_value(name: &str) -> Option<String> {
     Some(String::from_utf16_lossy(&buf[..len]))
 }
 
+/// Windows de 32 bits. `GetNativeSystemInfo` informa el procesador del
+/// sistema aunque la app sea de 32 bits y corra en un Windows de 64.
+fn is_x86_windows() -> bool {
+    // SAFETY: SYSTEM_INFO es una estructura simple que la función rellena.
+    unsafe {
+        let mut info: SYSTEM_INFO = std::mem::zeroed();
+        GetNativeSystemInfo(&mut info);
+        info.Anonymous.Anonymous.wProcessorArchitecture == PROCESSOR_ARCHITECTURE_INTEL
+    }
+}
+
 /// Si no se puede leer, se supone un Windows actual.
 pub fn detect_os() -> OsInfo {
     let build = current_version_value("CurrentBuildNumber")
@@ -60,7 +74,11 @@ pub fn detect_os() -> OsInfo {
         .unwrap_or(19045);
     let server = current_version_value("InstallationType")
         .is_some_and(|t| t.to_ascii_lowercase().starts_with("server"));
-    OsInfo::Windows { build, server }
+    OsInfo::Windows {
+        build,
+        server,
+        x86: is_x86_windows(),
+    }
 }
 
 #[cfg(test)]
@@ -73,5 +91,7 @@ mod tests {
             panic!("no es Windows");
         };
         assert!(build >= 7600, "{build}");
+        // Los equipos de prueba y el CI son de 64 bits.
+        assert!(!detect_os().is_x86());
     }
 }

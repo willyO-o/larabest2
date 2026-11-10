@@ -181,7 +181,7 @@ impl Core {
         match service {
             ServiceId::Php => {
                 let json = self.fetch_text(urls::PHP_RELEASES).await?;
-                let (version, path) = catalog::php_release(&json, branch)
+                let (version, path) = catalog::php_release(&json, branch, self.os.is_x86())
                     .ok_or_else(|| unreadable("windows.php.net"))?;
                 Ok((version, format!("{}{path}", urls::PHP_DOWNLOADS)))
             }
@@ -202,7 +202,7 @@ impl Core {
                 let json = self.fetch_text(urls::MARIADB_RELEASES).await?;
                 let version = catalog::mariadb_latest(&json, branch)
                     .ok_or_else(|| unreadable("mariadb.org"))?;
-                let url = urls::mariadb_zip(&version);
+                let url = urls::mariadb_zip(&version, self.os.is_x86());
                 Ok((version, url))
             }
             ServiceId::Postgresql => {
@@ -246,7 +246,10 @@ impl Core {
         let deps = self.supervisor.deps();
         let label = progress.label;
         let (version, url) = match pinned {
-            Some(version) => (version.to_string(), pinned_zip(service, version)?),
+            Some(version) => (
+                version.to_string(),
+                pinned_zip(service, version, self.os.is_x86())?,
+            ),
             None => {
                 progress.step(format!("Buscando la última versión de {label}"));
                 self.resolve_zip(service, branch).await?
@@ -489,7 +492,7 @@ impl Core {
             None => {
                 progress.step("Buscando la última versión LTS de Node.js");
                 let json = self.fetch_text(urls::NODE_INDEX).await?;
-                catalog::node_lts(&json).ok_or_else(|| {
+                catalog::node_lts(&json, self.os.is_x86()).ok_or_else(|| {
                     AppError::Process(
                         "No se encontró la versión en nodejs.org. Vuelve a intentarlo más tarde."
                             .into(),
@@ -506,12 +509,12 @@ impl Core {
         self.download_tracked(
             progress,
             &format!("Descargando Node.js {version}"),
-            &urls::node_zip(&version),
+            &urls::node_zip(&version, self.os.is_x86()),
             &zip,
         )
         .await?;
         progress.step(format!("Extrayendo en {}", slash(&dest)));
-        // El zip trae todo dentro de node-v<versión>-win-x64/: se quita.
+        // El zip trae todo dentro de node-v<versión>-win-x64/ (o -x86/): se quita.
         let extracted = self.extract(&zip, &dest, None).await;
         let _ = deps.fs.remove_file(&zip);
         extracted?;
@@ -642,9 +645,11 @@ impl Core {
             )));
         }
         progress.step(format!("Buscando la última versión de {}", tool.label()));
-        let json = self.fetch_text(tool.latest_release_api()).await?;
+        let json = self
+            .fetch_text(tool.latest_release_api(self.os.is_x86()))
+            .await?;
         let (version, url) =
-            catalog::github_asset(&json, tool.asset_suffix()).ok_or_else(|| {
+            catalog::github_asset(&json, tool.asset_suffix(self.os.is_x86())).ok_or_else(|| {
                 AppError::Process(format!(
                     "No se encontró el zip portable de {} en GitHub. Vuelve a intentarlo más tarde.",
                     tool.label()
@@ -986,10 +991,10 @@ impl Core {
 }
 
 /// Zip de una versión exacta. Solo MariaDB se fija (las finales para
-/// Windows 7 y 8.1); su archivo guarda todas las versiones.
-fn pinned_zip(service: ServiceId, version: &str) -> Result<String, AppError> {
+/// Windows 7, 8.1 y 32 bits); su archivo guarda todas las versiones.
+fn pinned_zip(service: ServiceId, version: &str, x86: bool) -> Result<String, AppError> {
     match service {
-        ServiceId::Mariadb => Ok(urls::mariadb_zip(version)),
+        ServiceId::Mariadb => Ok(urls::mariadb_zip(version, x86)),
         _ => Err(AppError::InvalidInput(format!(
             "No se puede fijar la versión de {}.",
             service.label()

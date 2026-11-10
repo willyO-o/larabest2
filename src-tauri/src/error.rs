@@ -5,6 +5,8 @@ use crate::domain::ServiceId;
 
 /// Página oficial del runtime de Visual C++ que necesitan PHP y MariaDB.
 pub const VC_REDIST_URL: &str = "https://aka.ms/vs/17/release/vc_redist.x64.exe";
+/// El mismo runtime para Windows de 32 bits (PHP x86).
+pub const VC_REDIST_X86_URL: &str = "https://aka.ms/vs/17/release/vc_redist.x86.exe";
 
 /// Error único que cruza del núcleo a la interfaz. Los mensajes van en español
 /// porque se muestran tal cual en la ventana.
@@ -26,7 +28,7 @@ pub enum AppError {
     BinaryMissing { service: ServiceId, detail: String },
 
     #[error(
-        "{} no pudo iniciar: falta el runtime de Visual C++ (x64) o es antiguo. Instala el más reciente desde {VC_REDIST_URL}",
+        "{} no pudo iniciar: falta el runtime de Visual C++ o es antiguo. Instala el más reciente desde {VC_REDIST_URL} (en Windows de 32 bits, {VC_REDIST_X86_URL})",
         .service.label()
     )]
     VcRuntimeMissing { service: ServiceId },
@@ -118,5 +120,6 @@ mod tests {
         };
         assert!(err.to_string().starts_with("PHP no pudo iniciar"));
         assert!(err.to_string().contains(VC_REDIST_URL));
+        assert!(err.to_string().contains(VC_REDIST_X86_URL));
     }
 }

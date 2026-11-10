@@ -6,8 +6,8 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::domain::{
-    explain_exit_code, BinaryLayout, Health, InstalledVersion, Paths, ServiceId, ServiceState,
-    ServiceStatus, STATUS_DLL_NOT_FOUND, STATUS_ENTRYPOINT_NOT_FOUND,
+    explain_exit_code, log_shows_old_vc_runtime, BinaryLayout, Health, InstalledVersion, Paths,
+    ServiceId, ServiceState, ServiceStatus, STATUS_DLL_NOT_FOUND, STATUS_ENTRYPOINT_NOT_FOUND,
 };
 use crate::drivers::{self, RenderContext, ServiceDriver};
 use crate::error::AppError;
@@ -377,8 +377,15 @@ impl Supervisor {
         let pids = self.pids(id);
         let _ = drivers::force_stop(self.deps.runner.as_ref(), &pids).await;
         let _ = self.deps.fs.remove_file(&self.deps.paths.pid_file(id));
-        let mut detail = message;
-        if let Some(tail) = self.log_tail(ctx, id) {
+        let tail = self.log_tail(ctx, id);
+        // Un runtime de Visual C++ viejo: el mensaje que dice cómo
+        // arreglarlo, no un "terminó al iniciar (código -1)".
+        let mut detail = if tail.as_deref().is_some_and(log_shows_old_vc_runtime) {
+            AppError::VcRuntimeMissing { service: id }.to_string()
+        } else {
+            message
+        };
+        if let Some(tail) = tail {
             detail.push('\n');
             detail.push_str(&tail);
         }

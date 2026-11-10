@@ -27,8 +27,8 @@ pub use hosts::{
 pub use layout::{BinaryLayout, MACPORTS_PHP_PARTS, MACPORTS_PREFIX};
 pub use paths::{slash, Paths};
 pub use service::{
-    explain_exit_code, Health, ServiceId, ServiceState, ServiceStatus, STATUS_DLL_NOT_FOUND,
-    STATUS_ENTRYPOINT_NOT_FOUND,
+    explain_exit_code, log_shows_old_vc_runtime, Health, ServiceId, ServiceState, ServiceStatus,
+    STATUS_DLL_NOT_FOUND, STATUS_ENTRYPOINT_NOT_FOUND,
 };
 pub use site::{database_name, is_valid_site_name, ProgressState, Site, SitePreset, SiteProgress};
 pub use version::{compare_versions, InstalledVersion};

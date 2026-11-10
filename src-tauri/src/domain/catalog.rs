@@ -160,10 +160,25 @@ pub const LEGACY_PACKAGES: [Package; 5] = [
     pinned(tool("nodejs-12", "Node.js 12", Tool::Nodejs), "12.22.12"),
 ];
 
+/// Windows 10 de 32 bits: MariaDB dejó de publicar zips de 32 bits en
+/// 10.6.5. PHP, Node.js 22 y Notepad++ siguen teniéndolos; MySQL,
+/// PostgreSQL, MongoDB, Redis y Mailpit no, y Apache Lounge tampoco en
+/// fossies.org.
+pub const X86_PACKAGES: [Package; 1] = [pinned(
+    service(
+        "mariadb-10.6-x86",
+        "MariaDB 10.6",
+        ServiceId::Mariadb,
+        "10.6",
+    ),
+    "10.6.5",
+)];
+
 pub fn find(id: &str) -> Option<Package> {
     PACKAGES
         .iter()
         .chain(LEGACY_PACKAGES.iter())
+        .chain(X86_PACKAGES.iter())
         .copied()
         .find(|p| p.id == id)
 }
@@ -173,6 +188,20 @@ pub fn find(id: &str) -> Option<Package> {
 /// tiene la 6.0, sin soporte).
 pub fn packages_for(os: OsInfo, layout: BinaryLayout) -> Vec<Package> {
     let ids: &[&str] = match os.windows_tier() {
+        // Windows 10 de 32 bits: lo que tiene versión de 32 bits. Sin
+        // Apache, el servidor web es Nginx.
+        Some(_) if os.is_x86() => &[
+            "php-8.4",
+            "php-8.3",
+            "nginx",
+            "mariadb-10.6-x86",
+            "heidisql",
+            "adminer",
+            "phpmyadmin",
+            "composer",
+            "nodejs",
+            "notepadpp",
+        ],
         // Sin MongoDB, Mailpit, PostgreSQL 17 ni Redis: sus versiones
         // actuales piden Windows 10 o Server 2016.
         Some(WindowsTier::Eight) => &[
@@ -241,7 +270,7 @@ pub fn first_for(os: OsInfo, layout: BinaryLayout, service: ServiceId) -> Option
 /// posterior. macOS: Oracle dejó de publicar Intel en 8.4.11 y macOS 14 en
 /// 8.4.3; macOS 13 no tiene MySQL 8.4 (queda MariaDB).
 pub fn mysql_build(os: OsInfo) -> Option<(&'static str, String)> {
-    if os.windows_tier() == Some(WindowsTier::Modern) {
+    if os.windows_tier() == Some(WindowsTier::Modern) && !os.is_x86() {
         return Some(("8.4.13", "mysql-8.4.13-winx64.zip".to_string()));
     }
     let OsInfo::MacOs {
@@ -299,17 +328,19 @@ pub mod urls {
             .then_some("application/octet-stream")
     }
 
-    pub fn node_zip(version: &str) -> String {
-        format!("https://nodejs.org/dist/v{version}/node-v{version}-win-x64.zip")
+    pub fn node_zip(version: &str, x86: bool) -> String {
+        let arch = if x86 { "x86" } else { "x64" };
+        format!("https://nodejs.org/dist/v{version}/node-v{version}-win-{arch}.zip")
     }
 
     pub fn nginx_zip(version: &str) -> String {
         format!("https://nginx.org/download/nginx-{version}.zip")
     }
 
-    pub fn mariadb_zip(version: &str) -> String {
+    pub fn mariadb_zip(version: &str, x86: bool) -> String {
+        let arch = if x86 { "win32" } else { "winx64" };
         format!(
-            "https://archive.mariadb.org/mariadb-{version}/winx64-packages/mariadb-{version}-winx64.zip"
+            "https://archive.mariadb.org/mariadb-{version}/{arch}-packages/mariadb-{version}-{arch}.zip"
         )
     }
 
@@ -347,13 +378,15 @@ fn as_text(v: &Value) -> Option<String> {
     }
 }
 
-/// `releases.json` de windows.php.net: versión y zip NTS x64 de una rama.
-pub fn php_release(json: &str, branch: &str) -> Option<(String, String)> {
+/// `releases.json` de windows.php.net: versión y zip NTS de una rama, x64
+/// o x86 (Windows de 32 bits).
+pub fn php_release(json: &str, branch: &str, x86: bool) -> Option<(String, String)> {
     let doc: Value = serde_json::from_str(json).ok()?;
     let release = doc.get(branch)?;
     let version = release.get("version")?.as_str()?.to_string();
+    let arch = if x86 { "-x86" } else { "-x64" };
     let path = release.as_object()?.iter().find_map(|(key, build)| {
-        (key.starts_with("nts-") && key.ends_with("-x64"))
+        (key.starts_with("nts-") && key.ends_with(arch))
             .then(|| build.get("zip")?.get("path")?.as_str().map(str::to_string))
             .flatten()
     })?;
@@ -483,8 +516,10 @@ pub fn apache_latest(html: &str) -> Option<(String, String)> {
 }
 
 /// `index.json` de nodejs.org (lo más nuevo primero): la LTS más reciente
-/// con zip para Windows x64, sin la "v" ("24.22.0").
-pub fn node_lts(json: &str) -> Option<String> {
+/// con zip para Windows x64, sin la "v" ("24.22.0"). Con `x86`, la más
+/// reciente con zip de 32 bits (Node.js 22: la 23 dejó los 32 bits).
+pub fn node_lts(json: &str, x86: bool) -> Option<String> {
+    let file = if x86 { "win-x86-zip" } else { "win-x64-zip" };
     let doc: Value = serde_json::from_str(json).ok()?;
     doc.as_array()?.iter().find_map(|release| {
         let lts = release.get("lts")?;
@@ -495,7 +530,7 @@ pub fn node_lts(json: &str) -> Option<String> {
             .get("files")?
             .as_array()?
             .iter()
-            .any(|f| f.as_str() == Some("win-x64-zip"));
+            .any(|f| f.as_str() == Some(file));
         let version = release.get("version")?.as_str()?;
         has_zip.then(|| version.trim_start_matches('v').to_string())
     })
@@ -546,14 +581,20 @@ mod tests {
                     "nts-vs16-x64": {"zip": {"path": "php-8.3.26-nts-Win32-vs16-x64.zip"}}}
         }"#;
         assert_eq!(
-            php_release(json, "8.4"),
+            php_release(json, "8.4", false),
             Some(("8.4.13".into(), "php-8.4.13-nts-Win32-vs17-x64.zip".into()))
         );
         assert_eq!(
-            php_release(json, "8.3").unwrap().1,
+            php_release(json, "8.3", false).unwrap().1,
             "php-8.3.26-nts-Win32-vs16-x64.zip"
         );
-        assert_eq!(php_release(json, "8.2"), None);
+        assert_eq!(php_release(json, "8.2", false), None);
+        // Windows de 32 bits.
+        assert_eq!(
+            php_release(json, "8.4", true).unwrap().1,
+            "php-8.4.13-nts-Win32-vs17-x86.zip"
+        );
+        assert_eq!(php_release(json, "8.3", true), None);
     }
 
     #[test]
@@ -658,7 +699,8 @@ mod tests {
         assert_eq!(
             mysql_build(OsInfo::Windows {
                 build: 26200,
-                server: false
+                server: false,
+                x86: false
             }),
             Some(("8.4.13", "mysql-8.4.13-winx64.zip".to_string()))
         );
@@ -666,7 +708,8 @@ mod tests {
         assert_eq!(
             mysql_build(OsInfo::Windows {
                 build: 9600,
-                server: true
+                server: true,
+                x86: false
             }),
             None
         );
@@ -701,11 +744,13 @@ mod tests {
         let windows = OsInfo::Windows {
             build: 26200,
             server: false,
+            x86: false,
         };
         assert!(ids(windows, BinaryLayout::Portable).contains(&"mysql-8.4"));
         let seven = OsInfo::Windows {
             build: 7601,
             server: false,
+            x86: false,
         };
         assert!(!ids(seven, BinaryLayout::Portable).contains(&"mysql-8.4"));
     }
@@ -717,12 +762,22 @@ mod tests {
             {"version": "v24.22.0", "lts": "Krypton", "files": ["osx-arm64-tar", "win-x64-zip"]},
             {"version": "v22.23.3", "lts": "Jod", "files": ["win-x64-zip"]}
         ]"#;
-        assert_eq!(node_lts(json).as_deref(), Some("24.22.0"));
+        assert_eq!(node_lts(json, false).as_deref(), Some("24.22.0"));
         let no_zip = r#"[{"version": "v24.22.0", "lts": "Krypton", "files": ["linux-x64"]}]"#;
-        assert_eq!(node_lts(no_zip), None);
+        assert_eq!(node_lts(no_zip, false), None);
         assert_eq!(
-            urls::node_zip("24.22.0"),
+            urls::node_zip("24.22.0", false),
             "https://nodejs.org/dist/v24.22.0/node-v24.22.0-win-x64.zip"
+        );
+        // Node.js 24 ya no tiene 32 bits: queda la 22.
+        let x86 = r#"[
+            {"version": "v24.22.0", "lts": "Krypton", "files": ["win-x64-zip"]},
+            {"version": "v22.23.4", "lts": "Jod", "files": ["win-x64-zip", "win-x86-zip"]}
+        ]"#;
+        assert_eq!(node_lts(x86, true).as_deref(), Some("22.23.4"));
+        assert_eq!(
+            urls::node_zip("22.23.4", true),
+            "https://nodejs.org/dist/v22.23.4/node-v22.23.4-win-x86.zip"
         );
     }
 
@@ -737,6 +792,7 @@ mod tests {
         let modern = ids(OsInfo::Windows {
             build: 26200,
             server: false,
+            x86: false,
         });
         assert!(modern.contains(&"php-8.4") && modern.contains(&"mongodb"));
         assert!(modern.contains(&"heidisql") && !modern.contains(&"php-8.2"));
@@ -744,6 +800,7 @@ mod tests {
         let eight = ids(OsInfo::Windows {
             build: 9600,
             server: true,
+            x86: false,
         });
         assert!(eight.contains(&"mariadb-10.6") && eight.contains(&"nodejs-16"));
         assert!(!eight.contains(&"mariadb-11.4") && !eight.contains(&"mongodb"));
@@ -751,10 +808,31 @@ mod tests {
         let seven = ids(OsInfo::Windows {
             build: 7601,
             server: false,
+            x86: false,
         });
         assert!(seven.contains(&"php-8.2") && seven.contains(&"mariadb-10.4"));
         assert!(!seven.contains(&"php-8.4") && !seven.contains(&"apache"));
         assert_eq!(find("mariadb-10.4").unwrap().pinned, Some("10.4.12"));
+
+        let x86 = ids(OsInfo::Windows {
+            build: 19045,
+            server: false,
+            x86: true,
+        });
+        assert!(x86.contains(&"php-8.4") && x86.contains(&"nginx"));
+        assert!(x86.contains(&"mariadb-10.6-x86") && x86.contains(&"nodejs"));
+        assert!(x86.contains(&"heidisql") && x86.contains(&"notepadpp"));
+        for missing in [
+            "apache",
+            "mysql-8.4",
+            "mariadb-11.4",
+            "mongodb",
+            "redis",
+            "mailpit",
+        ] {
+            assert!(!x86.contains(&missing), "{missing} no tiene 32 bits");
+        }
+        assert_eq!(find("mariadb-10.6-x86").unwrap().pinned, Some("10.6.5"));
 
         let mac_os = OsInfo::MacOs {
             major: 15,
@@ -777,7 +855,8 @@ mod tests {
             first_for(
                 OsInfo::Windows {
                     build: 7601,
-                    server: false
+                    server: false,
+                    x86: false
                 },
                 BinaryLayout::Portable,
                 ServiceId::Php
@@ -795,7 +874,7 @@ mod tests {
             {"name": "HeidiSQL_12.21_64_Portable.zip", "url": "https://api.github.com/repos/HeidiSQL/HeidiSQL/releases/assets/500350064"}
         ]}"#;
         assert_eq!(
-            github_asset(json, DesktopTool::Heidisql.asset_suffix()),
+            github_asset(json, DesktopTool::Heidisql.asset_suffix(false)),
             Some((
                 "12.21".into(),
                 "https://api.github.com/repos/HeidiSQL/HeidiSQL/releases/assets/500350064".into()
@@ -825,8 +904,12 @@ mod tests {
             "https://github.com/redis-windows/redis-windows/releases/download/8.10.2/Redis-8.10.2-Windows-x64-msys2.zip"
         );
         assert_eq!(
-            urls::mariadb_zip("11.4.13"),
+            urls::mariadb_zip("11.4.13", false),
             "https://archive.mariadb.org/mariadb-11.4.13/winx64-packages/mariadb-11.4.13-winx64.zip"
+        );
+        assert_eq!(
+            urls::mariadb_zip("10.6.5", true),
+            "https://archive.mariadb.org/mariadb-10.6.5/win32-packages/mariadb-10.6.5-win32.zip"
         );
         assert!(find("php-8.4").is_some());
         assert!(find("nada").is_none());

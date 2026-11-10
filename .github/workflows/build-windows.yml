@@ -25,6 +25,29 @@ jobs:
           name: instalador-windows
           path: src-tauri/target/release/bundle/nsis/*.exe
 
+  # Instalador para Windows 10 de 32 bits (Windows 11 solo existe en 64).
+  x86:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: i686-pc-windows-msvc
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: x86
+      - run: npm ci
+      - run: npm run build:x86
+      - uses: actions/upload-artifact@v4
+        with:
+          name: instalador-windows-x86
+          path: src-tauri/target/i686-pc-windows-msvc/release/bundle/nsis/*.exe
+
   # Instalador para Windows 7 SP1, 8, 8.1 y Server 2008 R2/2012/2012 R2:
   # target x86_64-win7-windows-msvc (Tier 3) con nightly y -Z build-std.
   legacy:
