@@ -1431,6 +1431,26 @@ async fn config_files_open_in_notepadpp_when_installed() {
     assert_eq!(launched[0].1, vec![r#""C:\APP\etc\php\php.ini""#]);
 }
 
+#[tokio::test]
+async fn editor_button_opens_notepadpp_or_the_system_editor() {
+    let h = Harness::new();
+    let core = h.core();
+    core.open_editor().unwrap();
+    assert_eq!(*h.shell.text_editor.lock().unwrap(), 1);
+    assert!(h.shell.launched.lock().unwrap().is_empty());
+
+    h.fs.write(
+        Path::new(&format!("{ROOT}/bin/notepad++/notepad++.exe")),
+        "",
+    )
+    .unwrap();
+    core.open_editor().unwrap();
+    assert_eq!(*h.shell.text_editor.lock().unwrap(), 1);
+    let launched = h.shell.launched.lock().unwrap().clone();
+    assert_eq!(launched[0].0, format!("{ROOT}/bin/notepad++/notepad++.exe"));
+    assert!(launched[0].1.is_empty());
+}
+
 const NODE_INDEX_JSON: &str = r#"[
     {"version": "v26.12.0", "lts": false, "files": ["win-x64-zip"]},
     {"version": "v24.22.0", "lts": "Krypton", "files": ["win-x64-zip"]}
@@ -2238,6 +2258,59 @@ async fn the_hosts_file_opens_for_editing() {
     let h = Harness::new();
     h.core().edit_hosts_file().unwrap();
     assert_eq!(*h.hosts.edits.lock().unwrap(), 1);
+    assert_eq!(*h.hosts.editor.lock().unwrap(), None);
+
+    // Con Notepad++ instalado, el archivo hosts se abre en él.
+    h.fs.write(
+        Path::new(&format!("{ROOT}/bin/notepad++/notepad++.exe")),
+        "",
+    )
+    .unwrap();
+    h.core().edit_hosts_file().unwrap();
+    assert_eq!(
+        h.hosts.editor.lock().unwrap().as_deref(),
+        Some(format!("{ROOT}/bin/notepad++/notepad++.exe").as_str())
+    );
+}
+
+#[tokio::test]
+async fn a_virtual_host_opens_its_own_file_and_the_generated_one_in_notepadpp() {
+    let h = Harness::new();
+    h.fs.create_dir_all(Path::new(&format!("{ROOT}/www/Blog")))
+        .unwrap();
+    let core = h.core();
+    core.sync_sites().await.unwrap();
+
+    // Sin Notepad++: solo el archivo propio, creado con la explicación.
+    core.open_vhost("Blog").await.unwrap();
+    let custom = format!("{ROOT}/etc/nginx/custom/Blog.conf");
+    assert_eq!(*h.shell.edited.lock().unwrap(), vec![custom.clone()]);
+    let text = h.fs.read(&custom);
+    assert!(text.contains("blog.test"));
+    assert!(text.contains("Recargar configuración"));
+
+    // Lo que el usuario escriba no se pisa.
+    h.fs.write(Path::new(&custom), "client_max_body_size 1G;\n")
+        .unwrap();
+    h.fs.write(
+        Path::new(&format!("{ROOT}/bin/notepad++/notepad++.exe")),
+        "",
+    )
+    .unwrap();
+    core.open_vhost("Blog").await.unwrap();
+    assert_eq!(h.fs.read(&custom), "client_max_body_size 1G;\n");
+    let launched = h.shell.launched.lock().unwrap().clone();
+    assert_eq!(launched[0].0, format!("{ROOT}/bin/notepad++/notepad++.exe"));
+    let win = |p: &str| format!("\"{}\"", p.replace('/', "\\"));
+    assert_eq!(
+        launched[0].1,
+        vec![
+            win(&format!("{ROOT}/etc/nginx/sites/blog.conf")),
+            win(&custom)
+        ]
+    );
+
+    assert!(core.open_vhost("nada").await.is_err());
 }
 
 #[tokio::test]

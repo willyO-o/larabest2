@@ -187,6 +187,22 @@ pub fn build(app: &AppHandle, from_tray: bool) -> tauri::Result<Menu<Wry>> {
             "nginxAccessLog",
         ),
     };
+    // Hosts virtuales: uno por sitio, se abre en Notepad++ si está.
+    let mut vhosts = Vec::new();
+    let auto_vhosts = core
+        .services_settings()
+        .map(|s| s.sites.auto_vhosts)
+        .unwrap_or(true);
+    if !auto_vhosts {
+        vhosts.push(disabled(app, "(hosts virtuales automáticos apagados)")?);
+    } else if sites.is_empty() {
+        vhosts.push(disabled(app, "(crea una carpeta en www)")?);
+    }
+    if auto_vhosts {
+        for site in &sites {
+            vhosts.push(text(app, &format!("vhost:{}", site.name), &site.domain)?);
+        }
+    }
     let web_menu = vec![
         versions(app, &state, web, active(web).as_deref())?,
         Box::new(MenuItem::with_id(
@@ -197,6 +213,7 @@ pub fn build(app: &AppHandle, from_tray: bool) -> tauri::Result<Menu<Wry>> {
             None::<&str>,
         )?) as Item,
         sep(app)?,
+        Box::new(submenu(app, "Hosts virtuales", vhosts)?) as Item,
         open(
             app,
             custom_target,
@@ -730,6 +747,9 @@ async fn run(app: &AppHandle, id: &str) -> Result<(), AppError> {
         let service: ServiceId = serde_json::from_value(serde_json::Value::String(service.into()))
             .map_err(|_| AppError::InvalidInput(id.into()))?;
         return core.switch_version(service, version).await;
+    }
+    if let Some(name) = id.strip_prefix("vhost:") {
+        return core.open_vhost(name).await;
     }
     if let Some(name) = id.strip_prefix("delete:") {
         return delete_site(app, name).await;

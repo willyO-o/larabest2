@@ -184,6 +184,12 @@ pub async fn share_open(
     open_url(&app, &url)
 }
 
+/// Botón Editor: Notepad++, o el Bloc de notas si no está.
+#[tauri::command]
+pub async fn shell_open_editor(state: State<'_, AppState>) -> Result<(), AppError> {
+    state.core.open_editor()
+}
+
 /// Abre el archivo hosts en el Bloc de notas (como administrador).
 #[tauri::command]
 pub async fn shell_edit_hosts(state: State<'_, AppState>) -> Result<(), AppError> {

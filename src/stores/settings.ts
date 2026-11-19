@@ -73,6 +73,7 @@ export const useSettingsStore = defineStore('settings', () => {
   const openWeb = () => attempt(() => invoke('shell_open_web'))
   const openDatabase = () => attempt(() => invoke('shell_open_database'))
   const openTerminal = () => attempt(() => invoke('shell_open_terminal', { cwd: null }))
+  const openEditor = () => attempt(() => invoke('shell_open_editor'))
 
   return {
     settings,
@@ -90,5 +91,6 @@ export const useSettingsStore = defineStore('settings', () => {
     openWeb,
     openDatabase,
     openTerminal,
+    openEditor,
   }
 })

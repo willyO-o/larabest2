@@ -85,7 +85,8 @@ fn was_cancelled(output: &str) -> bool {
 #[async_trait]
 impl HostsManager for MacHostsManager {
     /// TextEdit: al guardar, macOS pide la contraseña de administrador.
-    fn edit(&self) -> Result<(), AppError> {
+    /// Notepad++ es solo de Windows: aquí siempre TextEdit.
+    fn edit(&self, _editor: Option<&Path>) -> Result<(), AppError> {
         std::process::Command::new("/usr/bin/open")
             .args(["-e", HOSTS])
             .spawn()

@@ -110,8 +110,9 @@ pub trait HostsManager: Send + Sync {
     /// Reescribe solo el bloque marcado de la app; pide elevación.
     async fn sync(&self, entries: &[HostEntry]) -> Result<(), AppError>;
     /// Abre el archivo hosts en el editor para cambiarlo a mano (en Windows,
-    /// el Bloc de notas como administrador, para poder guardarlo).
-    fn edit(&self) -> Result<(), AppError> {
+    /// como administrador, para poder guardarlo). `editor`: Notepad++ si
+    /// está instalado; si no, el editor del sistema.
+    fn edit(&self, _editor: Option<&Path>) -> Result<(), AppError> {
         Err(AppError::Unsupported(
             "Abrir el archivo hosts no está disponible en esta plataforma.".into(),
         ))
@@ -150,6 +151,9 @@ pub trait ShellLauncher: Send + Sync {
     /// Abre un archivo de texto (configuración o log) en el editor del
     /// sistema: `.conf` y `.cnf` no tienen programa asociado.
     fn open_in_editor(&self, path: &Path) -> Result<(), AppError>;
+    /// Abre el editor de texto del sistema sin archivo (botón Editor
+    /// cuando no está Notepad++): Bloc de notas o TextEdit.
+    fn open_text_editor(&self) -> Result<(), AppError>;
     /// Abre un programa de escritorio (HeidiSQL, Notepad++) independiente
     /// de la app: sigue abierto aunque se cierre. En Windows los
     /// argumentos van tal cual, con las comillas que traigan.

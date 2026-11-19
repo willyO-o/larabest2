@@ -58,7 +58,7 @@ fn current_version_value(name: &str) -> Option<String> {
 
 /// Windows de 32 bits. `GetNativeSystemInfo` informa el procesador del
 /// sistema aunque la app sea de 32 bits y corra en un Windows de 64.
-fn is_x86_windows() -> bool {
+pub(super) fn is_x86_windows() -> bool {
     // SAFETY: SYSTEM_INFO es una estructura simple que la función rellena.
     unsafe {
         let mut info: SYSTEM_INFO = std::mem::zeroed();

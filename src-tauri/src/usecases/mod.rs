@@ -682,10 +682,12 @@ impl Core {
         Ok(sites)
     }
 
-    /// Abre el archivo hosts para editarlo a mano (Bloc de notas como
-    /// administrador en Windows; TextEdit en macOS).
+    /// Abre el archivo hosts para editarlo a mano: como administrador en
+    /// Windows, en Notepad++ si está instalado o si no en el Bloc de notas;
+    /// TextEdit en macOS.
     pub fn edit_hosts_file(&self) -> Result<(), AppError> {
-        self.hosts.edit()
+        let npp = self.notepadpp_exe();
+        self.hosts.edit(npp.as_deref())
     }
 
     pub fn os(&self) -> OsInfo {

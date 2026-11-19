@@ -8,6 +8,7 @@ mod os;
 mod ports;
 mod process;
 mod shell;
+pub mod system_setup;
 mod trust;
 mod user_path;
 

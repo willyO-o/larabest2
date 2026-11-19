@@ -15,8 +15,27 @@ use crate::ports::{HostsManager, ProcessRunner, ProcessSpec};
 /// El usuario tiene este tiempo para aceptar el aviso de UAC.
 const ELEVATION_TIMEOUT: Duration = Duration::from_secs(300);
 
-fn hosts_path() -> PathBuf {
+pub(super) fn hosts_path() -> PathBuf {
     system32().join("drivers").join("etc").join("hosts")
+}
+
+/// El usuario puede escribir el archivo hosts sin ser administrador: el
+/// instalador le da ese permiso (`--system-setup`). Abrirlo para agregar
+/// no lo cambia.
+pub(super) fn hosts_writable() -> bool {
+    std::fs::OpenOptions::new()
+        .append(true)
+        .open(hosts_path())
+        .is_ok()
+}
+
+/// Windows guarda en caché las respuestas DNS: sin esto, un dominio recién
+/// agregado puede tardar en responder.
+fn flush_dns() {
+    let _ = std::process::Command::new(system32().join("ipconfig.exe"))
+        .arg("/flushdns")
+        .creation_flags(CREATE_NO_WINDOW)
+        .status();
 }
 
 fn read_hosts() -> Result<String, AppError> {
@@ -27,10 +46,7 @@ fn read_hosts() -> Result<String, AppError> {
 /// auxiliar elevado (`--apply-hosts <archivo>`), sin abrir ventana.
 pub fn apply_hosts_request(request: &Path) -> Result<(), AppError> {
     if hosts_file::apply_request(request, &hosts_path())? {
-        let _ = std::process::Command::new(system32().join("ipconfig.exe"))
-            .arg("/flushdns")
-            .creation_flags(CREATE_NO_WINDOW)
-            .status();
+        flush_dns();
     }
     Ok(())
 }
@@ -66,16 +82,34 @@ fn ps_quote(s: &str) -> String {
 
 #[async_trait]
 impl HostsManager for WindowsHostsManager {
-    /// El Bloc de notas como administrador (Windows pide permiso): sin eso
-    /// abre el archivo pero no deja guardarlo. Si se cancela el aviso, no
-    /// pasa nada.
-    fn edit(&self) -> Result<(), AppError> {
+    /// Notepad++ (o el Bloc de notas) como administrador (Windows pide
+    /// permiso): sin eso abre el archivo pero no deja guardarlo. Si se
+    /// cancela el aviso, no pasa nada. Notepad++ va en una ventana propia
+    /// (`-multiInst`): si ya hubiera uno abierto sin permisos, el archivo
+    /// iría a ese y no se podría guardar; `-nosession` deja intacta la
+    /// sesión del Notepad++ normal.
+    fn edit(&self, editor: Option<&Path>) -> Result<(), AppError> {
         use std::os::windows::process::CommandExt;
-        let notepad = system32().join("notepad.exe");
+        // Con el permiso del instalador se abre sin aviso de administrador.
+        if hosts_writable() {
+            let program = editor.map_or_else(|| system32().join("notepad.exe"), Path::to_path_buf);
+            return std::process::Command::new(program)
+                .arg(hosts_path())
+                .spawn()
+                .map(|_| ())
+                .map_err(|e| AppError::io("No se pudo abrir el archivo hosts", e));
+        }
+        let hosts = ps_quote(&format!("\"{}\"", hosts_path().display()));
+        let (program, args) = match editor {
+            Some(npp) => (
+                npp.to_path_buf(),
+                format!("'-multiInst','-nosession',{hosts}"),
+            ),
+            None => (system32().join("notepad.exe"), hosts),
+        };
         let script = format!(
-            "Start-Process -FilePath '{}' -ArgumentList '\"{}\"' -Verb RunAs",
-            notepad.display(),
-            hosts_path().display()
+            "Start-Process -FilePath {} -ArgumentList {args} -Verb RunAs",
+            ps_quote(&program.display().to_string()),
         );
         std::process::Command::new(
             system32()
@@ -97,7 +131,15 @@ impl HostsManager for WindowsHostsManager {
 
     async fn sync(&self, entries: &[HostEntry]) -> Result<(), AppError> {
         let current = read_hosts()?;
-        if merge_block(&current, &self.app_name, entries) == current {
+        let merged = merge_block(&current, &self.app_name, entries);
+        if merged == current {
+            return Ok(());
+        }
+        // Con el permiso del instalador se escribe directo, sin aviso. Se
+        // escribe sobre el mismo archivo para conservar sus permisos. Si
+        // falla (un antivirus, por ejemplo), se sigue por la vía elevada.
+        if hosts_writable() && std::fs::write(hosts_path(), &merged).is_ok() {
+            flush_dns();
             return Ok(());
         }
 

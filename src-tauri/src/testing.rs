@@ -520,12 +520,15 @@ pub struct FakeHosts {
     pub fail: Mutex<bool>,
     /// Veces que se abrió para editar.
     pub edits: Mutex<usize>,
+    /// Editor con el que se abrió la última vez (`None`: el del sistema).
+    pub editor: Mutex<Option<String>>,
 }
 
 #[async_trait]
 impl HostsManager for FakeHosts {
-    fn edit(&self) -> Result<(), AppError> {
+    fn edit(&self, editor: Option<&Path>) -> Result<(), AppError> {
         *self.edits.lock().unwrap() += 1;
+        *self.editor.lock().unwrap() = editor.map(crate::domain::slash);
         Ok(())
     }
 
@@ -577,6 +580,8 @@ pub struct FakeShell {
     pub edited: Mutex<Vec<String>>,
     /// `(programa, argumentos)` de cada `launch`.
     pub launched: Mutex<Vec<(String, Vec<String>)>>,
+    /// Veces que se abrió el editor del sistema sin archivo.
+    pub text_editor: Mutex<u32>,
 }
 
 impl ShellLauncher for FakeShell {
@@ -587,6 +592,11 @@ impl ShellLauncher for FakeShell {
 
     fn open_in_editor(&self, path: &Path) -> Result<(), AppError> {
         self.edited.lock().unwrap().push(slash(path));
+        Ok(())
+    }
+
+    fn open_text_editor(&self) -> Result<(), AppError> {
+        *self.text_editor.lock().unwrap() += 1;
         Ok(())
     }
 

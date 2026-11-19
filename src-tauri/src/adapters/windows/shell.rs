@@ -39,6 +39,13 @@ impl ShellLauncher for WindowsShellLauncher {
             .map_err(|e| AppError::io(format!("No se pudo abrir {}", slash(program)), e))
     }
 
+    fn open_text_editor(&self) -> Result<(), AppError> {
+        std::process::Command::new(system32().join("notepad.exe"))
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| AppError::io("No se pudo abrir el Bloc de notas", e))
+    }
+
     /// El Bloc de notas entiende los saltos de línea de Unix desde Windows 10
     /// 1809.
     fn open_in_editor(&self, path: &Path) -> Result<(), AppError> {

@@ -177,6 +177,14 @@ impl ShellLauncher for MacShellLauncher {
             .map_err(|e| AppError::io(format!("No se pudo abrir {}", slash(program)), e))
     }
 
+    fn open_text_editor(&self) -> Result<(), AppError> {
+        std::process::Command::new("/usr/bin/open")
+            .args(["-a", "TextEdit"])
+            .spawn()
+            .map(|_| ())
+            .map_err(|e| AppError::io("No se pudo abrir TextEdit", e))
+    }
+
     /// `open -t`: el editor de texto que el usuario tenga por defecto.
     fn open_in_editor(&self, path: &Path) -> Result<(), AppError> {
         std::process::Command::new("/usr/bin/open")

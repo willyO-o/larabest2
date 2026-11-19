@@ -170,9 +170,15 @@ fn platform(_app_name: &str, paths: &Paths) -> Platform {
     }
 }
 
-/// Atiende `--apply-hosts <archivo>`. Devuelve el código de salida si la app
+/// Atiende `--apply-hosts <archivo>` y, en Windows, `--system-setup` y
+/// `--system-cleanup` (ver `adapters::windows::system_setup`). Devuelve el código de salida si la app
 /// se lanzó en modo auxiliar, o `None` para arrancar normalmente.
 pub fn run_helper(args: &[String]) -> Option<i32> {
+    // Modos del instalador y el desinstalador de Windows.
+    #[cfg(windows)]
+    if let Some(code) = adapters::windows::system_setup::run(args) {
+        return Some(code);
+    }
     if args.get(1).map(String::as_str) != Some("--apply-hosts") {
         return None;
     }
@@ -337,6 +343,7 @@ pub fn run() {
             commands::sites_create,
             commands::settings_set_ssl,
             commands::shell_open_terminal,
+            commands::shell_open_editor,
             commands::shell_open_root,
             commands::shell_open_web,
             commands::shell_open_database,

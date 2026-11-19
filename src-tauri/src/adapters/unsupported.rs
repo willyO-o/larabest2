@@ -80,6 +80,10 @@ impl ShellLauncher for UnsupportedShell {
         Err(unsupported())
     }
 
+    fn open_text_editor(&self) -> Result<(), AppError> {
+        Err(unsupported())
+    }
+
     fn launch(&self, _program: &Path, _args: &[String]) -> Result<(), AppError> {
         Err(unsupported())
     }

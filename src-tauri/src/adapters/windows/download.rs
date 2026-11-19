@@ -59,7 +59,7 @@ fn ps_quote(s: &str) -> String {
 /// Sirve desde PowerShell 2.0 (Windows 7): ahí no existe
 /// `Invoke-WebRequest` y se usa `Net.WebClient`. TLS 1.2 (3072) se agrega
 /// a mano porque Windows 7 no lo usa por defecto.
-fn powershell_script(url: &str, out: &str, accept: Option<&str>) -> String {
+pub(super) fn powershell_script(url: &str, out: &str, accept: Option<&str>) -> String {
     let (iwr_headers, wc_header) = match accept {
         Some(a) => (
             format!(" -Headers @{{Accept = {}}}", ps_quote(a)),

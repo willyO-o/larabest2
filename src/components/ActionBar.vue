@@ -30,6 +30,13 @@ const busy = computed(() => services.pending.has('all'))
     <button class="action" @click="settings.openTerminal()">
       <AppIcon name="terminal" /><span>Terminal</span>
     </button>
+    <button
+      class="action"
+      title="Abrir Notepad++ (o el Bloc de notas si no está instalado)"
+      @click="settings.openEditor()"
+    >
+      <AppIcon name="edit" /><span>Editor</span>
+    </button>
     <button class="action" title="Abrir la carpeta www" @click="settings.openRoot()">
       <AppIcon name="folder" /><span>Raíz</span>
     </button>
