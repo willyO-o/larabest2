@@ -111,6 +111,8 @@ export const useSitesStore = defineStore('sites', () => {
   }
 
   const open = (name: string) => attempt(() => invoke('shell_open_site', { name }))
+  /** En `http://localhost/<carpeta>/`, por si falta el host virtual. */
+  const openLocal = (name: string) => attempt(() => invoke('shell_open_site_local', { name }))
   const openFolder = (name: string) => attempt(() => invoke('shell_open_site_folder', { name }))
   const openTerminal = (cwd: string) => attempt(() => invoke('shell_open_terminal', { cwd }))
 
@@ -129,6 +131,7 @@ export const useSitesStore = defineStore('sites', () => {
     backToForm,
     create,
     open,
+    openLocal,
     openFolder,
     openTerminal,
   }

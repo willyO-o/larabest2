@@ -130,8 +130,12 @@ pub fn build(app: &AppHandle, from_tray: bool) -> tauri::Result<Menu<Wry>> {
         www.push(disabled(app, "(crea una carpeta en www)")?);
     }
     for site in &sites {
-        // Sin hosts virtuales se abre en localhost/<carpeta>/.
-        let label = if site.url.contains("://localhost") {
+        // Sin hosts virtuales, o si su dominio falta en el archivo hosts
+        // (según la última revisión), se abre en localhost/<carpeta>/.
+        let url = core
+            .known_site_url(&site.name)
+            .unwrap_or_else(|| site.url.clone());
+        let label = if url.contains("://localhost") {
             format!("localhost/{}", site.name)
         } else {
             site.domain.clone()

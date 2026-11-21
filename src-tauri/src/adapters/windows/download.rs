@@ -14,9 +14,10 @@ use crate::ports::{Downloader, ProcessRunner, ProcessSpec};
 const DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(15 * 60);
 const HEAD_TIMEOUT: Duration = Duration::from_secs(20);
 
-/// Descarga con `curl.exe` (incluido desde Windows 10 1803) y, si falla o no
-/// existe (Windows 7 y 8), con PowerShell, que usa el proxy configurado en
-/// Windows.
+/// Descarga con WinHTTP, el cliente HTTP de Windows (ver `http.rs`). Solo si
+/// falla se prueba con `curl.exe` (Windows 10 1803 en adelante) y después
+/// con PowerShell: así funciona igual que antes donde WinHTTP no llega,
+/// sin lanzar programas ocultos en el caso normal.
 pub struct WindowsDownloader {
     runner: Arc<dyn ProcessRunner>,
 }
@@ -30,6 +31,12 @@ impl WindowsDownloader {
     /// (Windows 7 y 8) o si el servidor no lo dice, `None`: se muestra lo
     /// descargado sin porcentaje.
     async fn content_length(&self, url: &str) -> Option<u64> {
+        let (u, accept) = (url.to_string(), accept_header(url));
+        if let Ok(Some(total)) =
+            tokio::task::spawn_blocking(move || super::http::content_length(&u, accept)).await
+        {
+            return Some(total);
+        }
         let mut spec = ProcessSpec::new(system32().join("curl.exe"), system32())
             .arg("-sSIL")
             .arg("--max-time")
@@ -105,6 +112,18 @@ impl Downloader for WindowsDownloader {
         let part_str = part.to_string_lossy().to_string();
 
         let accept = accept_header(url);
+        let native = {
+            let (u, p) = (url.to_string(), part.clone());
+            tokio::task::spawn_blocking(move || super::http::download(&u, &p, accept))
+                .await
+                .unwrap_or_else(|e| Err(e.to_string()))
+        };
+        if native.is_ok() {
+            let _ = std::fs::remove_file(dest);
+            return std::fs::rename(&part, dest)
+                .map_err(|e| AppError::io(format!("No se pudo guardar {}", slash(dest)), e));
+        }
+        let _ = std::fs::remove_file(&part);
         let mut curl = ProcessSpec::new(system32().join("curl.exe"), system32())
             .arg("-L")
             .arg("-f")

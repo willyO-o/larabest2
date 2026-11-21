@@ -179,6 +179,14 @@ pub fn run_helper(args: &[String]) -> Option<i32> {
     if let Some(code) = adapters::windows::system_setup::run(args) {
         return Some(code);
     }
+    // `--quit`: cierra en orden la app abierta (si hay una) y espera a que
+    // termine. Nunca abre la app. Lo usa el instalador.
+    #[cfg(windows)]
+    if args.get(1).map(String::as_str) == Some("--quit") {
+        let closed =
+            adapters::windows::quit_signal::request_quit(std::time::Duration::from_secs(90));
+        return Some(if closed { 0 } else { 1 });
+    }
     if args.get(1).map(String::as_str) != Some("--apply-hosts") {
         return None;
     }
@@ -249,6 +257,13 @@ fn setup(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
         watcher: Mutex::new(None),
     });
     tray::create(app)?;
+    // El instalador puede pedir que la app se cierre (`--quit`) antes de
+    // actualizarla: se sale como con "Salir", deteniendo los servicios.
+    #[cfg(windows)]
+    {
+        let app = app.clone();
+        adapters::windows::quit_signal::listen(move || app.exit(0));
+    }
     settings::apply_theme(app, core.theme());
     // La ventana se crea oculta y la muestra la interfaz al pintar
     // (`app_ready`). Por si la interfaz no llega a avisar, se muestra igual.
@@ -348,6 +363,7 @@ pub fn run() {
             commands::shell_open_web,
             commands::shell_open_database,
             commands::shell_open_site,
+            commands::shell_open_site_local,
             commands::shell_open_site_folder,
             commands::settings_get,
             commands::services_settings_get,

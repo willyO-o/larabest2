@@ -119,6 +119,10 @@ pub struct Core {
     install_lock: tokio::sync::Mutex<()>,
     /// Compilación de cada PHP instalado, por carpeta (ver `php_build.rs`).
     php_builds: std::sync::Mutex<HashMap<String, crate::domain::php_build::PhpBuild>>,
+    /// Dirección con que se abre cada sitio según la última revisión del
+    /// archivo hosts (su dominio, o `localhost/<carpeta>/` si falta): el
+    /// menú, que se arma sin esperar, la muestra.
+    site_urls: std::sync::Mutex<HashMap<String, String>>,
 }
 
 impl Core {
@@ -138,7 +142,14 @@ impl Core {
             create_lock: tokio::sync::Mutex::new(()),
             install_lock: tokio::sync::Mutex::new(()),
             php_builds: std::sync::Mutex::new(HashMap::new()),
+            site_urls: std::sync::Mutex::new(HashMap::new()),
         }
+    }
+
+    /// Dirección con que se abre el sitio `name` según la última revisión
+    /// del archivo hosts, si ya se revisó.
+    pub fn known_site_url(&self, name: &str) -> Option<String> {
+        self.site_urls.lock().ok()?.get(name).cloned()
     }
 
     /// Crea la estructura de carpetas y limpia procesos huérfanos. Devuelve
@@ -150,9 +161,7 @@ impl Core {
         let first_run = !deps.fs.exists(&deps.paths.app_json());
         if first_run {
             let mut cfg = deps.config.load()?;
-            let apache = crate::domain::catalog::packages_for(self.os, deps.layout)
-                .iter()
-                .any(|p| p.id == "apache");
+            let apache = crate::domain::catalog::apache_by_default(self.os, deps.layout);
             cfg.web_server = if apache {
                 WebServer::Apache
             } else {
@@ -614,19 +623,19 @@ impl Core {
         Ok(sites)
     }
 
+    /// Marca qué sitios tienen su dominio en el archivo hosts. Los que no
+    /// (PowerShell bloqueado, un antivirus, el archivo protegido o el
+    /// permiso cancelado) se abren en `http://localhost/<carpeta>/`, que el
+    /// servidor web sirve siempre: el sitio funciona igual y vuelve a su
+    /// dominio en cuanto el archivo hosts lo tenga.
     async fn mark_in_hosts(&self, sites: &mut [Site]) {
+        let cfg = self.supervisor.deps().config.load().unwrap_or_default();
         // Sin hosts virtuales los sitios no van en el archivo hosts.
-        let vhosts = self
-            .supervisor
-            .deps()
-            .config
-            .load()
-            .map(|c| c.auto_vhosts)
-            .unwrap_or(true);
-        if !vhosts {
-            for site in sites {
+        if !cfg.auto_vhosts {
+            for site in sites.iter_mut() {
                 site.in_hosts = true;
             }
+            self.remember_site_urls(sites);
             return;
         }
         let present: HashSet<String> = self
@@ -635,10 +644,23 @@ impl Core {
             .await
             .unwrap_or_default()
             .into_iter()
-            .map(|e| e.host)
+            .map(|e| e.host.to_ascii_lowercase())
             .collect();
-        for site in sites {
+        for site in sites.iter_mut() {
             site.in_hosts = present.contains(&site.domain);
+            if !site.in_hosts {
+                site.url = site.local_url.clone();
+            }
+        }
+        self.remember_site_urls(sites);
+    }
+
+    fn remember_site_urls(&self, sites: &[Site]) {
+        if let Ok(mut urls) = self.site_urls.lock() {
+            *urls = sites
+                .iter()
+                .map(|s| (s.name.clone(), s.url.clone()))
+                .collect();
         }
     }
 
@@ -677,7 +699,7 @@ impl Core {
         };
 
         self.supervisor.deps().events.sites_changed(&sites);
-        hosts_result?;
+        hosts_result.map_err(with_localhost_hint)?;
         reload_result?;
         Ok(sites)
     }
@@ -988,6 +1010,17 @@ impl Core {
         };
         let env = self.terminal_env()?;
         self.shell.open_terminal(&cwd, &env)
+    }
+}
+
+/// Un fallo del archivo hosts no deja los sitios sin abrir: se agrega
+/// dónde quedan mientras tanto.
+fn with_localhost_hint(e: AppError) -> AppError {
+    const HINT: &str =
+        "Mientras tanto, los sitios se abren en http://localhost/<carpeta>/. Reintenta desde la barra inferior";
+    match e {
+        AppError::Hosts(detail) => AppError::Hosts(format!("{detail}. {HINT}.")),
+        other => AppError::Hosts(format!("{other}. {HINT}.")),
     }
 }
 

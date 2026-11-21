@@ -204,8 +204,13 @@ function openMenu(e?: MouseEvent) {
       </template>
       <template v-if="sites.missingHosts.length">
         <span v-if="!installs.current" class="statusline-sep" aria-hidden="true">·</span>
-        <button class="statusline-warn" :disabled="sites.syncing" @click="sites.sync()">
-          {{ sites.missingHosts.length }} sin archivo hosts, reintentar
+        <button
+          class="statusline-warn"
+          :disabled="sites.syncing"
+          title="No se pudo escribir el archivo hosts: mientras tanto se abren en http://localhost/<carpeta>/"
+          @click="sites.sync()"
+        >
+          {{ sites.missingHosts.length }} en localhost (sin archivo hosts), reintentar
         </button>
       </template>
       <template v-if="installs.current">

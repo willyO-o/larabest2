@@ -303,7 +303,7 @@ Con varias versiones de PHP se usa la más reciente hasta que elijas otra en **M
 
 1. En GitHub ve a **Actions → build-windows** y abre la última ejecución en verde de la rama o del pull request.
 2. Al final de la página, en **Artifacts**, descarga `instalador-windows` (un `.zip`).
-3. Descomprímelo y ejecuta `LARABEST_0.1.0_x64-setup.exe`.
+3. Descomprímelo y ejecuta `LARABEST_0.1.1_x64-setup.exe`.
 4. El instalador no está firmado, así que SmartScreen avisará: pulsa **Más información → Ejecutar de todas formas**. Se instala solo para tu usuario y no pide administrador.
 5. Si la PC no tiene WebView2 (en Windows 10 es raro), el instalador lo descarga. Sin internet, compila con `webviewInstallMode: offlineInstaller`.
 
@@ -491,7 +491,7 @@ La app encuentra las versiones en `/opt/homebrew/Cellar` (Apple Silicon) o `/usr
 La app no está firmada con un certificado de Apple Developer (cuesta 99 USD al año). No hace falta para usarla: macOS la instala igual, pero la primera vez bloquea la apertura y hay que permitirla una sola vez.
 
 1. En GitHub ve a **Actions → build-macos**, abre la última ejecución en verde y descarga el artefacto `instalador-macos`.
-2. Descomprime el `.zip`, abre `LARABEST_0.1.0_universal.dmg` y arrastra LARABEST a **Aplicaciones**.
+2. Descomprime el `.zip`, abre `LARABEST_0.1.1_universal.dmg` y arrastra LARABEST a **Aplicaciones**.
 3. Ábrela. macOS dice que no puede verificar al desarrollador: pulsa **Listo** (o **Cancelar**).
 4. Ve a **Configuración del Sistema → Privacidad y seguridad**, baja hasta «Se bloqueó el uso de LARABEST» y pulsa **Abrir igualmente**; confirma con tu contraseña. En macOS 14 o anterior también sirve: clic derecho sobre la app → **Abrir** → **Abrir**.
 5. Desde ese momento se abre normalmente.

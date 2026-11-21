@@ -30,5 +30,8 @@ pub use service::{
     explain_exit_code, log_shows_old_vc_runtime, Health, ServiceId, ServiceState, ServiceStatus,
     STATUS_DLL_NOT_FOUND, STATUS_ENTRYPOINT_NOT_FOUND,
 };
-pub use site::{database_name, is_valid_site_name, ProgressState, Site, SitePreset, SiteProgress};
+pub use site::{
+    database_name, is_valid_site_name, normalize_site_name, site_host, ProgressState, Site,
+    SitePreset, SiteProgress,
+};
 pub use version::{compare_versions, InstalledVersion};

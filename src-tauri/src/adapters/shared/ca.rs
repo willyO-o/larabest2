@@ -122,10 +122,15 @@ pub fn days_left(cert_pem: &str) -> Result<i64, AppError> {
 /// Se renueva antes de vencer para no encontrarse con un sitio roto.
 const RENEW_DAYS: i64 = 30;
 
+/// El certificado en binario (DER), como lo pide la API de Windows.
+pub fn pem_to_der(cert_pem: &str) -> Result<Vec<u8>, AppError> {
+    let cert = Certificate::from_pem(cert_pem.as_bytes()).map_err(cert_error)?;
+    cert.to_der().map_err(cert_error)
+}
+
 /// Huella SHA-1 en hexadecimal (la que muestra Windows).
 pub fn thumbprint(cert_pem: &str) -> Result<String, AppError> {
-    let cert = Certificate::from_pem(cert_pem.as_bytes()).map_err(cert_error)?;
-    let der = cert.to_der().map_err(cert_error)?;
+    let der = pem_to_der(cert_pem)?;
     Ok(Sha1::digest(der)
         .iter()
         .map(|b| format!("{b:02X}"))

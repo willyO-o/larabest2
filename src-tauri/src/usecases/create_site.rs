@@ -8,8 +8,8 @@ use minijinja::context;
 use super::sites::project_url;
 use super::Core;
 use crate::domain::{
-    database_name, is_valid_site_name, set_env, slash, ProgressState, ServiceId, ServiceState,
-    Site, SitePreset, SiteProgress,
+    database_name, is_valid_site_name, normalize_site_name, set_env, site_host, slash,
+    ProgressState, ServiceId, ServiceState, Site, SitePreset, SiteProgress,
 };
 use crate::drivers::{mariadb, php, templates, tools, RenderContext};
 use crate::error::AppError;
@@ -86,25 +86,29 @@ impl Core {
             ));
         };
         let deps = self.supervisor.deps();
+        // En minúsculas y sin espacios, aunque la interfaz ya lo envíe así.
+        let normalized = normalize_site_name(name);
+        let name = normalized.as_str();
         if !is_valid_site_name(name) {
             return Err(AppError::InvalidInput(
-                "El nombre solo puede tener letras, números y guiones (sin espacios ni puntos)."
+                "El nombre solo puede tener letras minúsculas, números, guiones (-) y guiones bajos (_)."
                     .into(),
             ));
         }
-        if tools::is_reserved(name) {
+        if tools::is_reserved(name) || tools::is_reserved(&site_host(name)) {
             return Err(AppError::InvalidInput(format!(
-                "El nombre «{}» está reservado para la base de datos.",
-                name.to_ascii_lowercase()
+                "El nombre «{name}» está reservado para la base de datos."
             )));
         }
         let dir = deps.paths.www().join(name);
+        // `mi_blog` y `mi-blog` tendrían el mismo dominio (mi-blog.test).
+        let host = site_host(name);
         let taken = deps
             .fs
             .list_dirs(&deps.paths.www())
             .unwrap_or_default()
             .iter()
-            .any(|d| d.eq_ignore_ascii_case(name));
+            .any(|d| d.eq_ignore_ascii_case(name) || site_host(d) == host);
         if taken || deps.fs.exists(&dir) {
             return Err(AppError::InvalidInput(format!(
                 "Ya existe la carpeta {}.",
@@ -147,6 +151,17 @@ impl Core {
             .into_iter()
             .find(|s| s.name == name)
             .ok_or_else(|| AppError::NotFound(format!("No se encontró el sitio {name}")))?;
+        // Sin su dominio en el archivo hosts, el sitio se abre en localhost.
+        let hosts_note = (!site.in_hosts).then(|| {
+            format!(
+                "No se pudo escribir {} en el archivo hosts (permiso cancelado, PowerShell o un antivirus lo impidió). Mientras tanto el sitio se abre en {}",
+                site.domain, site.url
+            )
+        });
+        let warning = match (warning, hosts_note) {
+            (Some(w), Some(n)) => Some(format!("{w}\n{n}")),
+            (w, n) => w.or(n),
+        };
         progress.emit("Sitio listo", ProgressState::Done, warning);
         Ok(site)
     }

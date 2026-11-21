@@ -216,6 +216,7 @@ mod tests {
             path: format!("C:/APP/www/{name}"),
             document_root: root.into(),
             in_hosts: false,
+            local_url: String::new(),
         }
     }
 

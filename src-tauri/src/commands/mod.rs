@@ -223,6 +223,18 @@ pub async fn shell_open_site(
     open_url(&app, &site.url)
 }
 
+/// El sitio en `http://localhost/<carpeta>/`, que funciona aunque falte su
+/// host virtual.
+#[tauri::command]
+pub async fn shell_open_site_local(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    name: String,
+) -> Result<(), AppError> {
+    let site = find_site(&state, &name).await?;
+    open_url(&app, &site.local_url)
+}
+
 #[tauri::command]
 pub async fn shell_open_site_folder(
     app: AppHandle,

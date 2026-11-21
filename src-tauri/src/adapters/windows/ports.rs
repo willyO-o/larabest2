@@ -2,7 +2,11 @@ use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
 use std::os::windows::process::CommandExt;
 use std::time::Duration;
 
+use super::elevate::{run_as_admin, Elevated, Window};
 use super::{system32, CREATE_NO_WINDOW};
+
+/// El usuario tiene este tiempo para responder al aviso de Windows.
+const ELEVATION_TIMEOUT: Duration = Duration::from_secs(300);
 use crate::adapters::shared::netstat::{describe_owner, listening_pid, tasklist_image};
 use crate::error::AppError;
 use crate::ports::PortChecker;
@@ -58,25 +62,16 @@ impl PortChecker for WindowsPortChecker {
         if firewall_rule_exists() {
             return Ok(());
         }
-        let args = firewall_rule_add_args();
-        let script = format!(
-            "$ErrorActionPreference = 'Stop'; \
-             $p = Start-Process -FilePath '{}' -ArgumentList '{}' -Verb RunAs -WindowStyle Hidden -Wait -PassThru; \
-             exit $p.ExitCode",
-            system32().join("netsh.exe").display(),
-            args.replace('\'', "''"),
-        );
-        let out = std::process::Command::new(
-            system32()
-                .join("WindowsPowerShell")
-                .join("v1.0")
-                .join("powershell.exe"),
+        // `netsh` como administrador, con el aviso normal de Windows (sin
+        // PowerShell de por medio).
+        let out = run_as_admin(
+            &system32().join("netsh.exe"),
+            &firewall_rule_add_args(),
+            Window::Hidden,
+            Some(ELEVATION_TIMEOUT),
         )
-        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
-        .creation_flags(CREATE_NO_WINDOW)
-        .output()
-        .map_err(|e| AppError::io("No se pudo abrir el firewall de Windows", e))?;
-        if out.status.success() {
+        .map_err(|e| AppError::Process(format!("No se pudo abrir el firewall de Windows: {e}")))?;
+        if matches!(out, Elevated::Exited(0)) || firewall_rule_exists() {
             Ok(())
         } else {
             Err(AppError::InvalidInput(

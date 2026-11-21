@@ -35,8 +35,13 @@ export interface Site {
   url: string
   path: string
   documentRoot: string
-  /** `false` si el dominio aún no está en el archivo hosts. */
+  /**
+   * `false` si el dominio aún no está en el archivo hosts: entonces `url` es
+   * `http://localhost/<carpeta>/`, que funciona sin el archivo hosts.
+   */
   inHosts: boolean
+  /** `http://localhost/<carpeta>/`: funciona aunque falte el host virtual. */
+  localUrl: string
 }
 
 export type SitePreset = 'blank' | 'wordpress' | 'laravel'

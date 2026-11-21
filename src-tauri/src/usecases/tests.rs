@@ -109,11 +109,77 @@ async fn hosts_failure_still_updates_sites_and_reports_error() {
     *h.hosts.fail.lock().unwrap() = true;
     h.fs.create_dir_all(Path::new(&format!("{ROOT}/www/blog")))
         .unwrap();
-    let err = h.core().sync_sites().await.unwrap_err();
+    h.fs.create_dir_all(Path::new(&format!("{ROOT}/www/tienda/public")))
+        .unwrap();
+    let core = h.core();
+    let err = core.sync_sites().await.unwrap_err();
     assert_eq!(err.kind(), "hosts");
+    assert!(
+        err.to_string().contains("http://localhost/<carpeta>/"),
+        "{err}"
+    );
     let sent = h.events.sites.lock().unwrap().last().unwrap().clone();
-    assert_eq!(sent.len(), 1);
+    assert_eq!(sent.len(), 2);
     assert!(!sent[0].in_hosts);
+    // Sin su dominio en el archivo hosts, se abren en localhost.
+    assert_eq!(sent[0].url, "http://localhost/blog/");
+    assert_eq!(sent[1].url, "http://localhost/tienda/public/");
+    assert_eq!(core.sites().await.unwrap()[0].url, "http://localhost/blog/");
+    // El menú muestra la dirección con que se abre.
+    assert_eq!(
+        core.known_site_url("blog").as_deref(),
+        Some("http://localhost/blog/")
+    );
+
+    // Cuando el archivo hosts vuelve a funcionar, vuelven a su dominio.
+    *h.hosts.fail.lock().unwrap() = false;
+    let sites = core.sync_sites().await.unwrap();
+    assert!(sites.iter().all(|s| s.in_hosts));
+    assert_eq!(sites[0].url, "http://blog.test/");
+    assert_eq!(
+        core.known_site_url("blog").as_deref(),
+        Some("http://blog.test/")
+    );
+    // La dirección en localhost está siempre, para "Abrir en localhost".
+    assert_eq!(sites[0].local_url, "http://localhost/blog/");
+    assert_eq!(sites[1].local_url, "http://localhost/tienda/public/");
+}
+
+#[tokio::test]
+async fn new_site_names_are_lowercase_and_fall_back_to_localhost() {
+    let h = Harness::new();
+    *h.hosts.fail.lock().unwrap() = true;
+    let core = h.core();
+    let site = core
+        .create_site("  Mi Tienda_Nueva ", crate::domain::SitePreset::Blank)
+        .await
+        .unwrap();
+    assert_eq!(site.name, "mi-tienda_nueva");
+    assert_eq!(site.domain, "mi-tienda-nueva.test");
+    assert!(!site.in_hosts);
+    assert_eq!(site.url, "http://localhost/mi-tienda_nueva/");
+    assert!(h
+        .fs
+        .exists(Path::new(&format!("{ROOT}/www/mi-tienda_nueva/index.php"))));
+    let done = h.events.progress.lock().unwrap().last().unwrap().clone();
+    assert!(
+        done.detail
+            .as_deref()
+            .is_some_and(|d| d.contains("http://localhost/mi-tienda_nueva/")),
+        "{done:?}"
+    );
+
+    // Daría el mismo dominio que la anterior.
+    let err = core
+        .create_site("mi-tienda-nueva", crate::domain::SitePreset::Blank)
+        .await
+        .unwrap_err();
+    assert_eq!(err.kind(), "invalidInput");
+    let err = core
+        .create_site("¿?", crate::domain::SitePreset::Blank)
+        .await
+        .unwrap_err();
+    assert_eq!(err.kind(), "invalidInput");
 }
 
 #[tokio::test]
@@ -270,7 +336,7 @@ async fn blank_site_gets_index_and_is_registered() {
     let h = Harness::new();
     let site = h
         .core()
-        .create_site("demo", SitePreset::Blank)
+        .create_site("demo", crate::domain::SitePreset::Blank)
         .await
         .unwrap();
     assert_eq!(site.domain, "demo.test");
@@ -293,11 +359,17 @@ async fn rejects_invalid_existing_and_reserved_names() {
         .unwrap();
     let core = h.core();
     for (name, needle) in [
-        ("mi blog", "solo puede tener"),
+        // Los espacios pasan a guiones; sin letras ni números no queda nombre.
+        ("¿? .", "solo puede tener"),
         ("blog", "Ya existe"),
+        ("BLOG", "Ya existe"),
         ("adminer", "reservado"),
+        ("Adminer", "reservado"),
     ] {
-        let err = core.create_site(name, SitePreset::Blank).await.unwrap_err();
+        let err = core
+            .create_site(name, crate::domain::SitePreset::Blank)
+            .await
+            .unwrap_err();
         assert!(err.to_string().contains(needle), "{name}: {err}");
     }
 }
@@ -552,6 +624,8 @@ async fn enabling_ssl_trusts_ca_issues_certs_and_switches_urls() {
         .unwrap();
     let core = h.core();
     core.start(ServiceId::Nginx).await.unwrap();
+    // blog.test en el archivo hosts: si no, el sitio se abre en localhost.
+    core.sync_sites().await.unwrap();
 
     core.set_ssl(true).await.unwrap();
 
@@ -592,7 +666,10 @@ async fn new_sites_get_a_certificate_when_ssl_is_on() {
     let h = Harness::new();
     let core = h.core();
     core.set_ssl(true).await.unwrap();
-    let site = core.create_site("nuevo", SitePreset::Blank).await.unwrap();
+    let site = core
+        .create_site("nuevo", crate::domain::SitePreset::Blank)
+        .await
+        .unwrap();
     assert_eq!(site.url, "https://nuevo.test/");
     assert!(h
         .ca
@@ -838,7 +915,7 @@ async fn phpmyadmin_is_served_registered_and_can_be_the_database_button() {
     );
 
     let err = core
-        .create_site("phpMyAdmin", SitePreset::Blank)
+        .create_site("phpMyAdmin", crate::domain::SitePreset::Blank)
         .await
         .unwrap_err();
     assert!(err.to_string().contains("reservado"));
@@ -1076,10 +1153,16 @@ async fn apache_comes_from_the_apache_lounge_zip_mirrored_on_fossies() {
     );
     let httpd = format!("bin/{}", crate::drivers::exe("httpd"));
     h.archive.contains(&[&httpd]);
+    // apachelounge.com no responde: se usa fossies.org.
+    h.downloader
+        .missing
+        .lock()
+        .unwrap()
+        .push(urls::APACHE_LOUNGE.into());
     let message = h.core().install_package("apache").await.unwrap();
     assert_eq!(message, "Apache 2.4.69 instalado.");
     assert_eq!(
-        h.downloader.urls.lock().unwrap()[1],
+        h.downloader.urls.lock().unwrap().last().unwrap(),
         "https://fossies.org/windows/www/httpd-2.4.69-261002-Win64-VS18.zip"
     );
     assert_eq!(
@@ -1089,6 +1172,96 @@ async fn apache_comes_from_the_apache_lounge_zip_mirrored_on_fossies() {
     assert!(h
         .fs
         .exists(Path::new(&format!("{ROOT}/bin/apache/2.4.69/{httpd}"))));
+}
+
+/// La página real de Apache Lounge: 64 y 32 bits, enlaces relativos.
+const APACHE_LOUNGE_PAGE: &str = r#"<a href="/download/VS18/binaries/httpd-2.4.71-261112-Win64-VS18.zip">x</a>
+<a href="/download/VS18/binaries/httpd-2.4.71-261112-win32-vs18.zip">x</a>"#;
+const LOUNGE_WIN64: &str =
+    "https://www.apachelounge.com/download/VS18/binaries/httpd-2.4.71-261112-Win64-VS18.zip";
+
+#[tokio::test]
+async fn apache_comes_first_from_apache_lounge() {
+    use crate::domain::catalog::urls;
+    let h = Harness::new();
+    h.downloader
+        .respond(urls::APACHE_LOUNGE, APACHE_LOUNGE_PAGE);
+    let httpd = format!("bin/{}", crate::drivers::exe("httpd"));
+    h.archive.contains(&[&httpd]);
+    let message = h.core().install_package("apache").await.unwrap();
+    assert_eq!(message, "Apache 2.4.71 instalado.");
+    let asked = h.downloader.urls.lock().unwrap().clone();
+    assert_eq!(
+        asked,
+        vec![urls::APACHE_LOUNGE.to_string(), LOUNGE_WIN64.into()]
+    );
+}
+
+#[tokio::test]
+async fn apache_falls_back_to_fossies_when_the_download_is_refused() {
+    use crate::domain::catalog::urls;
+    let h = Harness::new();
+    h.downloader
+        .respond(urls::APACHE_LOUNGE, APACHE_LOUNGE_PAGE);
+    h.downloader
+        .missing
+        .lock()
+        .unwrap()
+        .push(LOUNGE_WIN64.into());
+    let httpd = format!("bin/{}", crate::drivers::exe("httpd"));
+    h.archive.contains(&[&httpd]);
+    h.core().install_package("apache").await.unwrap();
+    assert_eq!(
+        h.downloader.urls.lock().unwrap().last().unwrap(),
+        "https://fossies.org/windows/www/httpd-2.4.71-261112-Win64-VS18.zip"
+    );
+    assert!(h
+        .fs
+        .exists(Path::new(&format!("{ROOT}/bin/apache/2.4.71/{httpd}"))));
+}
+
+#[tokio::test]
+async fn apache_explains_how_to_add_it_by_hand_when_both_sites_refuse() {
+    use crate::domain::catalog::urls;
+    let h = Harness::new();
+    h.downloader
+        .respond(urls::APACHE_LOUNGE, APACHE_LOUNGE_PAGE);
+    {
+        let mut missing = h.downloader.missing.lock().unwrap();
+        missing.push(LOUNGE_WIN64.into());
+        missing.push("https://fossies.org/windows/www/httpd-2.4.71-261112-Win64-VS18.zip".into());
+    }
+    let err = h.core().install_package("apache").await.unwrap_err();
+    let text = err.to_string();
+    assert!(
+        text.contains("https://www.apachelounge.com/download/"),
+        "{text}"
+    );
+    assert!(
+        text.contains(&format!("{ROOT}/bin/apache/<versión>/bin/httpd.exe")),
+        "{text}"
+    );
+    assert!(!h.fs.exists(Path::new(&format!("{ROOT}/bin/apache/2.4.71"))));
+}
+
+#[tokio::test]
+async fn a_32_bit_windows_gets_the_win32_apache_from_apache_lounge() {
+    use crate::domain::catalog::urls;
+    let h = Harness::new();
+    h.downloader
+        .respond(urls::APACHE_LOUNGE, APACHE_LOUNGE_PAGE);
+    let httpd = format!("bin/{}", crate::drivers::exe("httpd"));
+    h.archive.contains(&[&httpd]);
+    let core = h.core_on(crate::domain::os::OsInfo::Windows {
+        build: 19045,
+        server: false,
+        x86: true,
+    });
+    core.install_package("apache").await.unwrap();
+    assert_eq!(
+        h.downloader.urls.lock().unwrap().last().unwrap(),
+        "https://www.apachelounge.com/download/VS18/binaries/httpd-2.4.71-261112-win32-vs18.zip"
+    );
 }
 
 #[tokio::test]

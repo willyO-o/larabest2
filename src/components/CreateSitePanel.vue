@@ -3,6 +3,7 @@ import { computed, nextTick, ref, watch } from 'vue'
 import AppIcon from './AppIcon.vue'
 import { useSettingsStore } from '../stores/settings'
 import { useSitesStore } from '../stores/sites'
+import { normalizeSiteName, siteHost, SITE_NAME_RE, typingSiteName } from '../lib/siteName'
 import type { SitePreset } from '../types/ipc'
 
 const sites = useSitesStore()
@@ -28,27 +29,36 @@ const presetButtons = ref<HTMLButtonElement[]>([])
 const name = ref('')
 const preset = ref<SitePreset>('blank')
 
-const VALID = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?$/
+/** Se escribe en minúsculas y sin espacios: se convierte al escribir. */
+watch(name, (value) => {
+  const typed = typingSiteName(value)
+  if (typed !== value) name.value = typed
+})
+
+/** El nombre con que se creará: sin `-` ni `_` en los extremos. */
+const finalName = computed(() => normalizeSiteName(name.value))
+
+const RESERVED = ['adminer', 'phpmyadmin']
 
 const nameError = computed(() => {
-  const value = name.value
-  if (!value) return null
-  if (!VALID.test(value)) return 'Solo letras, números y guiones; sin espacios ni puntos.'
-  if (value.toLowerCase() === 'adminer') return 'Ese nombre está reservado para la base de datos.'
-  if (sites.list.some((s) => s.name.toLowerCase() === value.toLowerCase()))
-    return 'Ya existe un sitio con ese nombre.'
+  const value = finalName.value
+  if (!name.value) return null
+  if (!SITE_NAME_RE.test(value)) return 'Usa letras, números, guiones (-) o guiones bajos (_).'
+  if (RESERVED.includes(siteHost(value))) return 'Ese nombre está reservado para la base de datos.'
+  if (sites.list.some((s) => s.name.toLowerCase() === value || siteHost(s.name) === siteHost(value)))
+    return 'Ya existe un sitio con ese nombre (o con la misma dirección).'
   return null
 })
 
 /** Como quedará: `https://blog.test` o, sin hosts virtuales, `localhost/blog/`. */
 const url = computed(() => {
-  const folder = name.value || 'mi-sitio'
+  const folder = finalName.value || 'mi-sitio'
   const s = settings.settings
   if (s && !s.autoVhosts) return `http://localhost/${folder}/`
-  return `${settings.ssl ? 'https' : 'http'}://${folder.toLowerCase()}.${s?.tld ?? 'test'}`
+  return `${settings.ssl ? 'https' : 'http'}://${siteHost(folder)}.${s?.tld ?? 'test'}`
 })
 const currentPreset = computed(() => PRESETS.find((p) => p.value === preset.value)!)
-const canCreate = computed(() => !!name.value && !nameError.value && !sites.creating)
+const canCreate = computed(() => !!finalName.value && !nameError.value && !sites.creating)
 
 const creation = computed(() => sites.creation)
 const title = computed(() => {
@@ -85,7 +95,9 @@ watch(
 )
 
 function submit() {
-  if (canCreate.value) sites.create(name.value, preset.value)
+  if (!canCreate.value) return
+  name.value = finalName.value
+  sites.create(finalName.value, preset.value)
 }
 
 /** Esc cierra el formulario, pero no mientras se crea el sitio. */
@@ -124,11 +136,12 @@ async function backToForm() {
         <span class="field-label">Nombre de la carpeta</span>
         <input
           ref="input"
-          v-model.trim="name"
+          v-model="name"
           class="field-input"
           :aria-invalid="!!nameError"
           aria-describedby="name-hint"
           autocomplete="off"
+          autocapitalize="off"
           spellcheck="false"
           maxlength="63"
           placeholder="mi-sitio"
@@ -136,7 +149,7 @@ async function backToForm() {
         <span id="name-hint" class="field-hint" :class="{ 'is-error': nameError }">
           <template v-if="nameError">{{ nameError }}</template>
           <template v-else>
-            www/{{ name || 'mi-sitio' }} → <span class="field-url">{{ url }}</span>
+            www/{{ finalName || 'mi-sitio' }} → <span class="field-url">{{ url }}</span>
           </template>
         </span>
       </label>
@@ -205,6 +218,17 @@ async function backToForm() {
           </span>
           <button type="button" class="sheet-btn" @click="sites.openFolder(creation.site.name)">
             Abrir carpeta
+          </button>
+          <!-- Si el sitio usa su dominio, la otra forma de abrirlo: funciona
+               aunque el host virtual no se haya creado. -->
+          <button
+            v-if="creation.site.localUrl && creation.site.url !== creation.site.localUrl"
+            type="button"
+            class="sheet-btn"
+            :title="creation.site.localUrl"
+            @click="sites.openLocal(creation.site.name)"
+          >
+            Abrir en localhost
           </button>
           <button
             type="button"

@@ -186,10 +186,8 @@ impl Core {
                 Ok((version, format!("{}{path}", urls::PHP_DOWNLOADS)))
             }
             ServiceId::Apache => {
-                let html = self.fetch_text(urls::APACHE_INDEX).await?;
-                let (version, file) =
-                    catalog::apache_latest(&html).ok_or_else(|| unreadable("fossies.org"))?;
-                Ok((version, urls::apache_zip(&file)))
+                let (version, mut sources) = self.resolve_apache().await?;
+                Ok((version, sources.remove(0)))
             }
             ServiceId::Nginx => {
                 let html = self.fetch_text(urls::NGINX_PAGE).await?;
@@ -234,6 +232,48 @@ impl Core {
         }
     }
 
+    /// Apache: la página de Apache Lounge, que lo compila (64 y 32 bits),
+    /// y si no responde el índice de fossies.org (solo 64 bits). Devuelve la
+    /// versión y de dónde descargarla, en orden: si una fuente falla se
+    /// prueba la siguiente.
+    async fn resolve_apache(&self) -> Result<(String, Vec<String>), AppError> {
+        let x86 = self.os.is_x86();
+        if let Ok(html) = self.fetch_text(urls::APACHE_LOUNGE).await {
+            if let Some((version, file)) = catalog::apache_latest(&html, x86) {
+                let mut sources: Vec<String> =
+                    urls::apache_lounge_zip(&html, &file).into_iter().collect();
+                if !x86 {
+                    sources.push(urls::apache_zip(&file));
+                }
+                return Ok((version, sources));
+            }
+        }
+        let fossies = if x86 {
+            None
+        } else {
+            self.fetch_text(urls::APACHE_INDEX)
+                .await
+                .ok()
+                .and_then(|html| catalog::apache_latest(&html, false))
+        };
+        let (version, file) = fossies.ok_or_else(|| {
+            self.apache_manual_error("No se pudo consultar apachelounge.com ni fossies.org")
+        })?;
+        Ok((version, vec![urls::apache_zip(&file)]))
+    }
+
+    /// Error de Apache con cómo agregarlo a mano: los dos sitios limitan
+    /// las descargas automáticas (y Windows 8 no tiene `curl`), pero desde
+    /// el navegador se descarga siempre. La app lo detecta por su carpeta.
+    fn apache_manual_error(&self, reason: &str) -> AppError {
+        let arch = if self.os.is_x86() { "win32" } else { "Win64" };
+        let dir = slash(&self.supervisor.deps().paths.bin_service(ServiceId::Apache));
+        AppError::Process(format!(
+            "{reason}. Esos sitios a veces limitan las descargas automáticas: vuelve a intentarlo más tarde, o agrégalo a mano: descarga el zip de Apache ({arch}) desde {} con el navegador y copia el contenido de su carpeta Apache24 en {dir}/<versión>/ (debe quedar {dir}/<versión>/bin/httpd.exe). La app lo detecta sola.",
+            urls::APACHE_LOUNGE
+        ))
+    }
+
     /// Windows: descarga el zip y lo extrae en `bin/<servicio>/<versión>/`.
     /// `pinned`: versión exacta (la final para un Windows antiguo).
     async fn install_zip(
@@ -245,14 +285,19 @@ impl Core {
     ) -> Result<String, AppError> {
         let deps = self.supervisor.deps();
         let label = progress.label;
-        let (version, url) = match pinned {
+        let (version, sources) = match pinned {
             Some(version) => (
                 version.to_string(),
-                pinned_zip(service, version, self.os.is_x86())?,
+                vec![pinned_zip(service, version, self.os.is_x86())?],
             ),
             None => {
                 progress.step(format!("Buscando la última versión de {label}"));
-                self.resolve_zip(service, branch).await?
+                if service == ServiceId::Apache {
+                    self.resolve_apache().await?
+                } else {
+                    let (version, url) = self.resolve_zip(service, branch).await?;
+                    (version, vec![url])
+                }
             }
         };
         let dest = deps.paths.bin_service(service).join(&version);
@@ -272,27 +317,50 @@ impl Core {
             .paths
             .downloads()
             .join(format!("{}-{version}.zip", service.key()));
-        self.download_tracked(
-            progress,
-            &format!("Descargando {} {version}", service.label()),
-            &url,
-            &zip,
-        )
-        .await?;
-        progress.step(format!("Extrayendo en {}", slash(&dest)));
         // Del zip de Apache Lounge solo interesa su carpeta Apache24.
         let folder = (service == ServiceId::Apache).then_some(catalog::APACHE_ZIP_FOLDER);
-        let extracted = self.extract(&zip, &dest, folder).await;
-        let _ = deps.fs.remove_file(&zip);
-        extracted?;
-        if !deps.fs.exists(&marker) {
-            let _ = deps.fs.remove_dir_all(&dest);
-            return Err(AppError::Process(format!(
-                "El archivo descargado de {url} no tiene {}.",
-                slash(&marker)
-            )));
+        // Cada fuente en orden. Si una falla, o entrega algo que no es el
+        // zip esperado (una página de aviso, por ejemplo), se prueba la
+        // siguiente.
+        let mut last_error = None;
+        for url in &sources {
+            let attempt = async {
+                self.download_tracked(
+                    progress,
+                    &format!("Descargando {} {version}", service.label()),
+                    url,
+                    &zip,
+                )
+                .await?;
+                progress.step(format!("Extrayendo en {}", slash(&dest)));
+                let extracted = self.extract(&zip, &dest, folder).await;
+                let _ = deps.fs.remove_file(&zip);
+                extracted?;
+                if !deps.fs.exists(&marker) {
+                    return Err(AppError::Process(format!(
+                        "El archivo descargado de {url} no tiene {}.",
+                        slash(&marker)
+                    )));
+                }
+                Ok(())
+            }
+            .await;
+            match attempt {
+                Ok(()) => return Ok(format!("{} {version} instalado.", service.label())),
+                Err(e) => {
+                    let _ = deps.fs.remove_dir_all(&dest);
+                    last_error = Some(e);
+                }
+            }
         }
-        Ok(format!("{} {version} instalado.", service.label()))
+        let error = last_error.unwrap_or_else(|| {
+            AppError::Process(format!("No hay de dónde descargar {}.", service.label()))
+        });
+        Err(if service == ServiceId::Apache {
+            self.apache_manual_error(&format!("No se pudo descargar Apache {version}: {error}"))
+        } else {
+            error
+        })
     }
 
     /// MySQL 8.4 oficial. Descarga el zip (Windows) o el tar.gz (macOS) de

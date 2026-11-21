@@ -1,4 +1,6 @@
-use crate::domain::{is_valid_site_name, slash, AppConfig, Paths, Site};
+use std::collections::HashSet;
+
+use crate::domain::{is_valid_site_name, site_host, slash, AppConfig, Paths, Site};
 use crate::ports::FileStore;
 
 /// URL de un dominio: `https://` si HTTPS está activado.
@@ -32,28 +34,32 @@ pub fn localhost_url(cfg: &AppConfig, name: &str, public: bool) -> String {
 /// virtuales, su carpeta en `localhost`.
 pub fn project_url(cfg: &AppConfig, name: &str, public: bool) -> String {
     if cfg.auto_vhosts {
-        site_url(cfg, &format!("{}.{}", name.to_ascii_lowercase(), cfg.tld))
+        site_url(cfg, &format!("{}.{}", site_host(name), cfg.tld))
     } else {
         localhost_url(cfg, name, public)
     }
 }
 
 /// Cada subcarpeta válida de `www/` es un sitio. Las que no sirven como
-/// dominio (espacios, puntos, guiones bajos) se ignoran.
+/// dominio (espacios, puntos) se ignoran. Si dos carpetas dan el mismo
+/// dominio (`mi_blog` y `mi-blog`), queda la primera.
 pub fn scan_sites(fs: &dyn FileStore, paths: &Paths, cfg: &AppConfig) -> Vec<Site> {
     let www = paths.www();
     let mut names = fs.list_dirs(&www).unwrap_or_default();
     names.sort_by_key(|n| n.to_ascii_lowercase());
+    let mut hosts = HashSet::new();
     names
         .into_iter()
         .filter(|n| is_valid_site_name(n))
+        .filter(|n| hosts.insert(site_host(n)))
         .map(|name| {
             let dir = www.join(&name);
             let public = dir.join("public");
             let has_public = fs.exists(&public);
             let document_root = if has_public { public } else { dir.clone() };
-            let domain = format!("{}.{}", name.to_ascii_lowercase(), cfg.tld);
+            let domain = format!("{}.{}", site_host(&name), cfg.tld);
             let url = project_url(cfg, &name, has_public);
+            let local_url = localhost_url(cfg, &name, has_public);
             Site {
                 name,
                 domain,
@@ -62,6 +68,7 @@ pub fn scan_sites(fs: &dyn FileStore, paths: &Paths, cfg: &AppConfig) -> Vec<Sit
                 document_root: slash(&document_root),
                 // Sin hosts virtuales no hace falta el archivo hosts.
                 in_hosts: !cfg.auto_vhosts,
+                local_url,
             }
         })
         .collect()
@@ -92,6 +99,28 @@ mod tests {
         assert_eq!(sites[1].domain, "wordpress.test");
         assert_eq!(sites[1].url, "http://wordpress.test/");
         assert_eq!(sites[1].document_root, "C:/APP/www/WordPress");
+    }
+
+    #[test]
+    fn underscores_become_hyphens_in_the_domain_only() {
+        let fs = FakeFs::default();
+        fs.create_dir_all(Path::new("C:/APP/www/mi_tienda"))
+            .unwrap();
+        // Daría el mismo dominio que mi_tienda: se ignora.
+        fs.create_dir_all(Path::new("C:/APP/www/mi-tienda"))
+            .unwrap();
+        let sites = scan_sites(&fs, &Paths::new("C:/APP"), &AppConfig::default());
+        assert_eq!(sites.len(), 1);
+        assert_eq!(sites[0].name, "mi-tienda");
+        assert_eq!(sites[0].domain, "mi-tienda.test");
+        let cfg = AppConfig {
+            auto_vhosts: false,
+            ..AppConfig::default()
+        };
+        assert_eq!(
+            project_url(&cfg, "mi_tienda", false),
+            "http://localhost/mi_tienda/"
+        );
     }
 
     #[test]

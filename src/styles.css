@@ -1115,6 +1115,12 @@ button:disabled {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  /* Se recorta antes que los botones cuando no hay espacio. */
+  min-width: 0;
+}
+
+.sheet-foot .sheet-btn {
+  flex-shrink: 0;
 }
 
 .sheet-note .icon {

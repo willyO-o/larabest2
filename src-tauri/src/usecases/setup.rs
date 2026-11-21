@@ -49,16 +49,9 @@ impl Core {
         let packages = catalog::packages_for(self.os, self.supervisor.deps().layout);
         // Lo recomendado: la versión más nueva de PHP y MariaDB que corre
         // aquí (la primera del menú), Nginx y las herramientas de uso diario.
-        // Servidor web: Apache donde está disponible; si no (Windows 7), Nginx.
-        let web = if packages.iter().any(|p| {
-            matches!(
-                p.kind,
-                PackageKind::Service {
-                    service: ServiceId::Apache,
-                    ..
-                }
-            )
-        }) {
+        // Servidor web: Apache donde está disponible y se descarga sin
+        // problemas; si no (Windows 7 y 8), Nginx.
+        let web = if catalog::apache_by_default(self.os, self.supervisor.deps().layout) {
             ServiceId::Apache
         } else {
             ServiceId::Nginx

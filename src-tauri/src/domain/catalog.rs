@@ -161,9 +161,9 @@ pub const LEGACY_PACKAGES: [Package; 5] = [
 ];
 
 /// Windows 10 de 32 bits: MariaDB dejó de publicar zips de 32 bits en
-/// 10.6.5. PHP, Node.js 22 y Notepad++ siguen teniéndolos; MySQL,
-/// PostgreSQL, MongoDB, Redis y Mailpit no, y Apache Lounge tampoco en
-/// fossies.org.
+/// 10.6.5. PHP, Apache (en apachelounge.com, no en fossies.org), Node.js 22
+/// y Notepad++ siguen teniéndolos; MySQL, PostgreSQL, MongoDB, Redis y
+/// Mailpit no.
 pub const X86_PACKAGES: [Package; 1] = [pinned(
     service(
         "mariadb-10.6-x86",
@@ -188,11 +188,11 @@ pub fn find(id: &str) -> Option<Package> {
 /// tiene la 6.0, sin soporte).
 pub fn packages_for(os: OsInfo, layout: BinaryLayout) -> Vec<Package> {
     let ids: &[&str] = match os.windows_tier() {
-        // Windows 10 de 32 bits: lo que tiene versión de 32 bits. Sin
-        // Apache, el servidor web es Nginx.
+        // Windows 10 de 32 bits: lo que tiene versión de 32 bits.
         Some(_) if os.is_x86() => &[
             "php-8.4",
             "php-8.3",
+            "apache",
             "nginx",
             "mariadb-10.6-x86",
             "heidisql",
@@ -257,6 +257,15 @@ pub fn packages_for(os: OsInfo, layout: BinaryLayout) -> Vec<Package> {
     ids.iter().filter_map(|id| find(id)).collect()
 }
 
+/// Apache como servidor web de una instalación nueva (y recomendado en el
+/// asistente): donde se ofrece, salvo Windows 8. Ahí no hay `curl` y las
+/// fuentes de Apache no aceptan la descarga por PowerShell (Apache Lounge
+/// tampoco su TLS), así que empieza con Nginx; Apache sigue en el menú.
+pub fn apache_by_default(os: OsInfo, layout: BinaryLayout) -> bool {
+    os.windows_tier() != Some(WindowsTier::Eight)
+        && packages_for(os, layout).iter().any(|p| p.id == "apache")
+}
+
 /// El paquete más reciente de un servicio para este sistema (el primero
 /// del menú): PHP 8.4 en Windows 10, PHP 8.2 en Windows 7.
 pub fn first_for(os: OsInfo, layout: BinaryLayout, service: ServiceId) -> Option<Package> {
@@ -303,8 +312,12 @@ pub mod urls {
     pub const REDIS_LATEST: &str =
         "https://api.github.com/repos/redis-windows/redis-windows/releases/latest";
     pub const MAILPIT_LATEST: &str = "https://api.github.com/repos/axllent/mailpit/releases/latest";
+    /// Página de descargas de Apache Lounge, que compila Apache para
+    /// Windows: tiene el zip de 64 y el de 32 bits.
+    pub const APACHE_LOUNGE: &str = "https://www.apachelounge.com/download/";
     /// Réplica en fossies.org de los binarios de Apache Lounge (la que usa
-    /// Scoop): apachelounge.com bloquea algunas descargas automáticas.
+    /// Scoop), solo de 64 bits: el respaldo si apachelounge.com no responde.
+    /// Limita las descargas seguidas desde una misma conexión.
     pub const APACHE_INDEX: &str = "https://fossies.org/windows/www/";
     pub const ADMINER: &str = "https://www.adminer.org/latest.php";
     pub const PHPMYADMIN: &str =
@@ -361,6 +374,22 @@ pub mod urls {
 
     pub fn apache_zip(file: &str) -> String {
         format!("{APACHE_INDEX}{file}")
+    }
+
+    /// Dirección del zip `file` en la página de Apache Lounge, tal como la
+    /// enlaza (`/download/VS18/binaries/<file>`).
+    pub fn apache_lounge_zip(html: &str, file: &str) -> Option<String> {
+        html.split("href=\"").skip(1).find_map(|rest| {
+            let href = &rest[..rest.find('"')?];
+            let path = href.strip_suffix(file)?;
+            if !path.ends_with('/') {
+                return None;
+            }
+            Some(match href.strip_prefix('/') {
+                Some(local) => format!("https://www.apachelounge.com/{local}"),
+                None => href.to_string(),
+            })
+        })
     }
 
     pub fn mailpit_zip(tag: &str) -> String {
@@ -462,11 +491,13 @@ pub fn mongodb_latest(json: &str) -> Option<(String, String)> {
 /// avisos) no se extrae.
 pub const APACHE_ZIP_FOLDER: &str = "Apache24";
 
-/// Índice de fossies.org: el zip de Apache Lounge para Windows x64 más
-/// reciente (`httpd-2.4.69-261002-Win64-VS18.zip`). Si la misma compilación
-/// está para dos Visual Studio, el más antiguo: pide un runtime de Visual
-/// C++ menos nuevo. Devuelve la versión y el nombre del archivo.
-pub fn apache_latest(html: &str) -> Option<(String, String)> {
+/// Página de Apache Lounge o índice de fossies.org: el zip de Apache Lounge
+/// más reciente para Windows x64 (`httpd-2.4.69-261002-Win64-VS18.zip`) o,
+/// con `x86`, de 32 bits (`httpd-2.4.71-261112-win32-vs18.zip`). Si la misma
+/// compilación está para dos Visual Studio, el más antiguo: pide un runtime
+/// de Visual C++ menos nuevo. Devuelve la versión y el nombre del archivo.
+pub fn apache_latest(html: &str, x86: bool) -> Option<(String, String)> {
+    let wanted = if x86 { "win32" } else { "win64" };
     let mut best: Option<(String, u64, u32, String)> = None;
     for (start, _) in html.match_indices("httpd-") {
         let file: String = html[start..]
@@ -490,7 +521,7 @@ pub fn apache_latest(html: &str) -> Option<(String, String)> {
             .filter(|n| numeric(n));
         let (Some(vs), true, true) = (
             vs,
-            arch.eq_ignore_ascii_case("win64"),
+            arch.eq_ignore_ascii_case(wanted),
             numeric(build) && version.split('.').all(numeric),
         ) else {
             continue;
@@ -646,6 +677,29 @@ mod tests {
     }
 
     #[test]
+    fn reads_apache_from_the_apache_lounge_page() {
+        // Como la página real: enlaces relativos, 64 y 32 bits.
+        let html = r#"<a href="/download/VS18/binaries/httpd-2.4.71-261112-Win64-VS18.zip">httpd-2.4.71-261112-Win64-VS18.zip</a>
+            <a href="/download/VS18/binaries/httpd-2.4.71-261112-win32-vs18.zip">httpd-2.4.71-261112-win32-vs18.zip</a>
+            <a href="/download/VS18/modules/mod_fcgid-2.3.10-win64-VS18.zip">mod_fcgid</a>
+            <a href="/download/VS17/">VS17</a>"#;
+        let (version, file) = apache_latest(html, false).unwrap();
+        assert_eq!(version, "2.4.71");
+        assert_eq!(
+            urls::apache_lounge_zip(html, &file).as_deref(),
+            Some("https://www.apachelounge.com/download/VS18/binaries/httpd-2.4.71-261112-Win64-VS18.zip")
+        );
+        let (_, file32) = apache_latest(html, true).unwrap();
+        assert_eq!(file32, "httpd-2.4.71-261112-win32-vs18.zip");
+        assert_eq!(
+            urls::apache_lounge_zip(html, &file32).as_deref(),
+            Some("https://www.apachelounge.com/download/VS18/binaries/httpd-2.4.71-261112-win32-vs18.zip")
+        );
+        // Un nombre que solo es el final de otro no cuenta.
+        assert_eq!(urls::apache_lounge_zip(html, "VS18.zip"), None);
+    }
+
+    #[test]
     fn reads_the_newest_apache_lounge_win64_zip() {
         let html = r#"<a href="/windows/www/httpd-2.4.68-260715-Win64-VS18.zip/">httpd-2.4.68-260715-Win64-VS18.zip</a>
             <a href="/windows/www/httpd-2.4.69-261002-win64-VS17.zip/">x</a>
@@ -654,19 +708,19 @@ mod tests {
             <a href="/windows/www/httpd-2.4.69-261002-Win64-VS18.zip.sha256">sha</a>
             <a href="/windows/www/mod_fcgid-2.3.10-win64-VS18.zip/">módulo</a>"#;
         assert_eq!(
-            apache_latest(html),
+            apache_latest(html, false),
             Some(("2.4.69".into(), "httpd-2.4.69-261002-win64-VS17.zip".into()))
         );
         let only_vs18 = html.replace("win64-VS17", "Win32-VS17");
         assert_eq!(
-            apache_latest(&only_vs18).unwrap().1,
+            apache_latest(&only_vs18, false).unwrap().1,
             "httpd-2.4.69-261002-Win64-VS18.zip"
         );
         assert_eq!(
             urls::apache_zip("httpd-2.4.69-261002-Win64-VS18.zip"),
             "https://fossies.org/windows/www/httpd-2.4.69-261002-Win64-VS18.zip"
         );
-        assert_eq!(apache_latest("sin zips"), None);
+        assert_eq!(apache_latest("sin zips", false), None);
     }
 
     #[test]
@@ -803,6 +857,17 @@ mod tests {
             x86: false,
         });
         assert!(eight.contains(&"mariadb-10.6") && eight.contains(&"nodejs-16"));
+        // Apache se ofrece en Windows 8, pero empieza con Nginx.
+        let win = |build, x86| OsInfo::Windows {
+            build,
+            server: false,
+            x86,
+        };
+        assert!(eight.contains(&"apache"));
+        assert!(!apache_by_default(win(9600, false), BinaryLayout::Portable));
+        assert!(!apache_by_default(win(7601, false), BinaryLayout::Portable));
+        assert!(apache_by_default(win(19045, false), BinaryLayout::Portable));
+        assert!(apache_by_default(win(19045, true), BinaryLayout::Portable));
         assert!(!eight.contains(&"mariadb-11.4") && !eight.contains(&"mongodb"));
 
         let seven = ids(OsInfo::Windows {
@@ -820,16 +885,10 @@ mod tests {
             x86: true,
         });
         assert!(x86.contains(&"php-8.4") && x86.contains(&"nginx"));
+        assert!(x86.contains(&"apache"), "Apache Lounge tiene 32 bits");
         assert!(x86.contains(&"mariadb-10.6-x86") && x86.contains(&"nodejs"));
         assert!(x86.contains(&"heidisql") && x86.contains(&"notepadpp"));
-        for missing in [
-            "apache",
-            "mysql-8.4",
-            "mariadb-11.4",
-            "mongodb",
-            "redis",
-            "mailpit",
-        ] {
+        for missing in ["mysql-8.4", "mariadb-11.4", "mongodb", "redis", "mailpit"] {
             assert!(!x86.contains(&missing), "{missing} no tiene 32 bits");
         }
         assert_eq!(find("mariadb-10.6-x86").unwrap().pinned, Some("10.6.5"));

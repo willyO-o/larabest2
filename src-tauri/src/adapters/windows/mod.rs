@@ -3,11 +3,15 @@
 mod download;
 #[cfg(test)]
 mod e2e;
+mod elevate;
 mod hosts;
+mod http;
 mod os;
 mod ports;
 mod process;
+pub mod quit_signal;
 mod shell;
+mod signature;
 pub mod system_setup;
 mod trust;
 mod user_path;

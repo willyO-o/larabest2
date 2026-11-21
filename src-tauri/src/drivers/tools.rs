@@ -137,6 +137,7 @@ mod tests {
             path: String::new(),
             document_root: String::new(),
             in_hosts: false,
+            local_url: String::new(),
         };
         assert!(served(&f.ctx, &[project]).is_empty());
         assert!(is_reserved("phpMyAdmin"));
